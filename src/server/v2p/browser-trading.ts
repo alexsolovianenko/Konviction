@@ -14,7 +14,7 @@
 import { db, executionEnabled, logActivity } from "./db";
 import { createReceipt } from "./receipts";
 import { gPrivate, hasCredentials } from "./gemini";
-import { prepareTrade, executeTrade } from "./trade-engine";
+import { prepareTrade, executeTrade, isValidBuySize } from "./trade-engine";
 import { dailyCapError, orderCapError, supabaseLedger } from "./ledger";
 import {
   fetchSignedUrl, mintSessionToken, SESSION_PREFIX, SESSION_TTL_MS, sessionConfigured, verifySessionToken,
@@ -176,12 +176,12 @@ async function startSession(store: Store, fetchImpl?: typeof fetch) {
 
 async function propose(store: Store, token: string | undefined, body) {
   const s = await requireSession(store, token);
-  const keys = ["event_ticker", "contract_symbol", "outcome", "quantity", "limit_price"];
+  const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity", "limit_price"];
   if (
     !keysAre(body, keys) ||
     !keys.slice(0, 2).every((k) => typeof body[k] === "string" && SYMBOL.test(body[k])) ||
     !["yes", "no"].includes(body.outcome) ||
-    !Number.isSafeInteger(body.quantity) || body.quantity < 1 ||
+    !isValidBuySize(body) ||
     typeof body.limit_price !== "number" || !Number.isFinite(body.limit_price) ||
     body.limit_price < 0.01 || body.limit_price > 0.99 ||
     Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8
@@ -189,7 +189,7 @@ async function propose(store: Store, token: string | undefined, body) {
 
   const response = await prepareTrade(
     { event_ticker: body.event_ticker, instrument_symbol: body.contract_symbol, side: "buy", outcome: body.outcome,
-      quantity: body.quantity, limit_price: body.limit_price },
+      quantity: body.quantity, budget_usd: body.budget_usd, limit_price: body.limit_price },
     async ({ readback, ...terms }) => {
       const committed = await store.committedUsd();
       if (committed === null) return json({ ok: false, error: "RISK_UNAVAILABLE", message: "Could not verify the daily sandbox limit. Nothing was prepared." });

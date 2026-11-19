@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { prepareTrade, executeTrade } from "../src/server/v2p/trade-engine.ts";
+import { prepareTrade, executeTrade, isValidBuySize } from "../src/server/v2p/trade-engine.ts";
 import { gPrivate, hasCredentials } from "../src/server/v2p/gemini.ts";
 import { LIMITS } from "../src/server/v2p/util.ts";
 import { TradingRepository, TradeError } from "./trading-repository.mjs";
@@ -98,21 +98,21 @@ export function browserTrading(repo) {
     }
     const owner = sessionOwner(repo, token);
     if (path === "proposals") {
-      const keys = ["event_ticker", "contract_symbol", "outcome", "quantity", "limit_price"];
+      const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity", "limit_price"];
       if (
         !keysAre(body, keys) ||
         !uuid.test(key) ||
         !keys.slice(0, 2).every((k) => typeof body[k] === "string" && symbol.test(body[k])) ||
         !["yes", "no"].includes(body.outcome) ||
-        !Number.isSafeInteger(body.quantity) ||
-        body.quantity < 1 ||
+        !isValidBuySize(body) ||
         !Number.isFinite(body.limit_price) ||
         body.limit_price < 0.01 ||
         body.limit_price > 0.99 ||
         Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8
       )
         bad();
-      const fingerprint = JSON.stringify(keys.map((k) => body[k]));
+      // Preserve existing quantity fingerprints and distinguish equal numeric dollar amounts.
+      const fingerprint = JSON.stringify(keys.map((k) => k === "budget_usd" ? { budget_usd: body[k] } : body[k]));
       const replay = store.replay(owner, key, fingerprint);
       const present = (proposal) => ({ ok: true, proposal, ...{ availability: availability() } });
       if (replay) return present(replay);

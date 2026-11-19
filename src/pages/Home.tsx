@@ -6,6 +6,12 @@ import { TradeApproval } from './TradeApproval';
 export function Home() {
   const { voice, view, status, market } = useVoice();
   const orb = useRef<HTMLSpanElement>(null);
+  const transcript = useRef<HTMLOListElement>(null);
+  const turns = view.entries.filter(entry => entry.role !== 'tool');
+  useEffect(() => {
+    const list = transcript.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [turns.length, view.draft]);
   const idle = view.status === 'Idle';
   const speaking = view.status === 'Speaking';
   useEffect(() => {
@@ -32,6 +38,14 @@ export function Home() {
       </button>
       {!idle && <p className="voice-state" role="status">{status.label}</p>}
       {view.error && <p className="voice-state" role="alert">{view.error}</p>}
+      {(view.proposal || view.tradeMessage) && <TradeApproval proposal={view.proposal} availability={view.availability} message={view.tradeMessage} approve={(id,pin) => voice.approve(id,pin)} />}
+      {(!idle || turns.length > 0 || view.draft) && <section className="voice-transcript" aria-label="Live transcript">
+        <h2>Live transcript</h2>
+        <ol ref={transcript} role="log" aria-live="polite">
+          {turns.map(turn => <li key={turn.seq}><strong>{turn.role === 'user' ? 'You' : 'Assistant'}</strong><span>{turn.text}{turn.interrupted && ' (interrupted)'}</span></li>)}
+          {view.draft && <li><strong>Assistant</strong><span>{view.draft}</span></li>}
+        </ol>
+      </section>}
       {market.result && <section className="home-results">
         {market.result.error && <p role="alert">{market.result.error}</p>}
         {market.result.events?.length === 0 && <p>No matching markets.</p>}
@@ -42,7 +56,6 @@ export function Home() {
           return side.toUpperCase() + ' ' + (price == null ? 'unavailable' : Math.round(price * 100) + '¢');
         }).join(' / ')}</p>}
       </section>}
-      {(view.proposal || view.tradeMessage) && <TradeApproval proposal={view.proposal} availability={view.availability} message={view.tradeMessage} approve={(id,pin) => voice.approve(id,pin)} />}
       {(market.history.length > 0 || view.entries.some(entry => entry.role === 'tool')) && <details><summary>Session activity</summary><ActivityPanel /></details>}
     </section>
   );

@@ -274,3 +274,18 @@ describe("approval: the only order-submission path", () => {
     expect(r.say).toContain("cancelled");
   });
 });
+
+it("prepares a budget buy within per-order and quantity limits without submitting", async () => {
+  vi.stubEnv("MAX_ORDER_USD", "25");
+  vi.stubEnv("MAX_QUANTITY", "100");
+  const s = await startSession();
+  const { quantity: _count, ...terms } = order;
+  const budgetBuy = { ...terms, budget_usd: 1000 };
+  const moneyCapped = await run("proposals", budgetBuy, s.session_token);
+  expect(moneyCapped).toMatchObject({ ok: true, proposal: { quantity: 76, limit_price: 0.31, notional_usd: 23.56, est_fee_usd: 1.14 } });
+  vi.stubEnv("MAX_QUANTITY", "7");
+  expect(await run("proposals", budgetBuy, s.session_token)).toMatchObject({ ok: true, proposal: { quantity: 7 } });
+  await expect(run("proposals", { ...budgetBuy, quantity: 1 }, s.session_token)).rejects.toMatchObject({ code: "BAD_INPUT" });
+  await expect(run("proposals", terms, s.session_token)).rejects.toMatchObject({ code: "BAD_INPUT" });
+  expect(geminiOrderCalls()).toHaveLength(0);
+});

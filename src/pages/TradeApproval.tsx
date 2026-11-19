@@ -38,15 +38,19 @@ export function TradeApproval({
     return () => clearTimeout(timer);
   }, [proposal]);
   const config = availability ?? status;
+  let approvalStatus = config?.message ?? "Checking sandbox trading availability…";
+  if (proposal && config?.execution_enabled) {
+    approvalStatus = pending ? "Submitting sandbox order…" : expired ? "Approval expired" : "Awaiting your private approval";
+  }
   return (
     <section
       aria-label="Sandbox trade approval"
       className={"min-w-0 " + (proposal ? "rounded-lg border bg-card p-4 " + (expired ? "border-border" : "border-primary") : "")}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
-        <p className="min-w-0 text-muted-foreground">
+        <p aria-live="polite" className={proposal ? "min-w-0 font-semibold" : "min-w-0 text-muted-foreground"}>
           <span className="sr-only">Sandbox trade proposal. </span>
-          {config?.message ?? "Checking sandbox trading availability…"}
+          {approvalStatus}
         </p>
         <a
           href="/open-trades"
@@ -71,7 +75,7 @@ export function TradeApproval({
                 ["Outcome", String(proposal.outcome).toUpperCase()],
                 ["Contracts", String(proposal.quantity)],
                 ["Limit", cents(proposal.limit_price)],
-                ["Est. cost + fee", `${usd(proposal.notional_usd)} + ${usd(proposal.est_fee_usd)}`],
+                ["Max. cost incl. est. fee", usd(proposal.notional_usd + proposal.est_fee_usd)],
               ] as const
             ).map(([label, value]) => (
               <div key={label}>
@@ -93,6 +97,10 @@ export function TradeApproval({
                 onSubmit={async (e) => {
                   e.preventDefault();
                   if (pending || !PIN_PATTERN.test(pin)) return;
+                  if (Date.parse(proposal.expires_at) <= Date.now()) {
+                    setExpired(true);
+                    return;
+                  }
                   setPending(true);
                   setPin("");
                   try {
@@ -104,7 +112,7 @@ export function TradeApproval({
               >
                 <p className="flex items-start gap-2 text-sm text-muted-foreground">
                   <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  Type your PIN here. Keep it out of the voice conversation.
+                  Enter your private PIN and approve to send this order to Gemini Sandbox.
                 </p>
                 <div className="mt-3 flex flex-wrap items-end gap-2">
                   <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
@@ -121,7 +129,7 @@ export function TradeApproval({
                     />
                   </label>
                   <button className="btn btn-primary" disabled={pending || !PIN_PATTERN.test(pin)}>
-                    Approve sandbox buy
+                    {pending ? "Submitting…" : "Approve sandbox buy"}
                   </button>
                 </div>
               </form>

@@ -333,3 +333,8 @@
 .voice-state { text-align:center; color:var(--muted-foreground); }
 .home-results details { padding:.7rem 0; border-bottom:1px solid var(--border); }
 .home-results button { display:block; padding:.35rem .8rem; text-align:left; text-decoration:underline; }
+
+.voice-transcript h2 { font-size:.8rem; color:var(--muted-foreground); margin-bottom:.4rem; }
+.voice-transcript ol { max-height:14rem; overflow:auto; }
+.voice-transcript li { display:grid; grid-template-columns:4.7rem 1fr; gap:.4rem; padding:.45rem 0; }
+.voice-transcript strong { font-size:.82rem; font-weight:500; color:var(--muted-foreground); }

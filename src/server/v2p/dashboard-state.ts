@@ -24,7 +24,10 @@ async function liveAccount() {
     gPrivate("/v1/prediction-markets/positions"),
   ]);
   // deno-lint-ignore no-explicit-any
-  const positions = (pos.data?.positions ?? []).filter((p: any) => (num(p.totalQuantity) ?? 0) > 0).map((p: any) => ({
+  const rows = pos.data?.positions;
+  const validPositions = pos.ok && Array.isArray(rows) && rows.every(p =>
+    typeof p?.symbol === "string" && p.symbol && ["number", "string"].includes(typeof p.totalQuantity) && num(p.totalQuantity) !== null);
+  const positions = (validPositions ? rows : []).filter((p: any) => (num(p.totalQuantity) ?? 0) > 0).map((p: any) => ({
     symbol: p.symbol, outcome: p.outcome, quantity: p.totalQuantity, on_hold: p.quantityOnHold, avg_price: p.avgPrice,
     bid: p.prices?.sell?.[String(p.outcome).toLowerCase()] ?? null, market_value: p.marketValue ?? null,
     unrealized_pnl: p.unrealizedPnl ?? null, event: p.contractMetadata?.eventName, contract: p.contractMetadata?.contractName,
@@ -39,7 +42,7 @@ async function liveAccount() {
       usd_available: bal.usd,
       balance_error: bal.error ?? null,
       positions,
-      positions_error: pos.ok ? null : geminiReadError(pos),
+      positions_error: !pos.ok ? geminiReadError(pos) : validPositions ? null : "Gemini returned an unexpected positions response.",
 
     },
   };
@@ -75,7 +78,7 @@ export async function handleDashboardState(req: Request): Promise<Response> {
     rows("intents", "created_at", 25),
     rows("orders", "created_at", 25),
     rows("receipts", "created_at", 30),
-    !local ? {configured:false} : liveAccount().catch(() => ({ configured: true, terms_accepted: null, balance_error: "Gemini account data unavailable." })),
+    !local ? {configured:false} : liveAccount().catch(() => ({ configured: true, terms_accepted: null, balance_error: "Gemini account data unavailable.", positions_error: "Gemini position data unavailable." })),
     local && (configured || env("SOLANA_RECEIPT_SECRET_KEY")) ? solanaInfo().catch(() => null) : null,
     executionEnabled().catch(() => false),
     dashboardMarkets().catch(() => ({ events: [], error: "Gemini Sandbox markets unavailable." })),

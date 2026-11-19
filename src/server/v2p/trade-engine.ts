@@ -5,6 +5,32 @@ type Body = Record<string, any>;
 const err = (error: string, message: string, extra = {}) =>
   json({ ok: false, error, message, ...extra });
 
+// A browser buy is sized by either a count or an all-in USD ceiling.
+export function isValidBuySize(body: Body): boolean {
+  if (!body || typeof body !== "object") return false;
+  if (Object.hasOwn(body, "budget_usd")) {
+    const dollars = body.budget_usd;
+    if (Object.hasOwn(body, "quantity") || typeof dollars !== "number" || dollars <= 0) return false;
+    const cents = Math.round(dollars * 100);
+    return Number.isSafeInteger(cents) && cents / 100 === dollars;
+  }
+  return Number.isSafeInteger(body.quantity) && body.quantity > 0;
+}
+
+function budgetQuantity(budget: number, limit: number): number {
+  const availableCents = Math.min(Math.round(budget * 100), Math.floor(LIMITS.maxOrderUsd * 100 + 1e-8));
+  const priceCents = Math.round(limit * 100);
+  let high = Math.min(Math.floor(LIMITS.maxQuantity), Math.floor(availableCents / priceCents));
+  let low = 0;
+  while (low < high) {
+    const qty = low + Math.ceil((high - low) / 2);
+    const totalCents = qty * priceCents + Math.round(feeEstimate(qty, limit) * 100);
+    if (totalCents <= availableCents) low = qty;
+    else high = qty - 1;
+  }
+  return low;
+}
+
 export async function prepareTrade(b: Body, saveProposal) {
   const side = String(b.side ?? "").toLowerCase();
   const outcome = String(b.outcome ?? "").toLowerCase();
@@ -68,10 +94,7 @@ export async function prepareTrade(b: Body, saveProposal) {
     if (qtyIn !== null) {
       quantity = Math.floor(qtyIn);
     } else if (budget !== null) {
-      const per = limit + LIMITS.takerRate * limit * (1 - limit);
-      quantity = Math.floor(budget / per);
-      while (quantity > 0 && quantity * limit + feeEstimate(quantity, limit) > budget + 1e-9)
-        quantity--;
+      quantity = budgetQuantity(budget, limit);
     } else {
       return err(
         "BAD_INPUT",

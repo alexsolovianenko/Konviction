@@ -465,16 +465,21 @@ it('shows a voice proposal and accepts its private approval only from the dashbo
   const proposal={proposal_id:'id',title:'Event',contract_label:'Threshold',instrument_symbol:'C',outcome:'yes',quantity:2,limit_price:.4,quote_price:.39,notional_usd:.8,est_fee_usd:.04,expires_at:new Date(Date.now()+60000).toISOString(),readback:'Buy 2 YES contracts at up to 40 cents.'};
   const calls:{path:string;init:RequestInit}[]=[];
   f.fetchMock.mockImplementation(async(path,init)=>{
-    calls.push({path,init});return Response.json(path.endsWith('/proposals')?{ok:true,proposal,availability:{execution_enabled:true,message:'Sandbox enabled'}}:{ok:true,say:'Filled 2 contracts.'});
+    calls.push({path,init});return Response.json(path.endsWith('/proposals')?{ok:true,proposal,availability:{execution_enabled:true,message:'Sandbox enabled'}}:{ok:true,say:'Filled 2 contracts.',outcome_summary:'FILLED',order_id:'exchange-123',exchange_status:'filled'});
   });
   expect(Object.keys(sdk.clientTools)).not.toContain('approve');
   let spoken='';
   await act(async()=>{spoken=await sdk.clientTools['prepare_sandbox_buy']!({event_ticker:'E',contract_symbol:'C',outcome:'yes',quantity:2,limit_price:.4})});
-  expect(JSON.parse(spoken).proposal.readback).toEqual(proposal.readback);
+  expect(JSON.parse(spoken)).toMatchObject({quantity:2,outcome:'yes',say:'Ready for approval on screen.'});
+  expect(spoken).not.toContain(proposal.readback);
   expect(screen.getByText(proposal.readback)).toBeInTheDocument();
+  expect(screen.getByText('Awaiting your private approval')).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Approve sandbox buy'})).toBeDisabled();
+  expect(calls.map(c => c.path)).toEqual(['/api/trading/proposals']);
   fireEvent.change(screen.getByLabelText('Private approval PIN'),{target:{value:'6739'}});
   fireEvent.click(screen.getByRole('button',{name:'Approve sandbox buy'}));
-  expect(await screen.findByText('Filled 2 contracts.')).toBeInTheDocument();
+  expect(await screen.findByText(/Filled 2 contracts\./)).toHaveTextContent('Gemini Sandbox order exchange-123 · status filled · FILLED');
+  expect(screen.queryByText('Awaiting your private approval')).toBeNull();
   expect(calls.map(c=>c.path)).toEqual(['/api/trading/proposals','/api/trading/approve']);
   expect(JSON.parse(String(calls[1]!.init.body))).toEqual({proposal_id:'id',pin:'6739'});
   expect(calls[1]!.init.headers).toMatchObject({Authorization:'Bearer private-1'});

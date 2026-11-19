@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { PrivatePortfolio } from "./PrivatePortfolio";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Phone, Search } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -124,14 +125,17 @@ export function OverviewView() {
           </a>
         )}
       />
-      {d?.history_available === false && <p className="text-sm text-muted-foreground">Private account history unavailable.</p>}
       {!d ? <Waiting q={q} /> : (
         <>
           <AccountStrip d={d} />
-          <Trades d={d} now={now} open={open} />
-          <Positions d={d} open={open} />
-          <Timeline d={d} open={open} />
-          <Receipts d={d} open={open} />
+          <Panel title="Gemini order history">
+            <p className="mb-4 text-sm text-muted-foreground">Use your approval PIN to check whether Gemini received or filled an order.</p>
+            <PrivatePortfolio showPositions={!d.account.configured || Boolean(d.account.positions_error)} />
+          </Panel>
+          {(d.history_available !== false || d.orders.length > 0 || d.intents.length > 0) && <Trades d={d} now={now} open={open} />}
+          {d.account.configured && <Positions d={d} open={open} />}
+          {(d.history_available !== false || d.activity.length > 0) && <Timeline d={d} open={open} />}
+          {(d.history_available !== false || d.receipts.length > 0) && <Receipts d={d} open={open} />}
         </>
       )}
       <Disclaimer />
@@ -163,14 +167,14 @@ function AccountStrip({ d }: { d: DashboardState }) {
       {a.configured ? (
         <div className="tnum mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">{usd(a.usd_available)}</div>
       ) : (
-        <div className="mt-1 text-xl font-semibold text-warning">Gemini keys not configured yet</div>
+        <div className="mt-1 text-xl font-semibold text-warning">Unlock the private Gemini account below</div>
       )}
       {a.balance_error && <div className="mt-1 text-sm text-destructive">{a.balance_error}</div>}
       <dl className="mt-5">
         {a.configured && (
           <>
-            <Stat label="Open positions" value={a.positions?.length ?? 0} sub={a.positions_error} />
-            <Stat label="Terms accepted" value={a.terms_accepted === null ? "—" : a.terms_accepted ? <span className="text-success">Yes</span> : <span className="text-destructive">No</span>} sub={a.terms_error} />
+            <Stat label="Open positions" value={a.positions_error || !Array.isArray(a.positions) ? "Unavailable" : a.positions.length} sub={a.positions_error} />
+            <Stat label="Terms accepted" value={a.terms_accepted == null ? "—" : a.terms_accepted ? <span className="text-success">Yes</span> : <span className="text-destructive">No</span>} sub={a.terms_error} />
           </>
         )}
         <Stat label="Phone execution" value={d.execution_enabled ? "On" : "Off"} />
@@ -183,7 +187,7 @@ function AccountStrip({ d }: { d: DashboardState }) {
 function Timeline({ d, open }: { d: DashboardState; open: Open }) {
   return (
     <Panel title="Voice activity" right={<span className="tnum text-xs text-muted-foreground">{d.activity.length} events</span>}>
-      {d.activity.length === 0 ? <Empty>No activity yet. Call the number to start.</Empty> : (
+      {d.activity.length === 0 ? <Empty>No voice activity recorded.</Empty> : (
         <ul className="max-h-[32rem] overflow-y-auto">
           {d.activity.map((e) => (
             <li key={e.id} className="animate-row-in border-b border-border">
@@ -221,8 +225,8 @@ function Trades({ d, now, open }: { d: DashboardState; now: number; open: Open }
     open(`Receipts · ${o.intent_id}`, rs.length ? <JsonBlock value={rs} /> : <Empty>No receipts for this trade yet.</Empty>);
   };
   return (
-    <Panel title="Trades">
-      {pending.length === 0 && d.orders.length === 0 && <Empty>No trades yet.</Empty>}
+    <Panel title="Trade journal">
+      {pending.length === 0 && d.orders.length === 0 && <Empty>No trades recorded in the journal.</Empty>}
       {pending.map((i) => <PendingCard key={i.id} i={i} now={now} />)}
       {d.orders.map((o) => <OrderCard key={o.id} o={o} i={byId.get(o.intent_id)} onRaw={() => open(`Raw Gemini response · ${o.gemini_order_id ?? o.id}`, <JsonBlock value={o} />)} onReceipts={() => showReceipts(o)} />)}
     </Panel>
@@ -401,8 +405,8 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
 function Positions({ d, open }: { d: DashboardState; open: Open }) {
   const ps = d.account.positions ?? [];
   return (
-    <Panel title="Positions" right={<Btn onClick={() => open("Position details", <JsonBlock value={d.account.positions} />)}>Position details</Btn>}>
-      {ps.length === 0 ? <Empty>{d.account.positions_error ?? "No open positions."}</Empty> : (
+    <Panel title="Positions" right={ps.length > 0 && <Btn onClick={() => open("Position details", <JsonBlock value={d.account.positions} />)}>Position details</Btn>}>
+      {ps.length === 0 ? <Empty>{d.account.positions_error ?? (Array.isArray(d.account.positions) ? "Gemini reports no open positions." : "Position data unavailable.")}</Empty> : (
         <div className="overflow-x-auto">
           <table className="data">
             <thead><tr>{["Contract", "Outcome", "Qty", "Avg", "Bid", "Mkt value", "Unreal. P&L", "Status"].map((h, i) => <th key={h} scope="col" className={i > 1 && i < 7 ? "num" : ""}>{h}</th>)}</tr></thead>

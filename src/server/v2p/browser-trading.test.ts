@@ -222,3 +222,22 @@ it("locks repeated incorrect PINs across sessions and disables approval without 
   await expect(approve(t, id)).rejects.toMatchObject({ code: "EXECUTION_DISABLED" });
   expect(gPrivate).not.toHaveBeenCalled();
 });
+
+it("sizes a dollar budget in whole contracts including rounded fees and binds replay to the sizing unit", async () => {
+  const { quantity: _count, ...terms } = input;
+  const t = token(), key = randomUUID();
+  const dollars = { ...terms, budget_usd: 1.25 };
+  const r = await propose(t, key, dollars);
+  expect(r.proposal).toMatchObject({ quantity: 2, limit_price: 0.4, notional_usd: 0.8, est_fee_usd: 0.04 });
+  expect((await propose(t, key, dollars)).proposal).toEqual(r.proposal);
+  await expect(propose(t, key, { ...terms, budget_usd: 1.26 })).rejects.toMatchObject({ code: "KEY_REUSED" });
+  const equal = randomUUID();
+  await propose(t, equal, { ...terms, budget_usd: 2 });
+  await expect(propose(t, equal, input)).rejects.toMatchObject({ code: "KEY_REUSED" });
+  expect((await propose(t, randomUUID(), { ...terms, budget_usd: 1.26 })).proposal.quantity).toBe(3);
+  for (const invalid of [0, -1, 0.001, "100", null, Infinity, Number.MAX_SAFE_INTEGER]) {
+    await expect(propose(t, randomUUID(), { ...terms, budget_usd: invalid })).rejects.toMatchObject({ code: "BAD_INPUT" });
+  }
+  await expect(propose(t, randomUUID(), { ...input, budget_usd: 100 })).rejects.toMatchObject({ code: "BAD_INPUT" });
+  expect(await propose(t, randomUUID(), { ...terms, budget_usd: 0.4 })).toMatchObject({ ok: false, error: "CAP_EXCEEDED" });
+});

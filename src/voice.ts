@@ -253,8 +253,10 @@ export class Voice {
             // The session token stays in the browser; the model only sees the tool result below.
             const result = await tradingRequest('proposals',params,credentials.session_token,{idempotencyKey:crypto.randomUUID()});
             update({ proposal:result.proposal ?? null, availability:result.availability ?? null, tradeMessage:result.message ?? '' });
-            return JSON.stringify(result.ok ? {ok:true, proposal:result.proposal, approval_available:result.availability.execution_enabled,
-              next_step:'Review the proposal in the dashboard. Approval is a separate private UI action.'} : result);
+            if (!result.ok) return JSON.stringify({ok:false, error:result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE'), say:'See the issue on screen.'});
+            const { quantity, outcome } = result.proposal;
+            return JSON.stringify({ok:true, quantity, outcome, say:result.availability.execution_enabled
+              ? 'Ready for approval on screen.' : 'Approval is unavailable.'});
           },
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
             name, async (params: Record<string, unknown>) => JSON.stringify(current()

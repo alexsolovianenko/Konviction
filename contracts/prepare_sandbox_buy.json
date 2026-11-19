@@ -1,7 +1,7 @@
 {
   "type": "client",
   "name": "prepare_sandbox_buy",
-  "description": "Prepare a Gemini Sandbox prediction buy proposal for private dashboard approval. This tool never submits an order.",
+  "description": "Prepare a sandbox buy for typed PIN approval. Send exactly one of quantity or budget_usd. The server sizes dollar budgets.",
   "expects_response": true,
   "response_timeout_secs": 20,
   "parameters": {
@@ -26,20 +26,24 @@
       "quantity": {
         "type": "integer",
         "minimum": 1,
-        "description": "Whole number of contracts requested."
+        "description": "Explicit whole-contract count. Omit when a dollar budget is given."
       },
       "limit_price": {
         "type": "number",
         "minimum": 0.01,
         "maximum": 0.99,
         "description": "Maximum USD per contract"
+      },
+      "budget_usd": {
+        "type": "number",
+        "minimum": 0.01,
+        "description": "USD spending ceiling including estimated fees. Supply exactly one of budget_usd or quantity."
       }
     },
     "required": [
       "event_ticker",
       "contract_symbol",
       "outcome",
-      "quantity",
       "limit_price"
     ]
   }
