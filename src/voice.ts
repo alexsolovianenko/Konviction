@@ -43,7 +43,7 @@ export const initial: VoiceView = {
 
 function voiceError(message: string, fallback = message) {
   return /(?:the )?ai agent you are trying to reach is not available/i.test(message)
-    ? "ElevenLabs could not start this call. Check the workspace’s remaining voice credits and agent availability."
+    ? "ElevenLabs could not start this call. The provider reported “agent unavailable” before the conversation began."
     : fallback;
 }
 

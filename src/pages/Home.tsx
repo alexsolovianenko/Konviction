@@ -1,4 +1,3 @@
-import { AudioLines } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../components/voice/VoiceProvider';
 import { MarketDiscoveryPanel } from '../components/prediction/MarketDiscoveryPanel';
@@ -26,10 +25,7 @@ export function Home() {
 
   return (
     <section className="voice-canvas" aria-label="Voice workspace">
-      <header className="home-heading">
-        <h1><AudioLines size={17} aria-hidden="true" /> Voice-to-Predict</h1>
-        <span>Gemini Sandbox</span>
-      </header>
+      <h1 className="sr-only">Voice workspace</h1>
       <div className="home-voice-card">
         <button type="button" className="voice-trigger"
           aria-label={idle ? 'Start voice' : 'End session'}

@@ -564,7 +564,7 @@ it('explains the generic ElevenLabs unavailable message without claiming a balan
   const f = fixture();
   const sdk = await f.begin();
   act(() => sdk.onDisconnect?.({reason:'error',message:'The AI agent you are trying to reach is not available.',context:{type:'socket'}}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Check the workspace’s remaining voice credits and agent availability.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The provider reported “agent unavailable” before the conversation began.');
 });
 
 it('redeems a device pairing link once and removes its secret before requesting it', async () => {
