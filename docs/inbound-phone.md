@@ -2,7 +2,7 @@
 
 This Node launcher answers a Twilio Programmable Voice number. Twilio handles speech recognition and reads prompts aloud. ElevenLabs powers the separate browser experience. Phone orders are immediate-or-cancel sandbox buys and share the browser's SQLite risk ledger.
 
-Phone integration is paused by default. Set `TWILIO_ENABLED=true` and restart the launcher when you want to enable inbound calls or opt-in settlement calls.
+The browser launcher runs ElevenLabs only. The phone implementation is retained separately for future use.
 
 1. Install dependencies with `npm ci`. In the launcher's private environment, set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER` for the account that owns a voice-capable Twilio number. Set `PHONE_OWNER_NUMBER` to the authorized caller's E.164 number. These are two different numbers.
 2. Forward a public HTTPS origin with a publicly trusted certificate to **only** `127.0.0.1:8788` on the launcher machine. Set `PHONE_PUBLIC_ORIGIN` to that exact origin, e.g. `https://voice.example.org`, without a trailing slash. Set `PHONE_PORT` if changing the loopback port. Preserve the webhook path and POST body and disable proxy request-body logging. Set `PUBLIC_PHONE_NUMBER` to the Twilio number if displaying it in the dashboard.

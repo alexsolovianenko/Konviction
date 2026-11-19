@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { SettlementCalls } from "./SettlementCalls";
 import { PrivatePortfolio } from "./PrivatePortfolio";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Phone, Search } from "lucide-react";
@@ -127,7 +126,6 @@ export function OverviewView() {
         )}
       />
       {d ? <AccountStrip d={d} /> : <Waiting q={q} />}
-      <SettlementCalls />
       <Panel title="Gemini order history">
         <p className="mb-4 text-sm text-muted-foreground">Check whether Gemini received or filled an order.</p>
         <PrivatePortfolio showPositions={!d?.account.configured || Boolean(d.account.positions_error)} />
