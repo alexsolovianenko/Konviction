@@ -81,7 +81,7 @@
     {
       "type": "client",
       "name": "prepare_sandbox_buy",
-      "description": "Prepare a Gemini Sandbox buy. Supply exactly one of quantity or budget_usd. Speak the returned say field and wait for the user. All identifiers are silent tool parameters.",
+      "description": "Prepare a sandbox buy or held-position exit. Set side=sell for cash out, sell or close. Market mode needs no price. Speak the returned say and wait for confirmation.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 20,
@@ -105,27 +105,45 @@
             "description": "Requested prediction outcome, YES or NO."
           },
           "quantity": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Explicit whole-contract count. Omit when a dollar budget is given."
+            "type": "number",
+            "description": "Explicit contract quantity. Buys require whole contracts. Exits may use fractional holdings. Omit for close_all or a dollar budget."
           },
           "limit_price": {
             "type": "number",
             "minimum": 0.01,
             "maximum": 0.99,
-            "description": "Required entry cap in dollars. Use the caller’s price, or the quoted ask they accepted (97 cents = 0.97). If missing, ask first."
+            "description": "Buy ceiling or sell floor in dollars per contract. Omit for market unless caller specified a bound. Required for a resting limit."
           },
           "budget_usd": {
             "type": "number",
             "minimum": 0.01,
             "description": "USD spending ceiling including estimated fees. Supply exactly one of budget_usd or quantity."
+          },
+          "order_mode": {
+            "type": "string",
+            "enum": [
+              "limit",
+              "market"
+            ],
+            "description": "Market for current ask on buys or current bid on sells, including cash out now. Limit for a specified resting entry or exit price."
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "description": "Buy to enter. Sell to exit contracts already held, preserving the held YES or NO outcome."
+          },
+          "close_all": {
+            "type": "boolean",
+            "description": "Only for sells. Set true to exit the full available position and omit quantity."
           }
         },
         "required": [
           "event_ticker",
           "contract_symbol",
-          "outcome",
-          "limit_price"
+          "outcome"
         ]
       }
     },
@@ -136,7 +154,12 @@
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 20,
-      "parameters": { "type": "object", "properties": {}, "additionalProperties": false, "required": [] }
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "required": []
+      }
     },
     {
       "type": "client",
@@ -154,7 +177,7 @@
     {
       "type": "client",
       "name": "get_sandbox_positions",
-      "description": "Read current Gemini Sandbox positions for the paired browser on request. Use the event title, outcome and quantity to answer briefly. The on_screen field identifies the selected contract. Keep all identifiers silent.",
+      "description": "Read sandbox positions, recent settlements, open orders and recent order fills. Use on_screen for the selected contract. Answer using only returned facts. Keep identifiers silent.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 20,

@@ -8,8 +8,8 @@ const startCredentials = workerTrading ? workerCredentials : localCredentials;
 
 export type VoicePosition = {
   event_title: string | null; contract_label: string | null; outcome: string | null;
-  quantity: number | null; average_price: number | null; market_value_usd: number | null;
-  unrealized_pnl_usd: number | null; net_profit_usd: number | null;
+  quantity: number | null; quantity_on_hold: number | null; average_price: number | null; market_value_usd: number | null;
+  unrealized_pnl_usd: number | null; realized_pnl_usd: number | null; net_profit_usd: number | null;
   mark_price: number | null; current_bid: number | null; on_screen: boolean;
 };
 type VoiceSettlement = {
@@ -35,6 +35,7 @@ export type VoiceView = {
 };
 const shortTradeIssue: Record<string, string> = {
   NO_LIQUIDITY: 'No ask right now.',
+  INSUFFICIENT_POSITION: 'That quantity is unavailable to sell.',
   NO_BID: 'No bid right now.',
   PRICE_MOVED: 'Price changed. Requote?',
   PRICE_ABOVE_YOUR_MAX: 'Ask exceeds your limit.',
@@ -56,6 +57,7 @@ const shortTradeIssue: Record<string, string> = {
   SESSION_ENDED: 'Session ended.',
   LOCKED: 'Approval is locked.',
   SUPERSEDED: 'The proposal changed.',
+  MARKET_CHANGED: 'Use the selected market.',
   UNKNOWN_PROPOSAL: 'Request a fresh proposal.',
   IN_PROGRESS: 'Order already processing.',
   RESULT_UNAVAILABLE: 'Order status is unconfirmed.',
@@ -89,6 +91,7 @@ export class Voice {
   private session: WorkerSession | LocalSession | undefined;
   private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number; sendContextualUpdate: (text: string) => void };
   private visibleContract = "";
+  private selectionRevision = 0;
   private currentProposal: Proposal | null = null;
   private approving = false;
   private preparing = false;
@@ -98,12 +101,22 @@ export class Voice {
   constructor(
     private update: (patch: Partial<VoiceView>) => void,
     private marketAction: (name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) => Promise<unknown>,
+    private selectMarket?: (target: { eventTicker: string; symbol: string }) => void,
   ) {}
 
   setVisibleContract(eventTicker?: string, symbol?: string) {
     const selection = eventTicker && symbol ? JSON.stringify({event_ticker:eventTicker, contract_symbol:symbol}) : "";
-    if (selection === this.visibleContract) return;
+    if (selection === this.visibleContract && (selection || !this.preparing)) return;
     this.visibleContract = selection;
+    this.selectionRevision++;
+    if (this.currentProposal && (this.currentProposal.event_ticker !== eventTicker || this.currentProposal.instrument_symbol !== symbol)) {
+      const token = this.session?.credentials.session_token;
+      if (token) void tradingRequest('dismiss-proposal', {proposal_id:this.currentProposal.proposal_id}, token);
+      this.currentProposal = null;
+      this.proposalRequest = null;
+    }
+    this.remainder = null;
+    this.update({proposal:this.currentProposal, tradeMessage:'', remainderQuantity:null, positionSnapshot:null});
     this.conversation?.sendContextualUpdate?.(selection
       ? "Contract on screen (silent tool context): " + selection
       : "The contract chart is no longer visible.");
@@ -343,7 +356,7 @@ export class Voice {
           ...session.tools,
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,say:'Session ended.'});
-            if (params['limit_price'] == null) return JSON.stringify({ok:false, error:'ENTRY_REQUIRED', say:'Your limit?'});
+            if (params['order_mode'] !== 'market' && params['limit_price'] == null) return JSON.stringify({ok:false, error:'ENTRY_REQUIRED', say:'Your limit?'});
             const result = await this.prepareBuy(params);
             return this.proposalReply(result);
           },
@@ -423,12 +436,20 @@ export class Voice {
       return {ok:false, message, error:'UNAUTHORIZED'};
     }
     if (this.preparing || this.approving) return {ok:false, error:'BUSY'};
+    const requested = JSON.stringify({event_ticker: params['event_ticker'], contract_symbol: params['contract_symbol']});
+    if (this.visibleContract && this.visibleContract !== requested) return {ok:false, error:'MARKET_CHANGED'};
+    const revision = this.selectionRevision;
     this.preparing = true;
     if (params !== this.remainder) this.remainder = null;
     this.update({remainderQuantity:null});
     try {
       const result = await tradingRequest('proposals', params, session.credentials.session_token, {idempotencyKey:crypto.randomUUID()});
       if (session !== this.session) return {ok:false, message:'Session ended.', error:'SESSION_ENDED'};
+      if (this.selectionRevision !== revision) {
+        if (result.proposal) await tradingRequest('dismiss-proposal', {proposal_id:result.proposal.proposal_id}, session.credentials.session_token);
+        return {ok:false, error:'MARKET_CHANGED'};
+      }
+      if (result.proposal?.event_ticker) this.selectMarket?.({eventTicker:result.proposal.event_ticker, symbol:result.proposal.instrument_symbol});
       if (result.proposal) this.remainder = null;
       this.currentProposal = result.proposal ?? null;
       this.proposalRequest = result.proposal ? {...params} : null;
@@ -489,7 +510,7 @@ export class Voice {
           NOT_FILLED: result.say ?? `No fills at ${Math.round(proposal.limit_price * 100)} cents.`, PENDING_UNKNOWN: 'Fill status is pending.',
           EXCHANGE_REJECTED: result.voice_say ?? 'Exchange rejected the order.',
         };
-        return {ok:result.ok, say:fills[result.outcome_summary] ?? 'Order status is unconfirmed.'};
+        return {ok:result.ok, say:result.voice_say ?? (result.outcome_summary === 'FILLED' ? result.say : null) ?? fills[result.outcome_summary] ?? 'Order status is unconfirmed.'};
       }
       const code = typeof result.error === 'string' ? result.error : result.error?.code;
       const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'CAP_EXCEEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'NO_LIQUIDITY', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);
@@ -507,12 +528,14 @@ export class Voice {
 
   private async readPositions() {
     const session = this.session;
-    if (!(session instanceof LocalSession) || !this.active) return {ok:false, say:'Check positions on screen.'};
+    if (!session || !this.active) return {ok:false, say:'Session ended.'};
+    const selection = this.visibleContract;
     const result = await tradingRequest('portfolio', {}, session.credentials.session_token);
     if (session !== this.session) return {ok:false, say:'Session ended.'};
+    if (selection !== this.visibleContract) return {ok:false, say:'Market changed. Check again.'};
     if (!result.ok) {
       this.update({tradeMessage:result.message ?? 'Position data unavailable.'});
-      return {ok:false, say:'Check positions on screen.'};
+      return {ok:false, say:'Position data unavailable.'};
     }
     const number = (value: unknown) =>
       (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) && Number.isFinite(Number(value)) ? Number(value) : null;
@@ -522,8 +545,8 @@ export class Voice {
     const settlementsAvailable = Array.isArray(result.settlements?.rows) && !result.settlements.error;
     const positions: VoicePosition[] = (positionsAvailable ? result.positions.rows : []).map((row: Record<string, unknown>) => ({
       event_title: name(row['event_title'] ?? row['title']), contract_label: name(row['contract_label']),
-      outcome: name(row['outcome']), quantity: number(row['totalQuantity']), average_price: number(row['avgPrice']),
-      market_value_usd: number(row['marketValue']), unrealized_pnl_usd: number(row['unrealizedPnl']),
+      outcome: name(row['outcome']), quantity: number(row['totalQuantity']), quantity_on_hold: number(row['quantityOnHold']), average_price: number(row['avgPrice']),
+      market_value_usd: number(row['marketValue']), unrealized_pnl_usd: number(row['unrealizedPnl']), realized_pnl_usd: number(row['realizedPl']),
       net_profit_usd: number(row['netProfit']), mark_price: number(row['markPrice']),
       current_bid: number(row['current_bid']), on_screen: !!symbol && symbol === row['symbol'],
     }));
@@ -536,7 +559,21 @@ export class Voice {
     }));
     const snapshot = {as_of:result.as_of, positions, settlements, positions_available:positionsAvailable, settlements_available:settlementsAvailable};
     this.update({positionSnapshot:snapshot});
-    return {ok:true, ...snapshot};
+    const orderFeed = (feed: {error?: string; rows?: Record<string, unknown>[]} | undefined) => {
+      if (!feed || feed.error || !Array.isArray(feed.rows)) return null;
+      const rows = [...feed.rows].sort((a, b) => {
+        const onScreen = (row: Record<string, unknown>) => Number(!!symbol && symbol === row['symbol']);
+        return onScreen(b) - onScreen(a) || String(b['updatedAt'] ?? '').localeCompare(String(a['updatedAt'] ?? ''));
+      });
+      return rows.slice(0, 12).map(row => ({
+        event_title:name(row['event_title']), contract_label:name(row['contract_label']),
+        side:name(row['side']), outcome:name(row['outcome']), status:name(row['status']),
+        quantity:number(row['quantity']), filled_quantity:number(row['filledQuantity']),
+        remaining_quantity:number(row['remainingQuantity']), average_fill_price:number(row['avgExecutionPrice']),
+        limit_price:number(row['price']), on_screen:!!symbol && symbol === row['symbol'],
+      }));
+    };
+    return {ok:true, ...snapshot, open_orders:orderFeed(result.orders), recent_orders:orderFeed(result.history)};
   }
 
   private showExchangeResult(result: Awaited<ReturnType<typeof tradingRequest>>) {

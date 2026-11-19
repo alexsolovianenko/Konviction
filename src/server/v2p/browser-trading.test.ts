@@ -246,10 +246,7 @@ it("rejects superseded, expired and ended-session proposals", async () => {
   expect(gPrivate).not.toHaveBeenCalled();
 });
 
-it("keeps account reads PIN-protected, projects approved fields, and distinguishes missing rows from empty reports", async () => {
-  const read = (p: string) => run({ method: "POST", path: "portfolio", body: { pin: p } });
-  await expect(read("0000")).rejects.toMatchObject({ code: "WRONG_PIN" });
-  expect(gPrivate).not.toHaveBeenCalled();
+it("reads shared account fields without a PIN and distinguishes missing rows from empty reports", async () => {
   vi.mocked(gPrivate)
     .mockResolvedValueOnce({
       ok: true,
@@ -259,7 +256,7 @@ it("keeps account reads PIN-protected, projects approved fields, and distinguish
     })
     .mockResolvedValueOnce({ ok: true, status: 200, text: "", data: { positions: [] } })
     .mockResolvedValueOnce({ ok: false, status: 403, text: "", data: null });
-  const a = await read(pin);
+  const a = await run({ method: "POST", path: "portfolio", body: {} });
   expect(a.orders.rows).toEqual([{ orderId: "9", symbol: "C" }]);
   expect(a.positions.rows).toEqual([]);
   expect(a.history.error).toBeTruthy();
@@ -368,13 +365,11 @@ it("opens a trusted device only with a fresh single-use local pairing code", asy
   await expect(pair(expired)).rejects.toMatchObject({code:"PAIRING_EXPIRED"});
 });
 
-it("requires paired device identity for private reads", async () => {
-  const device = await paired();
-  await expect(run({path:"portfolio",method:"POST",body:{}})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
+it("provides human-readable position names to an unpaired browser", async () => {
   vi.mocked(gPrivate).mockResolvedValue({
     ok:true,status:200,text:"", data:{ orders:[], positions:[{symbol:"C",contractMetadata:{eventName:"Bitcoin today",contractName:"Up",otherPrivate:"redacted"}}] },
   });
-  const portfolio = await run({...device,path:"portfolio",method:"POST",body:{}});
+  const portfolio = await run({path:"portfolio",method:"POST",body:{}});
   expect(portfolio.positions.rows).toEqual([{symbol:"C",event_title:"Bitcoin today",contract_label:"Up"}]);
 });
 
@@ -430,4 +425,17 @@ it("verifies native combo eligibility and preserves the signed limit when quotes
   event.status = "settled";
   expect(await produce()).toMatchObject({ok:false,error:"COMBO_UNAVAILABLE"});
   expect(gPrivate).toHaveBeenCalledTimes(1);
+});
+
+it("dismisses only the pending proposal belonging to the selecting session", async () => {
+  const owner = token();
+  const other = token();
+  const { proposal } = await propose(owner);
+  const dismiss = (t: string) => run({method:"POST", path:"dismiss-proposal", token:t, body:{proposal_id:proposal.proposal_id}});
+  const status = () => repo.db.prepare("SELECT status FROM browser_proposals WHERE id=?").get(proposal.proposal_id).status;
+  await dismiss(other);
+  expect(status()).toBe("PROPOSED");
+  await dismiss(owner);
+  await expect(approve(owner, proposal.proposal_id)).rejects.toMatchObject({code:"SUPERSEDED"});
+  expect(gPrivate).not.toHaveBeenCalled();
 });

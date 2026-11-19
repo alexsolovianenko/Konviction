@@ -46,6 +46,9 @@ export async function prepareTrade(b: Body, saveProposal) {
       "Call find_market (or get_portfolio for a sell) first and pass instrument_symbol and event_ticker exactly.",
     );
 
+  const market = b.order_mode === "market";
+  if (b.order_mode !== undefined && !["market", "limit"].includes(b.order_mode))
+    return err("BAD_INPUT", "Unsupported order mode.");
   const budget = num(b.budget_usd);
   const qtyIn = num(b.quantity);
   const priceLimitIn = num(b.max_price ?? b.limit_price);
@@ -67,7 +70,7 @@ export async function prepareTrade(b: Body, saveProposal) {
   const expiryIso = c.expiryDate ?? event.expiryDate ?? null;
   if (expiryIso && Date.parse(expiryIso) <= Date.now())
     return err("CONTRACT_NOT_OPEN", "This contract has expired.");
-  if (side === "buy" && expiryIso && Date.parse(expiryIso) - Date.now() <= BUY_CUTOFF_MS)
+  if (expiryIso && Date.parse(expiryIso) - Date.now() <= BUY_CUTOFF_MS)
     return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   const q = quoteFor(c, outcome as "yes" | "no");
   const label = c.label ?? c.ticker ?? symbol;
@@ -75,19 +78,21 @@ export async function prepareTrade(b: Body, saveProposal) {
 
   let quantity: number, limit: number, quotePrice: number | null;
   if (side === "buy") {
-    if (q.buy === null && (priceLimitIn === null || c.isCombo))
+    if (q.buy === null && (market || priceLimitIn === null || c.isCombo))
       return err(
         "NO_LIQUIDITY",
         c.isCombo ? "No ask for this combo." : "No ask available. What limit price?",
       );
     quotePrice = q.buy;
-    limit = priceLimitIn ?? q.buy;
+    limit = priceLimitIn ?? (market ? LIMITS.maxLimitPrice : q.buy);
+    if (market && q.buy > limit)
+      return err("PRICE_ABOVE_YOUR_MAX", "The ask is above your price ceiling.");
     if (limit < LIMITS.minLimitPrice || limit > LIMITS.maxLimitPrice)
       return err("LIMIT_PRICE_CAP", `The order limit must be between 1¢ and ${cents(LIMITS.maxLimitPrice)}.`, { max_price: LIMITS.maxLimitPrice });
     if (qtyIn !== null) {
       quantity = Math.floor(qtyIn);
     } else if (budget !== null) {
-      quantity = budgetQuantity(budget, limit);
+      quantity = budgetQuantity(budget, market ? q.buy : limit);
     } else {
       return err(
         "BAD_INPUT",
@@ -95,54 +100,55 @@ export async function prepareTrade(b: Body, saveProposal) {
       );
     }
   } else {
-    // SELL: only what we hold and is not on hold.
+    if (budget !== null || (b.close_all === true) === (qtyIn !== null))
+      return err("BAD_INPUT", "Choose a quantity to sell or close the whole available position.");
     const pos = await gPrivate("/v1/prediction-markets/positions");
-    if (!pos.ok)
-      return err("EXCHANGE_ERROR", "Couldn't read positions from Gemini. Nothing was prepared.", {
-        detail: pos.error ?? pos.text.slice(0, 200),
-      });
-    // deno-lint-ignore no-explicit-any
-    const p = (pos.data?.positions ?? []).find(
-      (x: any) => x.symbol === symbol && String(x.outcome).toLowerCase() === outcome,
-    );
-    const available = p
-      ? Math.floor((num(p.totalQuantity) ?? 0) - (num(p.quantityOnHold) ?? 0))
-      : 0;
-    if (available <= 0)
-      return err(
-        "INSUFFICIENT_POSITION",
-        "There's no position in that contract and outcome to sell.",
-      );
-    if (q.sell === null)
-      return err(
-        "NO_BID",
-        "Nobody is bidding for this right now, so it can't be sold immediately. Nothing was prepared.",
-      );
-    quotePrice = q.sell;
-    limit = round2(priceLimitIn !== null ? priceLimitIn : q.sell);
-    if (limit > q.sell) {
-      return err(
-        "PRICE_BELOW_YOUR_MIN",
-        `The best bid is ${cents(q.sell)}, below the caller's minimum of ${cents(limit)}. Selling now at their minimum would not fill.`,
-        { current_bid: q.sell },
-      );
-    }
-    quantity = qtyIn !== null ? Math.floor(qtyIn) : available;
+    if (!pos.ok || !Array.isArray(pos.data?.positions))
+      return err("EXCHANGE_ERROR", "Gemini could not verify your position.");
+    const held = pos.data.positions.find(p => p.symbol === symbol && String(p.outcome).toLowerCase() === outcome);
+    if (!held) return err("INSUFFICIENT_POSITION", "No open position for that contract and outcome.");
+    const total = num(held.totalQuantity);
+    const onHold = num(held.quantityOnHold);
+    if (total === null || onHold === null || total < 0 || onHold < 0 || onHold > total)
+      return err("EXCHANGE_ERROR", "Available position size is unconfirmed.");
+    const available = Number((total - onHold).toPrecision(15));
+    if (available <= 0) return err("INSUFFICIENT_POSITION", "No contracts are available to sell.");
+    quantity = b.close_all === true ? available : qtyIn;
+    if (!(quantity > 0)) return err("BAD_INPUT", "Sell quantity must be positive.");
     if (quantity > available)
-      return err("INSUFFICIENT_POSITION", `Only ${available} contracts are available to sell.`, {
-        available,
-      });
+      return err("INSUFFICIENT_POSITION", `Only ${available} contracts are available to sell.`, { available });
+    const increment = num(c.quantityIncrement);
+    if (increment !== null && increment > 0 && Math.abs(quantity / increment - Math.round(quantity / increment)) > 1e-8)
+      return err("INVALID_QUANTITY", `Gemini requires quantities in increments of ${increment} for this contract.`, { available, increment });
+    quotePrice = q.sell;
+    if (quotePrice === null && (market || priceLimitIn === null))
+      return err("NO_BID", "No bid right now.");
+    limit = priceLimitIn ?? (market ? LIMITS.minLimitPrice : quotePrice);
+    if (!(limit >= LIMITS.minLimitPrice && limit <= 0.99))
+      return err("LIMIT_PRICE_CAP", "Choose a sell limit from 1 to 99 cents.");
+    if (market && quotePrice < limit)
+      return err("PRICE_BELOW_YOUR_MIN", "The current bid is below your minimum.", { current_bid: quotePrice });
   }
 
-  if (!Number.isFinite(quantity) || quantity < 1)
+  if (side === "buy" && (!Number.isFinite(quantity) || quantity < 1))
     return err("CAP_EXCEEDED", "That amount is too small to buy even one contract at this price.");
   const minimum = num(c.quantityMinimum);
   if (minimum !== null && quantity < minimum)
     return err("BELOW_CONTRACT_MINIMUM", `Gemini requires at least ${minimum} contracts for this market. Your order sizes to ${quantity}. Choose another contract or request a new size.`);
-  if (quantity > LIMITS.maxQuantity)
+  if (quantity > LIMITS.maxQuantity && !(side === "sell" && b.close_all === true))
     return err("CAP_EXCEEDED", `Demo limit is ${LIMITS.maxQuantity} contracts per order.`);
-  const notional = round2(quantity * limit);
-  const fee = feeEstimate(quantity, limit);
+  const estimatePrice = side === "sell" && market ? q.sell : limit;
+  let notional = round2(quantity * estimatePrice);
+  let fee = feeEstimate(quantity, estimatePrice);
+  if (market && side === "buy") {
+    // Reserve up to the confirmed dollar amount even as the ask changes. Size
+    // from the quote, then recompute the affordable remainder at each attempt.
+    const maximum = Math.min(budget ?? Infinity, LIMITS.maxOrderUsd, round2(notional + fee + (quantity > 1 ? 0.01 : 0)));
+    if (budget === null && budgetQuantity(maximum, q.buy) < quantity)
+      return err("CAP_EXCEEDED", "The requested quantity exceeds the per-order limit at the current ask.");
+    fee = feeEstimate(quantity, q.buy);
+    notional = round2(maximum - fee);
+  }
   if (side === "buy" && notional + fee > LIMITS.maxOrderUsd + 1e-9) {
     return err(
       "CAP_EXCEEDED",
@@ -150,16 +156,17 @@ export async function prepareTrade(b: Body, saveProposal) {
     );
   }
   const confirmationEnd = Date.now() + LIMITS.intentTtlSeconds * 1000;
-  const marketCutoff = side === "buy" && expiryIso ? Date.parse(expiryIso) - BUY_CUTOFF_MS : Infinity;
+  const marketCutoff = expiryIso ? Date.parse(expiryIso) - BUY_CUTOFF_MS : Infinity;
   const expiresAt = new Date(Math.min(confirmationEnd, Number.isFinite(marketCutoff) ? marketCutoff : Infinity)).toISOString();
   const readback =
     side === "buy"
       ? `Buy ${quantity} ${outcomeText} on "${event.title}" at up to ${cents(limit)}. Confirm?`
-      : `Sell ${quantity} ${outcomeText} contracts on "${event.title}" at no less than ${cents(limit)} each — about ${usd(notional)} before an estimated ${usd(fee)} fee. Only what sells immediately is sold.`;
+      : `Sell ${quantity} ${outcomeText} ${market ? "at market" : "at " + cents(limit) + " or more"}. Confirm?`;
 
   return saveProposal({
     side,
-    time_in_force: side === "buy" ? "good-til-cancel" : "immediate-or-cancel",
+    ...(market && {order_mode: "market"}),
+    time_in_force: market ? "immediate-or-cancel" : "good-til-cancel",
     event_ticker: eventTicker,
     instrument_symbol: symbol,
     title: event.title,
@@ -212,7 +219,7 @@ function exchangeQuantity(value: unknown) {
 }
 
 export function remainderBuy(intent, summary, filled, status) {
-  if (intent.side !== "buy" || !["PARTIAL", "NOT_FILLED"].includes(summary) ||
+  if (intent.order_mode === "market" || intent.side !== "buy" || !["PARTIAL", "NOT_FILLED"].includes(summary) ||
       !["cancelled", "canceled", "closed"].includes(String(status).toLowerCase())) return null;
   const executed = exchangeQuantity(filled);
   const quantity = Number(intent.quantity) - executed;
@@ -243,7 +250,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   const limit = Number(it.limit_price);
   // The signed limit caps the exchange price even if the ask changes between
   // this snapshot and matching. A buy below the current ask can still be tried.
-  if (it.side === "sell" && (q.sell === null || q.sell < limit - 1e-9)) {
+  if (it.side === "sell" && it.time_in_force !== "good-til-cancel" && it.order_mode !== "market" && (q.sell === null || q.sell < limit - 1e-9)) {
     await finish("REJECTED");
     await log("PRICE_MOVED", caller, `${code}: bid now ${q.sell ?? "none"} vs min ${limit}`);
     return err(
@@ -258,15 +265,25 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     await finish("REJECTED");
     return err("CONTRACT_NOT_OPEN", "This contract has expired.");
   }
-  const submitBefore = it.side === "buy" && expiry ? Date.parse(expiry) - BUY_CUTOFF_MS : undefined;
+  const submitBefore = expiry && (it.side === "buy" || it.order_mode === "market" || it.time_in_force === "good-til-cancel") ? Date.parse(expiry) - BUY_CUTOFF_MS : undefined;
   if (submitBefore !== undefined && Date.now() >= submitBefore) {
     await finish("REJECTED");
     return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   }
+  if (it.side === "sell") {
+    const positions = await gPrivate("/v1/prediction-markets/positions");
+    const holding = positions.data?.positions?.find(p => p.symbol === it.instrument_symbol && String(p.outcome).toLowerCase() === it.outcome);
+    const held = num(holding?.totalQuantity), onHold = num(holding?.quantityOnHold);
+    if (!positions.ok || held === null || onHold === null || Number(it.quantity) > held - onHold + 1e-9) {
+      await finish("REJECTED");
+      return err("INSUFFICIENT_POSITION", "The confirmed quantity is no longer available to sell.");
+    }
+  }
+  if (it.order_mode === "market") return executeMarketOrder(it, caller, c, submitBefore, {finish, log, receipt, saveOrder});
   const callerHash = await hashPhone(caller);
 
   // Older proposals promised immediate cancellation and must retain that condition.
-  const resting = it.side === "buy" && it.time_in_force === "good-til-cancel";
+  const resting = it.time_in_force === "good-til-cancel";
   const orderFields = {
     symbol: it.instrument_symbol,
     orderType: "limit",
@@ -422,4 +439,116 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     say: say[summary],
     ...(summary === "EXCHANGE_REJECTED" && { voice_say: typeof reason === "string" && Object.hasOwn(voiceReasons, reason) ? voiceReasons[reason] : "Rejected. Check order details." }),
   });
+}
+
+// Gemini's marketable limit orders are IOC. Retry only an explicitly cancelled,
+// identified order's unfilled amount. A transport failure never justifies a retry.
+async function executeMarketOrder(it, caller, contract, submitBefore, { finish, log, receipt, saveOrder }) {
+  const target = Number(it.quantity);
+  const buy = it.side === "buy";
+  const limit = Number(it.limit_price);
+  const maxCost = round2(Number(it.notional_usd) + Number(it.est_fee_usd));
+  let spent = 0, fees = 0, filled = 0;
+  let knownAverage = true, uncertain = false, rejected = false;
+  let reason = "";
+  const attempts = [];
+  await receipt(it.id, it.code, "approval", {
+    caller_hash: await hashPhone(caller), instrument_symbol: it.instrument_symbol, outcome: it.outcome,
+    side: it.side, quantity: target, order_mode: "market", ...(buy && {max_cost_usd: maxCost}), limit_price: limit,
+    approved_at: new Date().toISOString(),
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) {
+      const { event } = await getEvent(it.event_ticker);
+      contract = findContract(event, it.instrument_symbol);
+      if (!contract || event?.ticker !== it.event_ticker || contract.status !== "active" || contract.marketState !== "open") {
+        reason = "Market unavailable for another attempt.";
+        break;
+      }
+      const expiry = Date.parse(contract.expiryDate ?? event.expiryDate);
+      if (Number.isFinite(expiry)) submitBefore = Math.min(submitBefore ?? Infinity, expiry - BUY_CUTOFF_MS);
+    }
+    if (submitBefore !== undefined && Date.now() >= submitBefore) { reason = "Market cutoff reached."; break; }
+    const quote = quoteFor(contract, it.outcome)[buy ? "buy" : "sell"];
+    if (quote === null) { reason = buy ? "No current ask." : "No current bid."; break; }
+    const price = (buy ? Math.ceil(quote * 100 - 1e-9) : Math.floor(quote * 100 + 1e-9)) / 100;
+    if (buy ? price > limit : price < limit) {
+      reason = buy ? "Ask above the approved price ceiling." : "Bid below the approved price floor.";
+      break;
+    }
+    const costLeft = Math.max(0, Math.floor((maxCost - spent - fees) * 100 + 1e-8) / 100);
+    const remaining = Number((target - filled).toFixed(8));
+    const increment = num(contract.quantityIncrement);
+    const sellable = increment !== null && increment > 0
+      ? Number((Math.floor(remaining / increment + 1e-9) * increment).toFixed(8)) : remaining;
+    const quantity = buy ? Math.min(Math.floor(remaining), budgetQuantity(costLeft, price)) : sellable;
+    if (quantity <= 0 || quantity < (num(contract.quantityMinimum) ?? 0)) {
+      reason = buy ? "Remaining budget or quantity is below the order minimum." : "Remaining quantity is below the order minimum.";
+      break;
+    }
+    const fields = { symbol: it.instrument_symbol, side: it.side, outcome: it.outcome,
+      orderType: "limit", timeInForce: "immediate-or-cancel", price: price.toFixed(2), quantity: String(quantity), makerOrCancel: false };
+    await log("ORDER_SENT", caller, "Submitting market IOC attempt " + (attempt + 1), fields);
+    const placed = await gPrivate("/v1/prediction-markets/order", fields, {submitBefore});
+    if (placed.missedDeadline) { reason = "Market cutoff reached."; break; }
+    let order = placed.data;
+    let summary = classifyExchangeOrder(order, quantity, false);
+    if (placed.ok && order?.orderId && summary === "PENDING_UNKNOWN") {
+      const history = await gPrivate("/v1/prediction-markets/orders/history", {symbol: it.instrument_symbol, limit: 20});
+      const match = history.data?.orders?.find(row => String(row.orderId) === String(order.orderId));
+      if (history.ok && match) { order = match; summary = classifyExchangeOrder(order, quantity, false); }
+    }
+    attempts.push({ price, quantity, http_status: placed.status, order });
+    if (!placed.ok) {
+      uncertain = placed.status === 0 || placed.status === 408 || placed.status >= 500 || order?.reason === "DuplicateOrder";
+      rejected = !uncertain;
+      if (rejected && (order?.reason ?? order?.error) === "InsufficientLiquidity" && !attempt && order?.orderId == null) {
+        rejected = false;
+        continue;
+      }
+      if (rejected) reason = rejectionMessage(order, placed.status);
+      break;
+    }
+    const amount = exchangeQuantity(order?.filledQuantity);
+    if (order?.orderId == null || amount === null || amount < 0 || amount > quantity) {
+      uncertain = true;
+      break;
+    }
+    const average = num(order.avgExecutionPrice);
+    const validAverage = average !== null && average > 0 && average < 1 && (buy ? average <= price + 1e-9 : average + 1e-9 >= price);
+    if (amount > 0 && !validAverage) knownAverage = false;
+    const charged = validAverage ? average : price;
+    filled = Number((filled + amount).toFixed(8));
+    spent += amount * charged;
+    fees = round2(fees + feeEstimate(amount, charged));
+    if (summary === "PENDING_UNKNOWN") { uncertain = true; break; }
+    if (filled >= target) break;
+    if (summary === "FILLED") { reason = "Remaining budget is below one contract."; break; }
+    // A definitive cancelled order with intact exchange ID and fill count is
+    // the only path to the second attempt.
+    if (summary !== "PARTIAL" && summary !== "NOT_FILLED") break;
+  }
+  const ids = attempts.flatMap(a => a.order?.orderId == null ? [] : [String(a.order.orderId)]);
+  const outcome = uncertain ? "PENDING_UNKNOWN" : filled >= target ? "FILLED" :
+    filled > 0 ? "PARTIAL" : rejected ? "EXCHANGE_REJECTED" : "NOT_FILLED";
+  const avg = knownAverage && filled > 0 ? spent / filled : null;
+  const fillText = filled > 0 ? `Filled ${filled} of ${target} sandbox contracts${avg === null ? "" : " at an average of " + cents(avg)}.` :
+    "No sandbox contracts filled.";
+  if (!reason && !uncertain && filled < target) reason = "The remainder did not match at the attempted prices.";
+  const say = uncertain
+    ? (filled > 0 ? `At least ${filled} filled. ` : "") + "Final fill unknown. Check order history."
+    : fillText + (reason ? " " + reason : "");
+  const last = attempts.at(-1)?.order;
+  const gross = filled > 0 && knownAverage ? round2(spent) : (filled === 0 && !uncertain ? 0 : null);
+  const result = { side: it.side, ok: outcome !== "EXCHANGE_REJECTED", order_mode: "market", outcome_summary: outcome, say, voice_say: say,
+    order_id: ids[0] ?? null, order_ids: ids, exchange_status: last?.status ?? null, filled_quantity: filled || (uncertain ? null : 0),
+    remaining_quantity: uncertain ? null : Number((target - filled).toFixed(8)), avg_price: avg,
+    filled_notional_usd: buy ? round2(spent) : 0, ...(!buy && {gross_proceeds_usd: gross}), est_fee_usd: fees };
+  await saveOrder({ intent_id: it.id, side: it.side, gemini_order_id: result.order_id, outcome_summary: outcome,
+    exchange_status: result.exchange_status, filled_qty: result.filled_quantity, remaining_qty: result.remaining_quantity,
+    avg_price: avg, filled_notional_usd: result.filled_notional_usd, error: reason || null, raw: {attempts, result} });
+  await finish(outcome === "EXCHANGE_REJECTED" ? "FAILED" : "DONE");
+  await receipt(it.id, it.code, "result", result);
+  await log("ORDER_" + outcome, caller, say, {order_ids: ids});
+  return json(result);
 }

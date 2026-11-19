@@ -8,16 +8,18 @@
 //   POST call-confirm            ElevenLabs webhook + session + spoken readback and confirmation
 //   POST order-result (Bearer)   poll the caller’s proposal without submitting
 //   POST end         (Bearer)    revoke the session
-//   POST portfolio               typed PIN -> sanitized Gemini open orders, positions, order history
+//   POST portfolio               sanitized shared sandbox Gemini open orders, positions, order history
 //
 // The ElevenLabs system injects the conversation history and call ID into its server webhook.
+import { validOrderKeys } from "./browser-order-input";
 import { spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { db, executionEnabled, logActivity } from "./db";
 import { settledOpenOrders } from "./reconcile-open";
+import { sandboxPortfolio } from "./portfolio";
 import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
-import { gPrivate, getUsdAvailable, hasCredentials } from "./gemini";
-import { prepareTrade, executeTrade, remainderBuy, isValidBuySize } from "./trade-engine";
+import { getUsdAvailable, hasCredentials } from "./gemini";
+import { prepareTrade, executeTrade, remainderBuy } from "./trade-engine";
 import { dailyCapError, orderCapError, supabaseLedger } from "./ledger";
 import {
   fetchSignedUrl, mintSessionToken, SESSION_PREFIX, SESSION_TTL_MS, sessionConfigured, verifySessionToken,
@@ -46,6 +48,9 @@ export const GLOBAL_GUARD = "approval-pin:global";
 export type Store = ReturnType<typeof supabaseStore>;
 export function supabaseStore() {
   const now = () => new Date().toISOString();
+  // Proposal codes are opaque, immutable and server-generated. The prefix
+  // preserves the selected execution strategy on pre-existing SQL schemas.
+  const decode = row => row?.code?.startsWith("market:") ? {...row, order_mode: "market"} : row;
   return {
     async createSession(sid: string) {
       const { error } = await db.from("callers").insert({ phone: SESSION_PREFIX + sid, call_count: 1 });
@@ -65,21 +70,30 @@ export function supabaseStore() {
       const { error } = await db.from("intents").update({ status: "SUPERSEDED", updated_at: now() }).eq("caller", caller).eq("status", "PROPOSED");
       if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Could not replace the previous proposal.", 503);
     },
+    async dismissProposal(id: string, caller: string) {
+      const { error } = await db.from("intents").update({ status: "SUPERSEDED", updated_at: now() })
+        .eq("id", id).eq("caller", caller).eq("status", "PROPOSED");
+      if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Could not dismiss the proposal.", 503);
+    },
     async insertIntent(row) {
-      const { data, error } = await db.from("intents").insert(row).select("id").single();
+      const {order_mode, ...stored} = row;
+      if (order_mode === "market") stored.code = "market:" + stored.code;
+      const { data, error } = await db.from("intents").insert(stored).select("id").single();
+      if (error?.code === "22P02" && row.side === "sell" && !Number.isInteger(row.quantity))
+        throw new TradeError("FRACTIONAL_STORAGE_UNAVAILABLE", "This account ledger needs the fractional quantity migration before it can store that exit.", 503);
       if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Could not save the proposal. Nothing was placed.", 503);
       return data.id as string;
     },
     /** Atomic single use: PROPOSED -> EXECUTING once, only for this session and only before expiry. */
     async claim(id: string, caller: string) {
       const { data, error } = await db.from("intents").update({ status: "EXECUTING", updated_at: now() })
-        .eq("id", id).eq("caller", caller).eq("status", "PROPOSED").eq("side", "buy").gt("expires_at", now()).select("*");
+        .eq("id", id).eq("caller", caller).eq("status", "PROPOSED").in("side", ["buy", "sell"]).gt("expires_at", now()).select("*");
       if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Approval service unavailable. Nothing was placed.", 503);
-      return data?.length === 1 ? data[0] : null;
+      return data?.length === 1 ? decode(data[0]) : null;
     },
     async getIntent(id: string) {
       const { data } = await db.from("intents").select("*").eq("id", id).maybeSingle();
-      return data;
+      return decode(data);
     },
     async setIntentStatus(id: string, status: string) {
       const { error } = await db.from("intents").update({ status, updated_at: now() }).eq("id", id);
@@ -95,7 +109,7 @@ export function supabaseStore() {
     },
     async reconcileOpen(history?) {
       const { data, error } = await db.from("orders")
-        .select("intent_id,gemini_order_id,intents!inner(instrument_symbol,quantity,limit_price)").eq("outcome_summary", "OPEN");
+        .select("intent_id,gemini_order_id,side,intents!inner(instrument_symbol,quantity,limit_price)").eq("outcome_summary", "OPEN");
       if (error) return;
       const updates = await settledOpenOrders(data.map(row => ({ ...row, ...row.intents })), history);
       for (const { intent_id, ...fields } of updates) {
@@ -110,9 +124,6 @@ export function supabaseStore() {
 
 // ------------------------------------------------------------------ config
 
-function pinConfigured() {
-  return /^\d{4,8}$/.test(env("DEMO_PIN") ?? "");
-}
 const hasSupabase = () => Boolean(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"));
 const hasBlob = () => env("LOCAL_BROWSER_LEDGER") !== "sqlite" && Boolean(env("BLOB_READ_WRITE_TOKEN") || env("BLOB_STORE_ID"));
 const defaultStore = () => hasSupabase() || !hasBlob() ? supabaseStore() : blobStore();
@@ -129,7 +140,7 @@ export async function availability() {
   return {
     ok: true,
     execution_enabled: missing.length === 0,
-    voice_authorized: false, // account access still requires separate authorization
+    voice_authorized: false, // hosted order confirmation uses the call webhook
     voice_confirmation_supported: missing.length === 0,
     call_confirmation_supported: missing.length === 0,
     message: missing.length ? "Approval unavailable. Configure " + missing.join(", ") + "." : "Sandbox approval is enabled.",
@@ -147,34 +158,6 @@ async function requireSession(store: Store, token: string | undefined) {
     throw new TradeError("LOCKED", "This voice session is closed or locked. Start a new session.", 423);
   }
   return { ...claims, caller: SESSION_PREFIX + claims.sid };
-}
-
-/** Typed-PIN check with a per-session lock (3 misses) and an account-wide lock (10 misses). */
-async function requirePin(store: Store, pin: unknown, sessionKey: string | null) {
-  if (!pinConfigured()) throw new TradeError("PIN_UNCONFIGURED", "Approval PIN is not configured on the server.", 503);
-  if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) bad();
-  if (store.verifyPinAttempt) return store.verifyPinAttempt(sessionKey, await secretEqual(pin, env("DEMO_PIN") ?? ""));
-  const nowMs = Date.now();
-  const locked = (r) => r?.locked_until && Date.parse(r.locked_until) > nowMs;
-  const global = await store.getGuard(GLOBAL_GUARD);
-  if (locked(global)) throw new TradeError("LOCKED", "Too many wrong PINs. Approval is locked for 15 minutes.", 429);
-  const session = sessionKey ? await store.getGuard(sessionKey) : null;
-  if (locked(session)) throw new TradeError("LOCKED", "Too many wrong PINs for this session. Start a new session later.", 429);
-
-  if (await secretEqual(pin, env("DEMO_PIN") ?? "")) {
-    if ((global?.pin_failures ?? 0) > 0) await store.setGuard(GLOBAL_GUARD, 0, null);
-    if (sessionKey && (session?.pin_failures ?? 0) > 0) await store.setGuard(sessionKey, 0, null);
-    return;
-  }
-  const until = new Date(nowMs + PIN_LOCK_MS).toISOString();
-  const g = (global?.pin_failures ?? 0) + 1;
-  await store.setGuard(GLOBAL_GUARD, g >= GLOBAL_PIN_ATTEMPTS ? 0 : g, g >= GLOBAL_PIN_ATTEMPTS ? until : null);
-  if (sessionKey) {
-    const s = (session?.pin_failures ?? 0) + 1;
-    await store.setGuard(sessionKey, s >= SESSION_PIN_ATTEMPTS ? 0 : s, s >= SESSION_PIN_ATTEMPTS ? until : null);
-  }
-  await store.log("PIN_FAILED", sessionKey, "Wrong approval PIN"); // never the PIN itself
-  throw new TradeError("WRONG_PIN", "Incorrect PIN. Nothing was placed.", 403);
 }
 
 // ------------------------------------------------------------------ actions
@@ -198,35 +181,27 @@ async function startSession(store: Store, fetchImpl?: typeof fetch) {
 
 async function propose(store: Store, token: string | undefined, body) {
   const s = await requireSession(store, token);
-  const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity"];
-  if (body && Object.hasOwn(body, "limit_price")) keys.push("limit_price");
-  if (
-    !keysAre(body, keys) ||
-    !keys.slice(0, 2).every((k) => typeof body[k] === "string" && SYMBOL.test(body[k])) ||
-    !["yes", "no"].includes(body.outcome) ||
-    !isValidBuySize(body) ||
-    (Object.hasOwn(body, "limit_price") && (!Number.isFinite(body.limit_price) ||
-      body.limit_price < 0.01 || body.limit_price > 0.99 ||
-      Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8))
-  ) bad();
+  if (!validOrderKeys(body)) bad();
 
   const response = await prepareTrade(
-    { event_ticker: body.event_ticker, instrument_symbol: body.contract_symbol, side: "buy", outcome: body.outcome,
-      quantity: body.quantity, budget_usd: body.budget_usd, limit_price: body.limit_price },
+    { event_ticker: body.event_ticker, instrument_symbol: body.contract_symbol, side: body.side ?? "buy", close_all: body.close_all, outcome: body.outcome,
+      quantity: body.quantity, budget_usd: body.budget_usd, limit_price: body.limit_price, order_mode: body.order_mode },
     async ({ readback, ...terms }) => {
-      let committed = await store.committedUsd();
-      if (committed !== null && dailyCapError(committed, terms.notional_usd + terms.est_fee_usd) && store.reconcileOpen) {
-        await store.reconcileOpen();
-        committed = await store.committedUsd();
+      if (terms.side === "buy") {
+        let committed = await store.committedUsd();
+        if (committed !== null && dailyCapError(committed, terms.notional_usd + terms.est_fee_usd) && store.reconcileOpen) {
+          await store.reconcileOpen();
+          committed = await store.committedUsd();
+        }
+        if (committed === null) return json({ ok: false, error: "RISK_UNAVAILABLE", message: "Could not verify the daily sandbox limit. Nothing was prepared." });
+        const capErr = dailyCapError(committed, terms.notional_usd + terms.est_fee_usd);
+        if (capErr) return json({ ok: false, error: "CAP_EXCEEDED", message: capErr });
       }
-      if (committed === null) return json({ ok: false, error: "RISK_UNAVAILABLE", message: "Could not verify the daily sandbox limit. Nothing was prepared." });
-      const capErr = dailyCapError(committed, terms.notional_usd + terms.est_fee_usd);
-      if (capErr) return json({ ok: false, error: "CAP_EXCEEDED", message: capErr });
       await store.supersede(s.caller);
       const code = randomCode();
       const id = await store.insertIntent({ ...terms, code, caller: s.caller, conversation_id: s.cid });
       await store.log("INTENT_PROPOSED", s.caller,
-        `BUY ${terms.quantity} ${terms.outcome.toUpperCase()} ${terms.instrument_symbol} @ ≤${terms.limit_price}`,
+        `${terms.side.toUpperCase()} ${terms.quantity} ${terms.outcome.toUpperCase()} ${terms.instrument_symbol} @ ≤${terms.limit_price}`,
         { code, proposal_id: id, channel: "browser", notional: terms.notional_usd, fee: terms.est_fee_usd, quote: terms.quote_price });
       return json({ ok: true, proposal: { ...terms, readback, voice_readback: s.cid ? spokenProposal(terms) : undefined, proposal_id: id }, availability: await availability() });
     },
@@ -251,6 +226,9 @@ async function recordedResult(store: Store, row) {
     return { ok: true, status: row.status };
   const order = await store.getOrderByIntent(row.id);
   if (order) {
+    if (row.order_mode === "market" && order.raw?.result?.order_mode === "market") {
+      return order.raw.result;
+    }
     const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
     const say = order.outcome_summary === "EXCHANGE_REJECTED" ? "Gemini rejected the sandbox order." :
       order.outcome_summary === "OPEN" ? (Number(order.filled_qty) > 0 ? `Sandbox filled ${order.filled_qty} of ${row.quantity}. The rest is open.` : "Sandbox limit order open.") :
@@ -321,15 +299,17 @@ async function callConfirm(store: Store, token: string | undefined, body) {
 
   // Re-check limits on the stored proposal, then the shared daily ledger (this intent is now EXECUTING
   // and reserved; every concurrent claim that reads after ours sees our reservation).
-  const capErr = orderCapError(it);
-  if (capErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", capErr); }
-  const committed = await store.committedUsd({ excludeIntentId: it.id });
-  if (committed === null) {
-    await store.setIntentStatus(it.id, "REJECTED");
-    throw new TradeError("RISK_UNAVAILABLE", "Could not verify the daily sandbox limit. Nothing was placed.", 503);
+  if (it.side === "buy") {
+    const capErr = orderCapError(it);
+    if (capErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", capErr); }
+    const committed = await store.committedUsd({ excludeIntentId: it.id });
+    if (committed === null) {
+      await store.setIntentStatus(it.id, "REJECTED");
+      throw new TradeError("RISK_UNAVAILABLE", "Could not verify the daily sandbox limit. Nothing was placed.", 503);
+    }
+    const dayErr = dailyCapError(committed, Number(it.notional_usd) + Number(it.est_fee_usd));
+    if (dayErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", dayErr); }
   }
-  const dayErr = dailyCapError(committed, Number(it.notional_usd) + Number(it.est_fee_usd));
-  if (dayErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", dayErr); }
 
   await store.log("INTENT_APPROVED", s.caller, `${it.code}: confirmed in the voice call`, { proposal_id: it.id });
   const response = await executeTrade(it, s.caller, {
@@ -349,32 +329,12 @@ async function endSession(store: Store, token: string | undefined) {
   return { ok: true };
 }
 
-const accountFields = {
-  orders: ["orderId", "symbol", "side", "outcome", "status", "quantity", "price", "filledQuantity", "remainingQuantity", "avgExecutionPrice", "createdAt", "updatedAt"],
-  positions: ["symbol", "outcome", "totalQuantity", "quantityOnHold", "avgPrice", "marketValue"],
-};
-async function accountSection(path: string, kind: "orders" | "positions") {
-  const r = await gPrivate(path);
-  const rows = r.data?.[kind];
-  if (!r.ok || !Array.isArray(rows)) return { error: "Gemini Sandbox data unavailable.", rows: [] };
-  return {
-    rows: rows.slice(0, 100).map((row) => Object.fromEntries(
-      accountFields[kind].filter((k) => ["string", "number"].includes(typeof row?.[k])).map((k) => [k, row[k]]),
-    )),
-  };
-}
 async function portfolio(store: Store, body) {
-  if (!keysAre(body, ["pin"])) bad();
-  await requirePin(store, body.pin, null);
+  if (!keysAre(body, [])) bad();
   if (!hasCredentials()) throw new TradeError("ACCOUNT_UNCONFIGURED", "Gemini Sandbox credentials are not configured.", 503);
-  const [orders, positions, history, balance] = await Promise.all([
-    accountSection("/v1/prediction-markets/orders/active", "orders"),
-    accountSection("/v1/prediction-markets/positions", "positions"),
-    accountSection("/v1/prediction-markets/orders/history", "orders"),
-    getUsdAvailable(),
-  ]);
-  if (!history.error) await store.reconcileOpen?.(history.rows);
-  return { ok: true, as_of: new Date().toISOString(), source: "Gemini Sandbox", orders, positions, history, usd_available: balance.usd, balance_error: balance.error };
+  const [account, balance] = await Promise.all([sandboxPortfolio(), getUsdAvailable()]);
+  if (!account.history.error && (hasSupabase() || hasBlob())) await store.reconcileOpen?.(account.history.rows);
+  return { ...account, usd_available: balance.usd, balance_error: balance.error };
 }
 
 // ------------------------------------------------------------------ HTTP
@@ -393,6 +353,13 @@ export async function runBrowserTrading(
       if (!await secretEqual(callSecret ?? "", env("ELEVENLABS_CALL_CONFIRM_SECRET") ?? ""))
         throw new TradeError("UNAUTHORIZED", "Call confirmation unavailable.", 401);
       return callConfirm(store, token, body);
+    case "dismiss-proposal": {
+      const s = await requireSession(store, token);
+      if (!keysAre(body, ["proposal_id"])) bad();
+      validateProposalId(body.proposal_id);
+      await store.dismissProposal(body.proposal_id, s.caller);
+      return { ok: true };
+    }
     case "order-result": {
       const s = await requireSession(store, token);
       if (!keysAre(body, ["proposal_id"])) bad();

@@ -9,8 +9,11 @@ export type Availability = {
 };
 export type Proposal = {
   proposal_id: string;
+  side?: "buy" | "sell";
+  order_mode?: "market" | "limit";
   title: string;
   contract_label: string;
+  event_ticker?: string;
   instrument_symbol: string;
   outcome: string;
   quantity: number;
@@ -24,10 +27,9 @@ export type Proposal = {
   voice_readback?: string;
 };
 export const workerTrading = import.meta.env["VITE_WORKER_TRADING"] === true;
-export const PIN_PATTERN = /^\d{4,8}$/;
 
 export async function tradingRequest(
-  path: "availability" | "session" | "proposals" | "order-result" | "end" | "portfolio" | "pair" | "voice-confirm",
+  path: "availability" | "session" | "proposals" | "dismiss-proposal" | "order-result" | "end" | "portfolio" | "pair" | "voice-confirm",
   body?: object,
   token?: string,
   options: { keepalive?: boolean; idempotencyKey?: string } = {},

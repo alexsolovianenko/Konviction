@@ -173,6 +173,7 @@ async function findMarket(b: Body) {
 // ---------------------------------------------------------------- prepare_trade
 
 async function prepareTrade(b: Body) {
+  if (b.order_mode === "market") return err("BAD_INPUT", "Market buys are available in the browser voice call.");
   const caller = callerOf(b);
   return prepareQuotedTrade(b, async ({ readback: _displayReadback, ...terms }) => {
     const { side, outcome, quantity, limit_price: limit, notional_usd: notional, est_fee_usd: fee, instrument_symbol: symbol, quote_price: quotePrice } = terms;

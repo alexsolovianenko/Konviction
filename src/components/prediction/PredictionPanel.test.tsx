@@ -1,8 +1,7 @@
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Proposal } from "../../browserTrading";
-import type { Lookup, MarketResult } from "../../pages/useMarketTools";
-import { PredictionPanel, selectTarget } from "./PredictionPanel";
+import { marketTarget, useMarketTools, type MarketResult } from "../../pages/useMarketTools";
+import { PredictionPanel } from "./PredictionPanel";
 import { QuoteChart } from "./QuoteChart";
 import { useContractQuotes } from "./useContractQuotes";
 
@@ -168,38 +167,29 @@ it("drops a late response for the previous contract and stops polling on unmount
   expect(fetchMock).toHaveBeenCalledTimes(calls);
 });
 
-it("selects the proposal contract first, then a quoted contract, then a five-minute search match", () => {
-  const event = {
-    ticker: "BTC05M",
-    title: "BTC",
-    category: null,
-    status: "active",
-    contracts: [contract()],
-  };
-  const search: MarketResult = { ok: true, events: [event, { ...event, ticker: "LATER" }] };
-  const lookup = (query: string): Lookup[] => [
-    { id: 1, name: "search_markets", params: { query }, result: search, received: "" },
-  ];
-  expect(selectTarget(null, search, lookup("BTC five minutes"))).toEqual(target);
-  expect(selectTarget(null, search, lookup("bitcoin 5 min"))).toEqual(target);
-  expect(selectTarget(null, search, lookup("bitcoin"))).toBeNull();
-  expect(
-    selectTarget(
-      null,
-      { ok: true, events: [{ ...event, contracts: [contract(), contract()] }] },
-      [],
-    ),
-  ).toBeNull();
-  expect(selectTarget(null, { ok: false, error: "down" }, [])).toBeNull();
-  const quoted = {
-    ok: true,
-    event_ticker: "EV",
-    contract: contract({ symbol: "GEMI-EV-A" }),
-  } as MarketResult;
-  expect(selectTarget(null, quoted, [])).toEqual({ eventTicker: "EV", symbol: "GEMI-EV-A" });
-  const proposal = { instrument_symbol: "GEMI-P", event_ticker: "P" } as unknown as Proposal;
-  expect(selectTarget(proposal, quoted, [])).toEqual({ eventTicker: "P", symbol: "GEMI-P" });
-  expect(selectTarget({ instrument_symbol: "GEMI-P" } as Proposal, quoted, [])).toBeNull();
+it("keeps the newest selection when a slower quote for the previous market arrives", async () => {
+  const { result } = renderHook(() => useMarketTools());
+  let release!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { release = resolve; }))
+    .mockImplementationOnce(async () => quote({ event_ticker: "NEXT" }, { symbol: "NEXT-UP" }));
+  let first!: Promise<MarketResult>;
+  await act(async () => {
+    first = result.current.run("get_orderbook", { event_ticker: target.eventTicker, contract_symbol: target.symbol });
+    await result.current.run("get_orderbook", { event_ticker: "NEXT", contract_symbol: "NEXT-UP" });
+  });
+  await act(async () => {
+    release(quote());
+    expect((await first).ok).toBe(false);
+  });
+  expect(result.current.selected).toEqual({ eventTicker: "NEXT", symbol: "NEXT-UP" });
+  expect(result.current.result?.contract?.symbol).toBe("NEXT-UP");
+});
+
+it("chooses a unique search result for any asset and leaves ambiguous selections unset", () => {
+  const event = {ticker:target.eventTicker, title:"Market", category:null, status:"active", contracts:[contract()]};
+  expect(marketTarget({ok:true, events:[event]})).toEqual(target);
+  expect(marketTarget({ok:true, events:[event, {...event, ticker:"LATER"}]})).toBeNull();
+  expect(marketTarget({ok:true, events:[event, {...event, ticker:"LATER"}]}, "five minutes")).toEqual(target);
 });
 
 it("draws nothing without samples and breaks the line at gaps and unavailable prices", () => {
@@ -226,7 +216,7 @@ it("draws nothing without samples and breaks the line at gaps and unavailable pr
   expect(screen.getByRole("status")).toHaveTextContent("NO unavailable");
 });
 
-it("shows the labelled chart and the full PIN approval for the same contract", async () => {
+it("shows a voice-confirmed proposal beside its selected chart", async () => {
   fetchMock.mockImplementation(async () => quote());
   const approve = vi.fn(async () => {});
   const proposal = {
@@ -257,9 +247,10 @@ it("shows the labelled chart and the full PIN approval for the same contract", a
 
   voiceState.mockReturnValue(
     state({
+      market: { selected:target },
       view: {
-        proposal,
-        availability: { execution_enabled: true, message: "ready" },
+        proposal: {...proposal, voice_readback:"Confirm?"},
+        availability: { execution_enabled: true, call_confirmation_supported:true, message: "ready" },
         tradeMessage: "",
       },
     }),
@@ -272,11 +263,8 @@ it("shows the labelled chart and the full PIN approval for the same contract", a
     "This is not the BTC price",
   );
   expect(screen.getByText("Max. cost incl. est. fee").nextSibling).toHaveTextContent("$0.15");
-  fireEvent.change(screen.getByLabelText("Private approval PIN"), { target: { value: "7314" } });
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Approve sandbox buy" }));
-  });
-  expect(approve).toHaveBeenCalledWith("p1", "7314");
+  expect(screen.queryByLabelText("Private approval PIN")).toBeNull();
+  expect(screen.getByText("Awaiting spoken confirmation")).toBeVisible();
   // Polling for the chart never touches a trading route.
   expect(
     fetchMock.mock.calls.every((call) =>
@@ -289,7 +277,7 @@ it("opens a requested quote without showing purchase controls", async () => {
   fetchMock.mockImplementation(async () => quote());
   voiceState.mockReturnValue({
     voice: {},
-    market: { result: await quote().json(), history: [] },
+    market: { selected:target, result: await quote().json(), history: [] },
     view: { proposal: null, tradeMessage: "" },
   });
   render(<PredictionPanel />);

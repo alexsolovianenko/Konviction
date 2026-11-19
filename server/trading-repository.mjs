@@ -60,7 +60,7 @@ export class TradingRepository {
   openOrders() {
     return this.db.prepare(`
       SELECT id AS intent_id, json_extract(result, '$.order_id') AS gemini_order_id,
-        json_extract(terms, '$.instrument_symbol') AS instrument_symbol,
+        json_extract(terms, '$.instrument_symbol') AS instrument_symbol, json_extract(terms, '$.side') AS side,
         json_extract(terms, '$.quantity') AS quantity, json_extract(terms, '$.limit_price') AS limit_price
       FROM browser_proposals WHERE status='OPEN'
     `).all();
@@ -80,8 +80,8 @@ export class TradingRepository {
     return this.repository.transaction(() => {
       const replay = this.replay(owner, key, fingerprint);
       if (replay) return replay;
-      const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
-      if (
+      const cost = terms.side === "sell" ? 0 : Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
+      if (terms.side !== "sell" &&
         this.reservedToday(new Date().toISOString().slice(0, 10)) + cost >
         Math.round(maxDaily * 100)
       )
@@ -104,6 +104,9 @@ export class TradingRepository {
       return { ...terms, proposal_id: id };
     });
   }
+  dismiss(owner, id) {
+    this.db.prepare("UPDATE browser_proposals SET status='SUPERSEDED' WHERE owner=? AND id=? AND status='PROPOSED'").run(owner, id);
+  }
   claim(owner, id, limits, authorize) {
     return this.repository.transaction(() => {
       const row = this.db
@@ -125,12 +128,12 @@ export class TradingRepository {
       const terms = JSON.parse(row.terms);
       requirePendingProposal(row, terms);
       const day = new Date().toISOString().slice(0, 10);
-      const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
-      if (
+      const cost = terms.side === "sell" ? 0 : Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
+      if (terms.side !== "sell" && (
         terms.quantity > limits.maxQuantity ||
         terms.limit_price > limits.maxLimitPrice ||
         cost > Math.round(limits.maxOrderUsd * 100) ||
-        this.reservedToday(day) + cost > Math.round(limits.maxDailyUsd * 100)
+        this.reservedToday(day) + cost > Math.round(limits.maxDailyUsd * 100))
       )
         throw new TradeError(
           "CAP_EXCEEDED",
@@ -151,6 +154,12 @@ export class TradingRepository {
   }
   finish(id, result) {
     const unknown = result.outcome_summary === "PENDING_UNKNOWN";
+    if (result.order_mode === "market" && !unknown) {
+      const charged = result.side === "sell" ? 0 : Math.round((result.filled_notional_usd + result.est_fee_usd) * 100);
+      this.db.prepare("UPDATE browser_proposals SET status='DONE',result=?,reserved_cents=CASE WHEN json_extract(terms,'$.side')='sell' THEN 0 ELSE ? END WHERE id=? AND status='EXECUTING'")
+        .run(JSON.stringify(result), charged, id);
+      return;
+    }
     const release = !unknown && (!result.ok || result.outcome_summary === "NOT_FILLED");
     let retainedFraction = release ? 0 : 1;
     if (result.outcome_summary === "PARTIAL" && result.remainder_buy) {

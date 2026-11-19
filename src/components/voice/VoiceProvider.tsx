@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMarketTools, type MarketTools } from '../../pages/useMarketTools';
 import { Voice, initial, type VoiceView } from '../../voice';
 import { workerTrading } from '../../browserTrading';
@@ -53,12 +53,14 @@ export function deriveStatus(view: VoiceView, market: Pick<MarketTools, 'pending
 }
 
 export function VoiceProvider({ children }: { children: ReactNode }) {
-  const market = useMarketTools();
+  const voiceRef = useRef<Voice | null>(null);
+  const market = useMarketTools(target => voiceRef.current?.setVisibleContract(target?.eventTicker, target?.symbol));
   const [view, setView] = useState(initial);
   const [voice] = useState(
-    () => new Voice((patch) => setView((previous) => ({ ...previous, ...patch })), market.run),
+    () => new Voice((patch) => setView((previous) => ({ ...previous, ...patch })), market.run, market.select),
   );
   useEffect(() => {
+    voiceRef.current = voice;
     const hash = new URLSearchParams(window.location.hash.slice(1));
     const token = hash.get('pair');
     if (token && !workerTrading) {

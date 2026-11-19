@@ -1,8 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronRight, Search } from 'lucide-react';
-import { TradeApproval } from './TradeApproval';
+import { PredictionPanel } from '../components/prediction/PredictionPanel';
 import { MarketDiscoveryPanel } from '../components/prediction/MarketDiscoveryPanel';
-import { VoicePositions } from '../components/voice/VoicePositions';
 import { ActivityPanel } from '../components/voice/ActivityPanel';
 import { StatusBubble } from '../components/voice/StatusBubble';
 import { VoiceButton } from '../components/voice/VoiceButton';
@@ -24,7 +23,7 @@ export function Dashboard({ children }: { children?: ReactNode } = {}) {
 }
 
 function Workspace({ children }: { children?: ReactNode }) {
-  const { view, voice, market } = useVoice();
+  const { view, market } = useVoice();
   const [query, setQuery] = useState('');
   const result = market.result;
   return (
@@ -40,15 +39,7 @@ function Workspace({ children }: { children?: ReactNode }) {
           </section>
         </header>
 
-        <TradeApproval
-          proposal={view.proposal}
-          availability={view.availability}
-          message={view.tradeMessage}
-          remainderQuantity={view.remainderQuantity}
-          retry={() => voice.prepareRemainderOnScreen()}
-        />
-
-        <VoicePositions snapshot={view.positionSnapshot} />
+        <PredictionPanel key={market.selected?.symbol} />
         {children}
       </div>
 

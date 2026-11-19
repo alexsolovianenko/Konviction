@@ -1,7 +1,9 @@
+import { validOrderKeys } from "../src/server/v2p/browser-order-input.ts";
+import { sandboxPortfolio } from "../src/server/v2p/portfolio.ts";
 import { spokenProposal } from "./spoken-proposal.mjs";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { prepareTrade, executeTrade, isValidBuySize } from "../src/server/v2p/trade-engine.ts";
-import { gPrivate, hasCredentials } from "../src/server/v2p/gemini.ts";
+import { prepareTrade, executeTrade } from "../src/server/v2p/trade-engine.ts";
+import { hasCredentials } from "../src/server/v2p/gemini.ts";
 import { settledOpenOrders } from "../src/server/v2p/reconcile-open.ts";
 import { LIMITS, feeEstimate } from "../src/server/v2p/util.ts";
 import { TradingRepository, TradeError } from "./trading-repository.mjs";
@@ -14,7 +16,6 @@ const keysAre = (obj, keys) =>
   Object.keys(obj).length === keys.length &&
   keys.every((k) => Object.hasOwn(obj, k));
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const symbol = /^[A-Z0-9][A-Z0-9_.-]{0,99}$/;
 const hash = (text) => createHash("sha256").update(text).digest();
 const bad = () => {
   throw new TradeError("BAD_INPUT", "Invalid trade parameters.", 400);
@@ -49,45 +50,6 @@ function requirePin(store, pin) {
   if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) bad();
   store.checkPin(timingSafeEqual(hash(pin), hash(process.env.DEMO_PIN)));
 }
-const fields = {
-  settlements: ["symbol", "outcome", "resolutionSide", "positionQuantity", "netProfit", "payout", "settledAt"],
-  orders: [
-    "orderId",
-    "symbol",
-    "side",
-    "outcome",
-    "status",
-    "quantity",
-    "price",
-    "filledQuantity",
-    "remainingQuantity",
-    "avgExecutionPrice",
-    "updatedAt",
-  ],
-  positions: ["symbol", "outcome", "totalQuantity", "quantityOnHold", "avgPrice", "marketValue", "unrealizedPnl", "netProfit", "markPrice"],
-};
-async function accountSection(path, kind) {
-  const settled = kind === "settlements";
-  const r = settled ? await gPrivate(path, {}, { query: { limit: 5 } }) : await gPrivate(path);
-  const rows = r.data?.[settled ? "positions" : kind];
-  if (!r.ok || !Array.isArray(rows)) return { error: "Gemini Sandbox data unavailable.", rows: [] };
-  return {
-    rows: rows
-      .slice(0, settled ? 5 : 100)
-      .map((row) => {
-        const result = Object.fromEntries(fields[kind]
-          .filter((key) => ["string", "number"].includes(typeof row?.[key]))
-          .map((key) => [key, row[key]]));
-        if (kind === "positions" && ["yes", "no"].includes(String(row?.outcome).toLowerCase())) {
-          const bid = row.prices?.sell?.[row.outcome.toLowerCase()];
-          if (["string", "number"].includes(typeof bid)) result.current_bid = bid;
-        }
-        if (typeof row?.contractMetadata?.eventName === "string") result.event_title = row.contractMetadata.eventName;
-        if (typeof row?.contractMetadata?.contractName === "string") result.contract_label = row.contractMetadata.contractName;
-        return result;
-      }),
-  };
-}
 export function browserTrading(repo) {
   const store = new TradingRepository(repo);
   const devices = new TrustedDevices(repo);
@@ -105,7 +67,7 @@ export function browserTrading(repo) {
         ok: true, order_id: original.gemini_order_id, outcome_summary: record.outcome_summary,
         exchange_status: record.exchange_status, filled_quantity: record.filled_qty,
         remaining_quantity: record.remaining_qty, avg_price: record.avg_price, est_fee_usd: fee, say,
-      }, Math.round((record.filled_notional_usd + fee) * 100));
+      }, original.side === "sell" ? 0 : Math.round((record.filled_notional_usd + fee) * 100));
     }
   }
   return async ({ path, method, token, body, key, host, deviceCookie, setDeviceCookie }) => {
@@ -121,45 +83,28 @@ export function browserTrading(repo) {
       return availability(true);
     }
     if (path === "portfolio") {
-      if (keysAre(body, ["pin"])) requirePin(store, body.pin);
-      else if (!keysAre(body, []) || !device) throw new TradeError("DEVICE_REQUIRED", "Unlock this device to view your account.", 403);
+      if (!keysAre(body, [])) bad();
       if (!hasCredentials())
         throw new TradeError(
           "ACCOUNT_UNCONFIGURED",
           "Configure Gemini sandbox account credentials.",
           503,
         );
-      const [orders, positions, history, settlements] = await Promise.all([
-        accountSection("/v1/prediction-markets/orders/active", "orders"),
-        accountSection("/v1/prediction-markets/positions", "positions"),
-        accountSection("/v1/prediction-markets/orders/history", "orders"),
-        accountSection("/v1/prediction-markets/positions/settled", "settlements"),
-      ]);
-      if (!history.error) await reconcile(history.rows);
-      return { ok: true, as_of: new Date().toISOString(), orders, positions, history, settlements };
+      const account = await sandboxPortfolio();
+      if (!account.history.error) await reconcile(account.history.rows);
+      return account;
     }
     const owner = sessionOwner(repo, token);
     if (path === "proposals") {
-      const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity"];
-      if (body && Object.hasOwn(body, "limit_price")) keys.push("limit_price");
-      if (
-        !keysAre(body, keys) ||
-        !uuid.test(key) ||
-        !keys.slice(0, 2).every((k) => typeof body[k] === "string" && symbol.test(body[k])) ||
-        !["yes", "no"].includes(body.outcome) ||
-        !isValidBuySize(body) ||
-        (Object.hasOwn(body, "limit_price") && (!Number.isFinite(body.limit_price) ||
-          body.limit_price < 0.01 || body.limit_price > 0.99 ||
-          Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8))
-      )
-        bad();
+      const keys = validOrderKeys(body);
+      if (!keys || !uuid.test(key)) bad();
       // Preserve existing quantity fingerprints and distinguish equal numeric dollar amounts.
-      const fingerprint = JSON.stringify(keys.map((k) => k === "budget_usd" ? { budget_usd: body[k] } : body[k]));
+      const fingerprint = JSON.stringify(keys.map((k) => ["budget_usd", "close_all", "side", "order_mode"].includes(k) ? { [k]: body[k] } : body[k]));
       const replay = store.replay(owner, key, fingerprint);
       const present = (proposal) => ({ ok: true, proposal, availability: { ...config, voice_authorized: true } });
       if (replay) return present(replay);
       const response = await prepareTrade(
-        { ...body, instrument_symbol: body.contract_symbol, side: "buy" },
+        { ...body, instrument_symbol: body.contract_symbol, side: body.side ?? "buy" },
         async (terms) => {
           if (!terms.title || !terms.contract_label ||
               [terms.title, terms.contract_label].some(name => name === terms.instrument_symbol || name === terms.event_ticker || /GEMI-[A-Z0-9._-]+/i.test(name)))
@@ -167,7 +112,7 @@ export function browserTrading(repo) {
           terms.voice_readback = spokenProposal(terms);
           const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
           const today = new Date().toISOString().slice(0, 10);
-          if (store.reservedToday(today) + cost > Math.round(LIMITS.maxDailyUsd * 100))
+          if (terms.side === "buy" && store.reservedToday(today) + cost > Math.round(LIMITS.maxDailyUsd * 100))
             await reconcile();
           sessionOwner(repo, token);
           const proposal = store.propose(owner, key, fingerprint, terms, LIMITS.maxDailyUsd,
@@ -177,6 +122,11 @@ export function browserTrading(repo) {
       );
       const { detail, ...safe } = await response.json();
       return safe;
+    }
+    if (path === "dismiss-proposal") {
+      if (!keysAre(body, ["proposal_id"]) || !uuid.test(body.proposal_id)) bad();
+      store.dismiss(owner, body.proposal_id);
+      return { ok: true };
     }
     if (path !== "voice-confirm") throw new TradeError("NOT_FOUND", "Unknown trading action.", 404);
     if (!keysAre(body, ["proposal_id", "confirmation_seq"]) || !uuid.test(body.proposal_id) ||

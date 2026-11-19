@@ -14,11 +14,12 @@ vi.mock("./gemini", async (importOriginal) => ({
   gPrivate: vi.fn(),
   gPublic: vi.fn(),
   hasCredentials: () => true,
+  getUsdAvailable: async () => ({ usd: 5 }),
 }));
 
 import { getEvent, gPrivate, gPublic } from "./gemini";
 import { spokenProposal } from "../../../server/spoken-proposal.mjs";
-import { GLOBAL_GUARD, runBrowserTrading, type Store } from "./browser-trading";
+import { runBrowserTrading, type Store } from "./browser-trading";
 import { mintSessionToken, verifySessionToken } from "./browser-session";
 
 const PIN = "482915";
@@ -40,7 +41,7 @@ function memoryStore() {
     async insertIntent(row: any) { const id = randomUUID(); intents.set(id, { ...row, id, status: "PROPOSED" }); return id; },
     async claim(id: string, caller: string) {
       const it = intents.get(id);
-      if (it && it.caller === caller && it.status === "PROPOSED" && it.side === "buy" && Date.parse(it.expires_at) > Date.now()) {
+      if (it && it.caller === caller && it.status === "PROPOSED" && ["buy","sell"].includes(it.side) && Date.parse(it.expires_at) > Date.now()) {
         it.status = "EXECUTING";
         return { ...it };
       }
@@ -177,9 +178,29 @@ describe("proposals (voice-reachable) never submit orders", () => {
     expect(gPrivate).not.toHaveBeenCalled();
   });
 
+  it("exits the available position at market on one confirmed call, even after reaching the buy budget", async () => {
+    vi.stubEnv("MAX_DAILY_USD", "1");
+    store.orders.push({intent_id:"previous-buy",outcome_summary:"FILLED",filled_notional_usd:1});
+    vi.mocked(gPrivate).mockImplementation(async (path) => ({
+      ok:true, status:200, text:"", data:path.endsWith("/positions")
+        ? {positions:[{symbol:order.contract_symbol,outcome:"yes",totalQuantity:"4",quantityOnHold:"1"}]}
+        : {orderId:"exit123",filledQuantity:"3",avgExecutionPrice:"0.28",status:"filled"},
+    }));
+    const s = await startSession();
+    const request = {event_ticker:order.event_ticker,contract_symbol:order.contract_symbol,outcome:"yes",side:"sell",order_mode:"market",close_all:true};
+    const preview = await run("proposals",request,s.session_token) as any;
+    expect(preview.proposal.voice_readback).toBe("Sell three yes at market. Confirm?");
+    expect(geminiOrderCalls()).toHaveLength(0);
+    const result = await callConfirm(preview.proposal.proposal_id,s.session_token) as any;
+    expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:3});
+    expect(geminiOrderCalls()[0]?.[1]).toMatchObject({side:"sell",outcome:"yes",price:"0.28",quantity:"3",timeInForce:"immediate-or-cancel"});
+    await callConfirm(preview.proposal.proposal_id,s.session_token);
+    expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
   it("rejects malformed or extra parameters", async () => {
     const s = await startSession();
-    for (const bad of [{ ...order, side: "sell" }, { ...order, quantity: 1.5 }, { ...order, limit_price: 0.315 }, { ...order, contract_symbol: "../x" }]) {
+    for (const bad of [{ ...order, side: "borrow" }, { ...order, close_all: true }, { ...order, quantity: 1.5 }, { ...order, limit_price: 0.315 }, { ...order, contract_symbol: "../x" }]) {
       await expect(run("proposals", bad, s.session_token)).rejects.toMatchObject({ code: "BAD_INPUT" });
     }
   });
@@ -268,10 +289,15 @@ describe("approval: the only order-submission path", () => {
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 
-  it("keeps private portfolio reads PIN-protected with an account-wide lock", async () => {
-    for(let i=0;i<10;i++) await expect(run("portfolio",{pin:"000000"})).rejects.toMatchObject({code:"WRONG_PIN"});
-    expect(Date.parse(store.guards.get(GLOBAL_GUARD)!.locked_until!)).toBeGreaterThan(Date.now());
-    await expect(run("portfolio",{pin:PIN})).rejects.toMatchObject({code:"LOCKED"});
+  it("reads the shared balance and position fields without a PIN or voice session", async () => {
+    vi.stubEnv("DEMO_PIN", "");
+    vi.mocked(gPrivate).mockResolvedValue({ ok: true, status: 200, text: "",
+      data: { orders: [], positions: [{symbol:"C",outcome:"yes",unrealizedPnl:".15",secret:"private",contractMetadata:{eventName:"Oil",contractName:"Up"}}] } });
+    const account = await run("portfolio", {});
+    expect(account.usd_available).toBe(5);
+    expect(account.positions.rows).toEqual([{symbol:"C",outcome:"yes",unrealizedPnl:".15",event_title:"Oil",contract_label:"Up"}]);
+    expect(account.settlements.rows).toHaveLength(1);
+    expect(geminiOrderCalls()).toHaveLength(0);
   });
 
   it("does nothing when execution is switched off", async () => {

@@ -72,10 +72,10 @@ export function TradeApproval({
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
             {(
               [
-                ["Outcome", String(proposal.outcome).toUpperCase()],
+                ["Outcome", (proposal.side === "sell" ? "Sell " : "Buy ") + String(proposal.outcome).toUpperCase()],
                 ["Contracts", String(proposal.quantity)],
-                ["Limit", cents(proposal.limit_price)],
-                ["Max. cost incl. est. fee", usd(proposal.notional_usd + proposal.est_fee_usd)],
+                proposal.order_mode === "market" ? ["Order type", "Market (simulated)"] : ["Limit", cents(proposal.limit_price)],
+                proposal.side === "sell" ? ["Estimated proceeds after fee", usd(Math.max(0, proposal.notional_usd - proposal.est_fee_usd))] : ["Max. cost incl. est. fee", usd(proposal.notional_usd + proposal.est_fee_usd)],
               ] as const
             ).map(([label, value]) => (
               <div key={label}>

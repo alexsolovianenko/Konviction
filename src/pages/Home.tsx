@@ -53,7 +53,7 @@ export function Home() {
         </div>
         {view.error && <p className="voice-state" role="alert">{view.error}</p>}
       </div>
-      <PredictionPanel key={market.epoch} />
+      <PredictionPanel key={market.selected?.symbol} />
       <MarketDiscoveryPanel />
       {turns.length > 0 && <details className="voice-transcript"><summary>Full transcript</summary>
         <ol>{turns.map(turn => <li key={turn.seq}><strong>{turn.role === 'user' ? 'You' : 'Assistant'}</strong><span>{turn.text}{turn.interrupted && ' (interrupted)'}</span></li>)}</ol>

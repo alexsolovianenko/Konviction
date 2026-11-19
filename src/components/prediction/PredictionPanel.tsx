@@ -1,71 +1,15 @@
 import { useEffect, useState } from "react";
-import type { Proposal } from "../../browserTrading";
 import { cents, countdown } from "../../lib/format";
 import { TradeApproval } from "../../pages/TradeApproval";
-import type { Lookup, MarketResult } from "../../pages/useMarketTools";
 import { useVoice } from "../voice/VoiceProvider";
 import { VoicePositions } from "../voice/VoicePositions";
 import { QuoteChart } from "./QuoteChart";
 import { SettlementIndexPanel } from "./SettlementIndexPanel";
-import { POLL_MS, useContractQuotes, type QuoteTarget } from "./useContractQuotes";
+import { POLL_MS, useContractQuotes } from "./useContractQuotes";
 
-const text = (value: unknown) => (typeof value === "string" && value ? value : null);
-// Same phrasing the search route treats as the BTC five-minute series.
-const FIVE_MINUTE = /\b(?:five|5)[ -]?(?:minutes?|mins?|m)\b|\b05m\b/i;
-
-/**
- * The contract the panel must show, taken only from identifiers Gemini-backed routes returned:
- * a prepared proposal wins (so the chart always matches what the PIN would approve), then a
- * selected contract quote, then the nearest-expiry match of a five-minute search.
- */
-export function selectTarget(
-  proposal: Proposal | null,
-  result: MarketResult | undefined,
-  history: Lookup[],
-): QuoteTarget | null {
-  const proposed = proposal as (Proposal & { event_ticker?: unknown }) | null;
-  if (proposed) {
-    const eventTicker = text(proposed.event_ticker);
-    return eventTicker ? { eventTicker, symbol: proposed.instrument_symbol } : null;
-  }
-  if (!result?.ok || result.track_group) return null;
-  const quoted = result as MarketResult & { event_ticker?: unknown };
-  if (quoted.contract) {
-    const eventTicker = text(quoted.event_ticker);
-    return eventTicker ? { eventTicker, symbol: quoted.contract.symbol } : null;
-  }
-  const lookup = history.find((entry) => entry.result === result);
-  const event = result.events?.[0];
-  if (
-    lookup?.name === "search_markets" &&
-    FIVE_MINUTE.test(String(lookup.params["query"] ?? "")) &&
-    event?.contracts.length === 1
-  )
-    return { eventTicker: event.ticker, symbol: event.contracts[0]!.symbol };
-  return null;
-}
-
-/** Live contract chart plus the full typed-PIN purchase panel, driven by the voice session. */
 export function PredictionPanel() {
   const { voice, view, market } = useVoice();
-  const selected = selectTarget(view.proposal, market.result, market.history);
-  // Keep the last selection while unrelated lookups come and go; a proposal always overrides it.
-  const [target, setTarget] = useState<QuoteTarget | null>(selected);
-  const eventTicker = selected?.eventTicker;
-  const symbol = selected?.symbol;
-  useEffect(() => {
-    if (eventTicker && symbol) setTarget({ eventTicker, symbol });
-  }, [eventTicker, symbol]);
-  // A proposal without an event ticker may still be charted when it is the contract already open.
-  const shown = view.proposal
-    ? (selected ?? (target?.symbol === view.proposal.instrument_symbol ? target : null))
-    : selected ?? target;
-  const visibleEvent = shown?.eventTicker;
-  const visibleSymbol = shown?.symbol;
-  useEffect(() => {
-    voice.setVisibleContract?.(visibleEvent, visibleSymbol);
-  }, [voice, visibleEvent, visibleSymbol]);
-  useEffect(() => () => voice.setVisibleContract?.(), [voice]);
+  const shown = market.selected;
   const feed = useContractQuotes(shown);
   const [now, setNow] = useState(() => Date.now());
   const expiry = feed.contract?.expiry ?? null;
@@ -109,7 +53,7 @@ export function PredictionPanel() {
               </dd>
             </div>
           </dl>
-          <SettlementIndexPanel eventTicker={shown.eventTicker} />
+          <SettlementIndexPanel key={shown.eventTicker} eventTicker={shown.eventTicker} />
           <section aria-label="Contract price chart" className="contract-chart min-w-0 rounded-xl border border-border bg-card p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="text-sm font-semibold">Contract prices</h3>

@@ -32,7 +32,7 @@ beforeEach(() => {
   for (const k of Object.keys(calls)) delete calls[k];
 });
 
-it("claim only matches this session's unexpired PROPOSED buy and flips it to EXECUTING", async () => {
+it("claim only matches this session's unexpired PROPOSED trade and flips it to EXECUTING", async () => {
   queue["intents"] = [{ data: [{ id: "i1", caller: "session:abc" }], error: null }];
   const it1 = await supabaseStore().claim("i1", "session:abc");
   expect(it1).toMatchObject({ id: "i1" });
@@ -41,7 +41,7 @@ it("claim only matches this session's unexpired PROPOSED buy and flips it to EXE
   expect(c).toContainEqual(["eq", "id", "i1"]);
   expect(c).toContainEqual(["eq", "caller", "session:abc"]);
   expect(c).toContainEqual(["eq", "status", "PROPOSED"]);
-  expect(c).toContainEqual(["eq", "side", "buy"]);
+  expect(c).toContainEqual(["in", "side", ["buy", "sell"]]);
   expect(c.some(([m, col]) => m === "gt" && col === "expires_at")).toBe(true);
 });
 
@@ -73,6 +73,7 @@ it("ledger fails closed when it cannot be read", async () => {
 
 it("cap helpers use the configured limits", () => {
   vi.stubEnv("MAX_DAILY_USD", "50");
+  vi.stubEnv("MAX_LIMIT_PRICE", "0.95");
   vi.stubEnv("MAX_ORDER_USD", "25");
   expect(dailyCapError(49.5, 0.4)).toBeNull();
   expect(dailyCapError(49.5, 0.6)).toMatch(/Daily sandbox limit/);

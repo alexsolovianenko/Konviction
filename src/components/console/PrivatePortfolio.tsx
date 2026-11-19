@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { usd } from "../../lib/format";
-import { PIN_PATTERN, workerTrading, tradingRequest } from "../../browserTrading";
+import { tradingRequest } from "../../browserTrading";
 import { Empty, Panel } from "./ui";
 
 type Rows = { error?: string; rows: Record<string, string | number>[] };
@@ -8,56 +8,24 @@ type Account = { usd_available?: number | null; balance_error?: string; as_of: s
 export function PrivatePortfolio({ showPositions = true, showBalance = false }: { showPositions?: boolean; showBalance?: boolean }) {
   const [message, setMessage] = useState("Loading order history…");
   const [account, setAccount] = useState<Account | null>(null);
-  const [showUnlock, setShowUnlock] = useState(false);
-  const [pin, setPin] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function unlock() {
-    if (!PIN_PATTERN.test(pin) || busy) return;
-    setBusy(true);
-    setPin("");
-    try {
-      const result = await tradingRequest("portfolio", { pin });
-      if (result.ok) {
-        setAccount(result);
-        setShowUnlock(false);
-        setMessage("");
-      } else {
-        setMessage(result.message || "Account access unavailable.");
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
   useEffect(() => {
     let active = true;
+    let next: ReturnType<typeof setTimeout>;
     async function load() {
-      const availability = await tradingRequest("availability");
-      if (!active) return;
-      if (!availability.ok || !availability.voice_authorized) {
-        setShowUnlock(Boolean(availability.ok && workerTrading));
-        setMessage(!availability.ok ? "Order history unavailable." : workerTrading
-          ? "Enter your sandbox PIN to view balances, orders and positions."
-          : "Pair this browser to see order history.");
-        return;
+      if (document.visibilityState !== "hidden") {
+        const result = await tradingRequest("portfolio", {});
+        if (!active) return;
+        if (result.ok) setAccount(result);
+        setMessage(result.ok ? "" : result.message || "Order history unavailable.");
       }
-      const result = await tradingRequest("portfolio", {});
-      if (!active) return;
-      if (result.ok) setAccount(result);
-      setMessage(result.ok ? "" : result.error === "DEVICE_REQUIRED"
-        ? "Pair this browser to see order history." : "Order history unavailable.");
+      if (active) next = setTimeout(() => { void load(); }, 15000);
     }
     void load();
-    return () => { active = false; };
+    return () => { active = false; clearTimeout(next); };
   }, []);
   return (
     <div className="flex max-w-5xl flex-col gap-8">
       {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
-      {showUnlock && <form className="flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); void unlock(); }}>
-        <label className="grid gap-1 text-sm">Sandbox PIN
-          <input type="password" className="field" autoComplete="off" inputMode="numeric" maxLength={8} value={pin} onChange={e => setPin(e.target.value)} />
-        </label>
-        <button type="submit" className="btn btn-primary" disabled={busy || !PIN_PATTERN.test(pin)}>{busy ? "Opening…" : "View account"}</button>
-      </form>}
       {account && (
         <>
           {showBalance && <section className="balance-card">

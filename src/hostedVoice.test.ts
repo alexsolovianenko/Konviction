@@ -18,6 +18,8 @@ it('routes hosted confirmations to the call and reads the recorded exchange resu
     if(path === 'session') return {ok:true,...credentials};
     if(path === 'proposals') return {ok:true, availability:{execution_enabled:true,call_confirmation_supported:true,voice_authorized:false},
       proposal:{proposal_id:'proposal-1',voice_readback:readback,expires_at:new Date(Date.now()+60_000).toISOString()}};
+    if(path === 'portfolio') return {ok:true,as_of:new Date().toISOString(),positions:{rows:[{symbol:'GEMI-C',outcome:'yes',totalQuantity:'2',unrealizedPnl:'.12'}]},
+      history:{rows:[{symbol:'GEMI-C',status:'filled',filledQuantity:'2',remainingQuantity:'0',avgExecutionPrice:'.42',orderId:'private-id'}]},orders:{rows:[]},settlements:{rows:[]}};
     if(path === 'order-result') return {ok:true,outcome_summary:'FILLED',order_id:'order-1',say:'One contract filled.'};
     return {ok:true};
   });
@@ -32,7 +34,12 @@ it('routes hosted confirmations to the call and reads the recorded exchange resu
     await vi.advanceTimersByTimeAsync(2100);
     expect(tradingRequest).toHaveBeenCalledWith('order-result',{proposal_id:'proposal-1'},credentials.session_token);
     expect(update).toHaveBeenCalledWith(expect.objectContaining({proposal:null,tradeMessage:expect.stringContaining('One contract filled.')}));
-    expect(trade.mock.calls.map(([path])=>path)).toEqual(['session','proposals','order-result']);
+    voice.setVisibleContract('EVENT', 'GEMI-C');
+    const position = JSON.parse(await opts.clientTools.get_sandbox_positions({}));
+    expect(position.positions).toEqual([expect.objectContaining({on_screen:true,quantity:2,unrealized_pnl_usd:.12})]);
+    expect(position.recent_orders).toEqual([expect.objectContaining({on_screen:true,status:'filled',filled_quantity:2,remaining_quantity:0})]);
+    expect(JSON.stringify(position)).not.toMatch(/GEMI-C|private-id/);
+    expect(trade.mock.calls.map(([path])=>path)).toEqual(['session','proposals','order-result','portfolio']);
   } finally {
     await voice.stop();
     if(original) Object.defineProperty(navigator,'mediaDevices',original);

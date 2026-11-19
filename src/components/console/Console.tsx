@@ -165,7 +165,7 @@ function AccountStrip({ d }: { d: DashboardState }) {
       {a.configured ? (
         <div className="tnum mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">{usd(a.usd_available)}</div>
       ) : (
-        <div className="mt-1 text-xl font-semibold text-warning">Unlock the private Gemini account below</div>
+        <div className="mt-1 text-xl font-semibold text-warning">Sandbox balance unavailable</div>
       )}
       {a.balance_error && <div className="mt-1 text-sm text-destructive">{a.balance_error}</div>}
       <dl className="mt-5">
@@ -236,7 +236,7 @@ function PendingCard({ i, now }: { i: Intent; now: number }) {
     <div className="animate-row-in border-b border-border py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SideOutcome side={i.side} outcome={i.outcome} />
-        <Pill tone="warning">Awaiting PIN · {left}</Pill>
+        <Pill tone="warning">Awaiting confirmation · {left}</Pill>
       </div>
       <div className="mt-1 text-sm font-medium">{i.contract_label ?? i.instrument_symbol}</div>
       {i.title && <div className="text-xs text-muted-foreground">{i.title}</div>}

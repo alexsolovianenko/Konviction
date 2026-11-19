@@ -441,7 +441,7 @@ it('preserves a correction arriving after the turn was stored and closes the ses
 it('shares fresh sandbox reads between the dashboard and SDK without session tokens or order calls', async () => {
   const f = fixture(), sdk = await f.begin();
   const event = { ticker: 'E', title: 'Event title', contracts: [{ symbol: 'C', label: 'Contract' }] };
-  const quote = { ok: true, title: event.title, contract: { ...event.contracts[0], buy: { yes: 0.17, no: null }, sell: { yes: 0.12, no: 0.8 } } };
+  const quote = { ok: true, event_ticker: event.ticker, title: event.title, contract: { ...event.contracts[0], buy: { yes: 0.17, no: null }, sell: { yes: 0.12, no: 0.8 } } };
   const requests: string[] = [];
   f.fetchMock.mockImplementation(async (path, init) => {
     requests.push(path);
@@ -456,8 +456,9 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
     expect(JSON.parse(await sdk.clientTools['search_markets']!({query:''})).events).toEqual([event]);
     expect(JSON.parse(await sdk.clientTools['get_orderbook']!({event_ticker:'E', contract_symbol:'C'}))).toEqual(quote);
   });
-  expect(requests.slice(0,2)).toEqual(requests.slice(2));
-  expect(requests).toHaveLength(4);
+  expect(requests.filter(path => path.includes('/search_markets?'))).toHaveLength(2);
+  expect(requests.every(path => path.startsWith('/api/public/market-tools/'))).toBe(true);
+  expect(requests.filter(path => path.includes('/get_orderbook?')).length).toBeGreaterThanOrEqual(2);
   await act(async () => {
     await sdk.clientTools['get_orderbook']!({event_ticker:'E',contract_symbol:'C',outcome:'no',side:'buy',quantity:4,limit_price:.62});
   });

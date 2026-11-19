@@ -18,7 +18,7 @@ const cost = (r) => Number(r?.notional_usd ?? 0) + Number(r?.est_fee_usd ?? 0);
 export const supabaseLedger: Ledger = {
   async committedUsd({ excludeIntentId } = {}) {
     const [orders, executing] = await Promise.all([
-      db.from("orders").select("intent_id,outcome_summary,filled_notional_usd")
+      db.from("orders").select("intent_id,outcome_summary,filled_notional_usd,market_fee:raw->result->>est_fee_usd")
         .eq("side", "buy").or(`created_at.gte.${startOfUtcDay()},outcome_summary.eq.PENDING_UNKNOWN,outcome_summary.eq.OPEN`),
       db.from("intents").select("id,notional_usd,est_fee_usd").eq("status", "EXECUTING").eq("side", "buy"),
     ]);
@@ -29,7 +29,7 @@ export const supabaseLedger: Ledger = {
     for (const o of orders.data ?? []) {
       recordedIds.add(o.intent_id);
       if (o.outcome_summary === "PENDING_UNKNOWN" || o.outcome_summary === "OPEN") unknownIds.push(o.intent_id);
-      else total += Number(o.filled_notional_usd ?? 0);
+      else total += Number(o.filled_notional_usd ?? 0) + Number(o.market_fee ?? 0);
     }
     if (unknownIds.length) {
       const { data, error } = await db.from("intents").select("id,notional_usd,est_fee_usd").in("id", unknownIds);

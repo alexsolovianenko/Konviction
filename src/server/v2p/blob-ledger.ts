@@ -11,7 +11,7 @@ interface Intent {
   instrument_symbol?: string; id: string; caller: string; status: string; side: string; expires_at: string; updated_at: number;
   quantity: number; limit_price: number; notional_usd: number; est_fee_usd: number;
 }
-interface Order { gemini_order_id?: string; intent_id: string; outcome_summary: string; filled_notional_usd: number; created_at: number }
+interface Order { raw?: { result?: {order_mode?: string; est_fee_usd?: number} }; gemini_order_id?: string; intent_id: string; outcome_summary: string; filled_notional_usd: number; created_at: number }
 interface State { version: 1; guards: Record<string, Guard>; intents: Record<string, Intent>; orders: Record<string, Order> }
 const path = "browser-trading/v1/account.json";
 const empty = (): State => ({ version: 1, guards: {}, intents: {}, orders: {} });
@@ -49,7 +49,9 @@ function committed(state: State, exclude?: string) {
     if (order?.outcome_summary === "OPEN" || order?.outcome_summary === "PENDING_UNKNOWN" || (!order && it.status === "EXECUTING")) {
       sum += Number(it.notional_usd) + Number(it.est_fee_usd);
     } else if (order && order.created_at >= today && order.filled_notional_usd > 0) {
-      sum += Number(order.filled_notional_usd) + Number(it.est_fee_usd);
+      const result = order.raw?.result;
+      const fee = result?.order_mode === "market" ? result.est_fee_usd : it.est_fee_usd;
+      sum += Number(order.filled_notional_usd) + Number(fee);
     }
   }
   if (!Number.isFinite(sum)) throw new Error("Invalid reservation");
@@ -121,6 +123,12 @@ export function blobStore(io = backend) {
       if (!passed) throw new TradeError("WRONG_PIN", "Incorrect PIN. Nothing was placed.", 403);
     },
     async supersede(_caller: string) { /* Performed atomically in insertIntent. */ },
+    async dismissProposal(id: string, caller: string) {
+      await update(s => {
+        const it = s.intents[id];
+        if (it?.caller === caller && it.status === "PROPOSED") it.status = "SUPERSEDED";
+      });
+    },
     async insertIntent(row: Omit<Intent, "id" | "updated_at" | "status">) {
       const id = crypto.randomUUID();
       return update(s => {
@@ -134,8 +142,8 @@ export function blobStore(io = backend) {
       return update(s => {
         active(s, caller);
         const it = s.intents[id];
-        if (!it || it.caller !== caller || it.status !== "PROPOSED" || it.side !== "buy" || !(Date.parse(it.expires_at) > Date.now())) return null;
-        const cap = orderCapError(it) ?? dailyCapError(committed(s), Number(it.notional_usd) + Number(it.est_fee_usd));
+        if (!it || it.caller !== caller || it.status !== "PROPOSED" || !["buy", "sell"].includes(it.side) || !(Date.parse(it.expires_at) > Date.now())) return null;
+        const cap = it.side === "buy" ? orderCapError(it) ?? dailyCapError(committed(s), Number(it.notional_usd) + Number(it.est_fee_usd)) : null;
         if (cap) throw new TradeError("CAP_EXCEEDED", cap);
         it.status = "EXECUTING";
         it.updated_at = Date.now();
@@ -163,7 +171,7 @@ export function blobStore(io = backend) {
       const open = Object.values(snapshot.orders).flatMap(row => {
         const it = snapshot.intents[row.intent_id];
         if (row.outcome_summary !== "OPEN" || !row.gemini_order_id || !it?.instrument_symbol) return [];
-        return [{ ...row, gemini_order_id: row.gemini_order_id, instrument_symbol: it.instrument_symbol,
+        return [{ ...row, side: it.side, gemini_order_id: row.gemini_order_id, instrument_symbol: it.instrument_symbol,
           limit_price: it.limit_price, quantity: it.quantity }];
       });
       const settled = await settledOpenOrders(open, history);
