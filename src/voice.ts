@@ -1,7 +1,11 @@
+import { tradingRequest, type Proposal, type Availability } from './browserTrading';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
 import { Session, startCredentials, type Entry, type Intent } from './session';
 
 export type VoiceView = {
+  proposal: Proposal | null;
+  availability: Availability | null;
+  tradeMessage: string;
   status: string;
   entries: Entry[];
   intents: Intent[];
@@ -9,6 +13,7 @@ export type VoiceView = {
   error: string;
 };
 export const initial: VoiceView = {
+  proposal:null, availability:null, tradeMessage:"",
   status: 'Idle',
   entries: [],
   intents: [],
@@ -235,6 +240,13 @@ export class Voice {
         connectionType: 'websocket',
         clientTools: {
           ...session.tools,
+          prepare_sandbox_buy: async (params: Record<string, unknown>) => {
+            if (!current()) return JSON.stringify({ok:false,message:'Session ended.'});
+            const result = await tradingRequest('proposals',params,credentials.session_token,crypto.randomUUID());
+            update({ proposal:result.proposal ?? null, availability:result.availability ?? null, tradeMessage:result.message ?? '' });
+            return JSON.stringify(result.ok ? {ok:true, proposal:result.proposal, approval_available:result.availability.execution_enabled,
+              next_step:'Review the proposal in the dashboard. Approval is a separate private UI action.'} : result);
+          },
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
             name, async (params: Record<string, unknown>) => JSON.stringify(current()
               ? await this.marketAction(name, params) : { ok: false, error: 'Session ended.' }),
@@ -261,11 +273,20 @@ export class Voice {
     }
   }
 
+  async approve(proposalId: string,pin: string) {
+    const session = this.session;
+    if (!session || !this.active) return;
+    const result = await tradingRequest('approve',{proposal_id:proposalId,pin},session.credentials.session_token);
+    if (session !== this.session) return;
+    this.update({tradeMessage:result.say ?? result.message ?? result.outcome_summary,
+      ...(result.error !== 'WRONG_PIN' && {proposal:null})});
+  }
+
   async stop(error = '') {
     if (!this.active) return;
     this.finishSpeech?.();
     const closing = ++this.attempt;
-    this.update({ status: 'Ending session', draft: '', error });
+    this.update({ proposal:null, status: 'Ending session', draft: '', error });
     const conversation = this.conversation,
       session = this.session;
     this.conversation = undefined;

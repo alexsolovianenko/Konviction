@@ -178,7 +178,7 @@ function handle(repo, session, path, method, body, key, now, market, legacyMarke
   return result;
 }
 
-export function createApi({ repo, apiKey, agentId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
+export function createApi({ trading, repo, apiKey, agentId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
   return createServer(async (req, res) => {
     function reply([status, body]) {
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -187,6 +187,24 @@ export function createApi({ repo, apiKey, agentId, lookupInstrument = async () =
     try {
       const url = new URL(req.url, 'http://localhost');
       const path = url.pathname.slice(4);
+      if (trading && path.startsWith('/trading/')) {
+        const host = req.headers.host ?? '';
+        if (!/^(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$/.test(host) ||
+            (req.headers.origin && req.headers.origin !== 'http://' + host && req.headers.origin !== 'https://' + host))
+          return reply([403, {ok:false,message:'Local browser access required.'}]);
+        if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json'))
+          return reply([415,{ok:false,message:'JSON required.'}]);
+        try {
+          const result = await trading({ path:path.slice('/trading/'.length), method:req.method,
+            token:/^Bearer ([^ ]+)$/i.exec(req.headers.authorization ?? '')?.[1],
+            body:req.method === 'POST' ? await readBody(req) : {}, key:req.headers['idempotency-key'] });
+          return reply([200,result]);
+        } catch (err) {
+          return reply([err.name === 'TradeError' ? err.status : 503, { ok:false,
+            error:err.name === 'TradeError' ? err.code : 'SERVICE_UNAVAILABLE',
+            message:err.name === 'TradeError' ? err.message : 'Trade service unavailable. Check order status before retrying an approval.' }]);
+        }
+      }
       if (!url.pathname.startsWith('/api/') || !Object.hasOwn(api.paths, path))
         return reply([404, {}]);
       if (!Object.hasOwn(api.paths[path], req.method.toLowerCase())) return reply([405, {}]);

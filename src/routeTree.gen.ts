@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as OpenTradesRouteImport } from './routes/open-trades'
 import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as ApiPublicDashboardStateRouteImport } from './routes/api/public/dashboard-state'
 import { Route as ApiPublicElInitRouteImport } from './routes/api/public/el-init'
@@ -19,6 +20,11 @@ import { Route as ApiPublicMarketToolsToolRouteImport } from './routes/api/publi
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OpenTradesRoute = OpenTradesRouteImport.update({
+  id: '/open-trades',
+  path: '/open-trades',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VoiceRoute = VoiceRouteImport.update({
@@ -50,6 +56,7 @@ const ApiPublicMarketToolsToolRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/open-trades': typeof OpenTradesRoute
   '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/open-trades': typeof OpenTradesRoute
   '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
@@ -67,6 +75,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/open-trades': typeof OpenTradesRoute
   '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
@@ -77,6 +86,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/open-trades'
     | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
@@ -85,6 +95,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/open-trades'
     | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
@@ -93,6 +104,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/open-trades'
     | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
@@ -102,6 +114,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  OpenTradesRoute: typeof OpenTradesRoute
   VoiceRoute: typeof VoiceRoute
   ApiPublicDashboardStateRoute: typeof ApiPublicDashboardStateRoute
   ApiPublicElInitRoute: typeof ApiPublicElInitRoute
@@ -116,6 +129,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/open-trades': {
+      id: '/open-trades'
+      path: '/open-trades'
+      fullPath: '/open-trades'
+      preLoaderRoute: typeof OpenTradesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/voice': {
@@ -158,6 +178,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  OpenTradesRoute: OpenTradesRoute,
   VoiceRoute: VoiceRoute,
   ApiPublicDashboardStateRoute: ApiPublicDashboardStateRoute,
   ApiPublicElInitRoute: ApiPublicElInitRoute,

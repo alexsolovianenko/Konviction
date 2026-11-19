@@ -17,6 +17,7 @@ export async function getSetting<T>(key: string, fallback: T): Promise<T> {
 }
 
 export async function executionEnabled(): Promise<boolean> {
+  if (env("LOCAL_BROWSER_LEDGER") === "sqlite") return false; // Local approval uses one account-wide SQLite risk ledger.
   if (env("EXECUTION_ENABLED") !== "true") return false;
   return (await getSetting<boolean>("execution_enabled", false)) === true;
 }

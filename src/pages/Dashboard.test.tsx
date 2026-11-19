@@ -75,7 +75,7 @@ it('explains microphone denial before signing and allows another attempt', async
   f.mic.mockRejectedValueOnce(new DOMException('Permission denied', 'NotAllowedError'));
   fireEvent.click(screen.getByText('Start Voice'));
   expect(await screen.findByRole('alert')).toHaveTextContent('Microphone blocked');
-  expect(f.requests).toHaveLength(0);
+  expect(f.requests.filter(r => r.path !== "/api/trading/availability")).toHaveLength(0);
   await f.begin();
   expect(f.stopTrack).toHaveBeenCalledOnce();
 });
@@ -458,4 +458,25 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
   });
   expect(requests.slice(0,2)).toEqual(requests.slice(2));
   expect(requests).toHaveLength(4);
+});
+
+it('shows a voice proposal and accepts its private approval only from the dashboard',async()=>{
+  const f=fixture(),sdk=await f.begin();
+  const proposal={proposal_id:'id',title:'Event',contract_label:'Threshold',instrument_symbol:'C',outcome:'yes',quantity:2,limit_price:.4,quote_price:.39,notional_usd:.8,est_fee_usd:.04,expires_at:new Date(Date.now()+60000).toISOString(),readback:'Buy 2 YES contracts at up to 40 cents.'};
+  const calls:{path:string;init:RequestInit}[]=[];
+  f.fetchMock.mockImplementation(async(path,init)=>{
+    calls.push({path,init});return Response.json(path.endsWith('/proposals')?{ok:true,proposal,availability:{execution_enabled:true,message:'Sandbox enabled'}}:{ok:true,say:'Filled 2 contracts.'});
+  });
+  expect(Object.keys(sdk.clientTools)).not.toContain('approve');
+  let spoken='';
+  await act(async()=>{spoken=await sdk.clientTools['prepare_sandbox_buy']!({event_ticker:'E',contract_symbol:'C',outcome:'yes',quantity:2,limit_price:.4})});
+  expect(JSON.parse(spoken).proposal.readback).toEqual(proposal.readback);
+  expect(screen.getByText(proposal.readback)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Private approval PIN'),{target:{value:'6739'}});
+  fireEvent.click(screen.getByRole('button',{name:'Approve sandbox buy'}));
+  expect(await screen.findByText('Filled 2 contracts.')).toBeInTheDocument();
+  expect(calls.map(c=>c.path)).toEqual(['/api/trading/proposals','/api/trading/approve']);
+  expect(JSON.parse(String(calls[1]!.init.body))).toEqual({proposal_id:'id',pin:'6739'});
+  expect(calls[1]!.init.headers).toMatchObject({Authorization:'Bearer private-1'});
+  expect(spoken).not.toContain('6739');
 });

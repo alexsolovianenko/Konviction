@@ -189,7 +189,7 @@ function Header({ d, ageS }: { d: DashboardState | undefined; ageS: number | nul
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone="warning">Gemini sandbox · test funds</Pill>
-        {d && <Pill tone={d.execution_enabled ? "success" : "danger"}>Execution {d.execution_enabled ? "ON" : "OFF"}</Pill>}
+        {d && <Pill tone={d.execution_enabled ? "success" : "danger"}>Phone execution {d.execution_enabled ? "ON" : "OFF"}</Pill>}
         <Pill tone={ageS === null || ageS > 10 ? "danger" : "muted"}>
           {ageS === null ? "No update yet" : `Last update ${ageS}s ago`}
         </Pill>

@@ -12,8 +12,9 @@ const { getEvent, findContract } = await import('../src/server/v2p/gemini.ts');
 let repo;
 try { repo = new SQLiteRepository(process.env.SQLITE_PATH || 'data/capture.sqlite'); }
 catch { console.error('Voice capture unavailable: SQLite storage could not be opened.'); }
+const { browserTrading } = await import('../server/browser-trading.mjs');
 const capture = repo ? createApi({
-  repo, apiKey: process.env.ELEVENLABS_API_KEY, agentId: process.env.ELEVENLABS_AGENT_ID,
+  trading: browserTrading(repo), repo, apiKey: process.env.ELEVENLABS_API_KEY, agentId: process.env.ELEVENLABS_AGENT_ID,
   async lookupInstrument(symbol) {
     const match = /^GEMI-([A-Z0-9_.-]+)-[A-Z0-9_.]+$/i.exec(symbol);
     if (!match) return false;
@@ -29,7 +30,7 @@ const capture = repo ? createApi({
 capture.listen(0, '127.0.0.1');
 await once(capture, 'listening');
 const vite = spawn(process.execPath, [resolve('node_modules/vite/bin/vite.js'), ...process.argv.slice(2)], {
-  stdio: 'inherit', env: { ...process.env, CAPTURE_PORT: String(capture.address().port) }
+  stdio: 'inherit', env: { ...process.env, LOCAL_BROWSER_LEDGER: "sqlite", CAPTURE_PORT: String(capture.address().port) }
 });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => vite.kill(signal));
 vite.on('exit', code => { capture.closeAllConnections(); capture.close(); repo?.close(); process.exitCode = code ?? 0; });

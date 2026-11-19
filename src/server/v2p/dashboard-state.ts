@@ -54,7 +54,8 @@ async function solanaInfo() {
 
 export async function handleDashboardState(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  const configured = Boolean(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"));
+  const local = env("LOCAL_BROWSER_LEDGER") === "sqlite" && ["127.0.0.1","localhost","[::1]"].includes(new URL(req.url).hostname);
+  const configured = local && Boolean(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"));
   const columns = {
     activity: "id,at,kind,caller,summary",
     intents: "id,code,caller,side,title,contract_label,instrument_symbol,outcome,quantity,limit_price,notional_usd,est_fee_usd,quote_price,status,expires_at,created_at",
@@ -71,8 +72,8 @@ export async function handleDashboardState(req: Request): Promise<Response> {
     rows("intents", "created_at", 25),
     rows("orders", "created_at", 25),
     rows("receipts", "created_at", 30),
-    liveAccount().catch(() => ({ configured: true, terms_accepted: null, balance_error: "Gemini account data unavailable." })),
-    configured || env("SOLANA_RECEIPT_SECRET_KEY") ? solanaInfo().catch(() => null) : null,
+    !local ? {configured:false} : liveAccount().catch(() => ({ configured: true, terms_accepted: null, balance_error: "Gemini account data unavailable." })),
+    local && (configured || env("SOLANA_RECEIPT_SECRET_KEY")) ? solanaInfo().catch(() => null) : null,
     executionEnabled().catch(() => false),
     dashboardMarkets().catch(() => ({ events: [], error: "Gemini Sandbox markets unavailable." })),
   ]);

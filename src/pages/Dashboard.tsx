@@ -1,3 +1,4 @@
+import { TradeApproval } from './TradeApproval';
 import { useEffect, useState } from 'react';
 import { useMarketTools } from './useMarketTools';
 import { Voice, initial } from '../voice';
@@ -39,6 +40,8 @@ export function Dashboard({ focused = false }: { focused?: boolean } = {}) {
         <span role="status">Microphone · {view.status}</span>
         {view.error && <p role="alert">{view.error}</p>}
       </section>
+      <TradeApproval proposal={view.proposal} availability={view.availability} message={view.tradeMessage}
+        approve={(id,pin) => voice.approve(id,pin)} />
       <div className="panels">
         <section aria-label="Gemini market tools">
           <h2>{focused ? 'Gemini Sandbox data' : 'Search prediction markets'}</h2>
