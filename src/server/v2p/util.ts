@@ -33,7 +33,7 @@ export const LIMITS = {
   get maxLimitPrice() { return Math.min(0.99, envNum("MAX_LIMIT_PRICE", 0.99)); },
   minLimitPrice: 0.01,
   get maxQuantity() { return envNum("MAX_QUANTITY", 100); },
-  get intentTtlSeconds() { return envNum("INTENT_TTL_SECONDS", 90); },
+  get intentTtlSeconds() { return envNum("INTENT_TTL_SECONDS", 300); },
   takerRate: 0.07, // Gemini production taker schedule; sandbox fees unverified -> always labelled an estimate
   toJSON() {
     return {

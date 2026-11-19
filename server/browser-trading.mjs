@@ -2,7 +2,8 @@ import { spokenProposal } from "./spoken-proposal.mjs";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { prepareTrade, executeTrade, isValidBuySize } from "../src/server/v2p/trade-engine.ts";
 import { gPrivate, hasCredentials } from "../src/server/v2p/gemini.ts";
-import { LIMITS } from "../src/server/v2p/util.ts";
+import { settledOpenOrders } from "../src/server/v2p/reconcile-open.ts";
+import { LIMITS, feeEstimate } from "../src/server/v2p/util.ts";
 import { TradingRepository, TradeError } from "./trading-repository.mjs";
 
 import { TrustedDevices, deviceLifetimeSeconds } from "./trusted-device.mjs";
@@ -61,6 +62,7 @@ const fields = {
     "filledQuantity",
     "remainingQuantity",
     "avgExecutionPrice",
+    "updatedAt",
   ],
   positions: ["symbol", "outcome", "totalQuantity", "quantityOnHold", "avgPrice", "marketValue", "unrealizedPnl", "netProfit", "markPrice"],
 };
@@ -89,6 +91,23 @@ async function accountSection(path, kind) {
 export function browserTrading(repo) {
   const store = new TradingRepository(repo);
   const devices = new TrustedDevices(repo);
+  async function reconcile(history) {
+    const open = store.openOrders();
+    if (!open.length) return;
+    const terminal = await settledOpenOrders(open, history);
+    for (const record of terminal) {
+      const original = open.find(order => order.intent_id === record.intent_id);
+      const fee = feeEstimate(record.filled_qty, record.avg_price ?? original.limit_price);
+      const say = record.filled_qty > 0
+        ? `Filled ${record.filled_qty} of ${original.quantity} sandbox contracts.`
+        : "The sandbox order closed without a fill.";
+      store.finalizeOpenOrder(record.intent_id, {
+        ok: true, order_id: original.gemini_order_id, outcome_summary: record.outcome_summary,
+        exchange_status: record.exchange_status, filled_quantity: record.filled_qty,
+        remaining_quantity: record.remaining_qty, avg_price: record.avg_price, est_fee_usd: fee, say,
+      }, Math.round((record.filled_notional_usd + fee) * 100));
+    }
+  }
   return async ({ path, method, token, body, key, host, deviceCookie, setDeviceCookie }) => {
     const device = devices.identify(host, deviceCookie);
     const config = availability(Boolean(device));
@@ -116,6 +135,7 @@ export function browserTrading(repo) {
         accountSection("/v1/prediction-markets/orders/history", "orders"),
         accountSection("/v1/prediction-markets/positions/settled", "settlements"),
       ]);
+      if (!history.error) await reconcile(history.rows);
       return { ok: true, as_of: new Date().toISOString(), orders, positions, history, settlements };
     }
     const owner = sessionOwner(repo, token);
@@ -140,12 +160,16 @@ export function browserTrading(repo) {
       if (replay) return present(replay);
       const response = await prepareTrade(
         { ...body, instrument_symbol: body.contract_symbol, side: "buy" },
-        (terms) => {
-          sessionOwner(repo, token);
+        async (terms) => {
           if (!terms.title || !terms.contract_label ||
               [terms.title, terms.contract_label].some(name => name === terms.instrument_symbol || name === terms.event_ticker || /GEMI-[A-Z0-9._-]+/i.test(name)))
             throw new TradeError("BAD_INPUT", "A human-readable contract name is required for spoken confirmation.", 409);
           terms.voice_readback = spokenProposal(terms);
+          const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
+          const today = new Date().toISOString().slice(0, 10);
+          if (store.reservedToday(today) + cost > Math.round(LIMITS.maxDailyUsd * 100))
+            await reconcile();
+          sessionOwner(repo, token);
           const proposal = store.propose(owner, key, fingerprint, terms, LIMITS.maxDailyUsd,
             id => devices.bind(id, owner));
           return Response.json(present(proposal));

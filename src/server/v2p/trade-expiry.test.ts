@@ -47,6 +47,7 @@ it("prepares a five-minute buy with two minutes remaining, and enforces the ten-
   const save = vi.fn(async (terms) => terms);
   const proposal = await prepareTrade(request, save);
   expect(save).toHaveBeenCalledOnce();
+  expect(Date.parse(proposal.expires_at)).toBe(start + 110000);
   const hooks = { finish: vi.fn(), log: vi.fn(), saveOrder: vi.fn(), receipt: vi.fn() };
   const intent = { ...proposal, id: "test", code: "test" };
   clock.mockReturnValue(start + 109999);
@@ -66,7 +67,7 @@ it("prepares a five-minute buy with two minutes remaining, and enforces the ten-
   expect(await (await prepareTrade(request, save)).json()).toMatchObject({ error: "CONTRACT_NOT_OPEN" });
 });
 
-it("allows a 97-cent quote or a user-specified 95-cent IOC limit on a longer event with two minutes left", async () => {
+it("allows a 97-cent quote or a user-specified 95-cent resting limit on a longer event with two minutes left", async () => {
   const ticker = "BTC2611191010",
     symbol = "GEMI-" + ticker + "-UP";
   vi.mocked(getEvent).mockResolvedValue({

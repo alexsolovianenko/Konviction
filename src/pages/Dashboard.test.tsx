@@ -464,16 +464,20 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
   expect(requests.at(-1)).toBe('/api/public/market-tools/get_orderbook?event_ticker=E&contract_symbol=C&outcome=no&side=buy&quantity=4&limit_price=0.62');
 });
 
-it('shows the spoken readback and never offers typed trade approval', async () => {
+it('offers a short spoken confirmation even when the browser clock is ahead', async () => {
   const f = fixture(), sdk = await f.begin();
   const readback = 'Buy two yes contracts at up to forty cents. Say confirm.';
+  const serverNow = Date.now() - 300000;
   const proposal = {proposal_id:'id',title:'Event',contract_label:'Threshold',outcome:'yes',quantity:2,limit_price:.4,quote_price:.39,notional_usd:.8,est_fee_usd:.04,
-    expires_at:new Date(Date.now()+60000).toISOString(),readback,voice_readback:readback};
-  f.fetchMock.mockResolvedValue(Response.json({ok:true,proposal,availability:{execution_enabled:true,voice_confirmation_supported:true,voice_authorized:true}}));
+    expires_at:new Date(serverNow+60000).toISOString(),readback:"Long risk and payout paragraph",voice_readback:readback};
+  f.fetchMock.mockResolvedValue(Response.json({ok:true,proposal,availability:{execution_enabled:true,voice_confirmation_supported:true,voice_authorized:true}}, {headers:{Date:new Date(serverNow).toUTCString()}}));
   let reply = '';
-  await act(async () => {reply = await sdk.clientTools['prepare_sandbox_buy']!({event_ticker:'E',contract_symbol:'C',outcome:'yes',quantity:2});});
+  await act(async () => {reply = await sdk.clientTools['prepare_sandbox_buy']!({event_ticker:'E',contract_symbol:'C',outcome:'yes',quantity:2,limit_price:.4});});
   expect(JSON.parse(reply)).toMatchObject({confirmation_tool:'confirm_sandbox_buy',say:readback});
   expect(screen.getByText('Awaiting spoken confirmation')).toBeVisible();
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  expect(screen.queryByText('Approval expired')).toBeNull();
+  expect(screen.queryByText('Long risk and payout paragraph')).toBeNull();
   expect(screen.queryByLabelText('Private approval PIN')).toBeNull();
   expect(screen.queryByRole('button',{name:'Approve sandbox buy'})).toBeNull();
 });
@@ -526,15 +530,14 @@ it.each([false, true])('requests one fresh remainder proposal after spoken appro
     });
   } else {
     fireEvent.click(retryButton);
-    await screen.findByText(freshReadback);
-    expect(screen.getByText('Awaiting spoken confirmation')).toBeVisible();
+    expect(await screen.findByText('Awaiting spoken confirmation')).toBeVisible();
   }
   expect(requests).toHaveLength(2);
   expect(requests[1]).toEqual(remainder);
   expect(approved).toEqual(['first']);
 });
 
-it('prepares at the current ask without an extra quote and speaks the actual order constraint', async () => {
+it('requires the caller’s entry and preserves their cap when preparing', async () => {
   const f = fixture(), sdk = await f.begin();
   let body: unknown;
   f.fetchMock.mockImplementation(async (_path, init) => {
@@ -542,9 +545,11 @@ it('prepares at the current ask without an extra quote and speaks the actual ord
     return Response.json({ok:false, error:'CAP_EXCEEDED', message:'That amount is too small to buy even one contract at this price.'});
   });
   const terms = {event_ticker:'E', contract_symbol:'C', outcome:'no', budget_usd:0.10};
+  expect(JSON.parse(await sdk.clientTools['prepare_sandbox_buy']!(terms))).toMatchObject({ok:false,error:'ENTRY_REQUIRED'});
+  expect(body).toBeUndefined();
   let result = '';
-  await act(async () => { result = await sdk.clientTools['prepare_sandbox_buy']!(terms); });
-  expect(body).toEqual(terms);
+  await act(async () => { result = await sdk.clientTools['prepare_sandbox_buy']!({...terms,limit_price:.95}); });
+  expect(body).toEqual({...terms,limit_price:.95});
   expect(JSON.parse(result).say).toBe('Budget is below one contract.');
 });
 
@@ -578,7 +583,7 @@ it('flushes audible terms and the caller confirmation before a paired sandbox bu
     return baseFetch(path, options);
   });
   await act(async () => {
-    const result = JSON.parse(await sdk.clientTools['prepare_sandbox_buy']!({}));
+    const result = JSON.parse(await sdk.clientTools['prepare_sandbox_buy']!({limit_price:.4}));
     expect(result.say).toBe(readback);
     expect(await sdk.clientTools['confirm_sandbox_buy']!({})).not.toContain('12345678');
   });

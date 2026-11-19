@@ -343,6 +343,7 @@ export class Voice {
           ...session.tools,
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,say:'Session ended.'});
+            if (params['limit_price'] == null) return JSON.stringify({ok:false, error:'ENTRY_REQUIRED', say:'Your limit?'});
             const result = await this.prepareBuy(params);
             return this.proposalReply(result);
           },
@@ -483,6 +484,7 @@ export class Voice {
       if (result.outcome_summary) {
         this.showExchangeResult(result);
         const fills: Record<string, string> = {
+          OPEN: result.voice_say ?? result.say ?? 'Sandbox limit order open.',
           FILLED: 'Filled in the sandbox.', PARTIAL: result.say ?? `Sandbox filled ${result.filled_quantity} of ${proposal.quantity}.`,
           NOT_FILLED: result.say ?? `No fills at ${Math.round(proposal.limit_price * 100)} cents.`, PENDING_UNKNOWN: 'Fill status is pending.',
           EXCHANGE_REJECTED: result.voice_say ?? 'Exchange rejected the order.',
@@ -548,9 +550,9 @@ export class Voice {
   }
 
   private async watchOrderResult(session: WorkerSession | LocalSession, proposal: Proposal) {
-    const until = Date.parse(proposal.expires_at) + 45000;
+    const until = (proposal.confirmationDeadline ?? (performance.now() + Date.parse(proposal.expires_at) - Date.now())) + 45000;
     const current = () => this.active && this.session === session && this.currentProposal === proposal;
-    while (current() && Date.now() < until) {
+    while (current() && performance.now() < until) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       if (!current()) return;
       const result = await tradingRequest('order-result', {proposal_id:proposal.proposal_id}, session.credentials.session_token);

@@ -13,6 +13,7 @@
 // The ElevenLabs system injects the conversation history and call ID into its server webhook.
 import { spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { db, executionEnabled, logActivity } from "./db";
+import { settledOpenOrders } from "./reconcile-open";
 import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
 import { gPrivate, getUsdAvailable, hasCredentials } from "./gemini";
@@ -91,6 +92,15 @@ export function supabaseStore() {
     async saveOrder(row) {
       const { error } = await db.from("orders").insert(row);
       if (error) throw new TradeError("RESULT_UNAVAILABLE", "Check Gemini order history before taking further action.", 503);
+    },
+    async reconcileOpen(history?) {
+      const { data, error } = await db.from("orders")
+        .select("intent_id,gemini_order_id,intents!inner(instrument_symbol,quantity,limit_price)").eq("outcome_summary", "OPEN");
+      if (error) return;
+      const updates = await settledOpenOrders(data.map(row => ({ ...row, ...row.intents })), history);
+      for (const { intent_id, ...fields } of updates) {
+        await db.from("orders").update({ ...fields, created_at: now() }).eq("intent_id", intent_id).eq("outcome_summary", "OPEN");
+      }
     },
     committedUsd: supabaseLedger.committedUsd,
     log: (kind: string, caller: string | null, summary: string, detail?: unknown) => logActivity(kind, caller, summary, detail),
@@ -204,7 +214,11 @@ async function propose(store: Store, token: string | undefined, body) {
     { event_ticker: body.event_ticker, instrument_symbol: body.contract_symbol, side: "buy", outcome: body.outcome,
       quantity: body.quantity, budget_usd: body.budget_usd, limit_price: body.limit_price },
     async ({ readback, ...terms }) => {
-      const committed = await store.committedUsd();
+      let committed = await store.committedUsd();
+      if (committed !== null && dailyCapError(committed, terms.notional_usd + terms.est_fee_usd) && store.reconcileOpen) {
+        await store.reconcileOpen();
+        committed = await store.committedUsd();
+      }
       if (committed === null) return json({ ok: false, error: "RISK_UNAVAILABLE", message: "Could not verify the daily sandbox limit. Nothing was prepared." });
       const capErr = dailyCapError(committed, terms.notional_usd + terms.est_fee_usd);
       if (capErr) return json({ ok: false, error: "CAP_EXCEEDED", message: capErr });
@@ -239,6 +253,7 @@ async function recordedResult(store: Store, row) {
   if (order) {
     const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
     const say = order.outcome_summary === "EXCHANGE_REJECTED" ? "Gemini rejected the sandbox order." :
+      order.outcome_summary === "OPEN" ? (Number(order.filled_qty) > 0 ? `Sandbox filled ${order.filled_qty} of ${row.quantity}. The rest is open.` : "Sandbox limit order open.") :
       order.outcome_summary === "PENDING_UNKNOWN" || order.filled_qty == null ? "Gemini hasn't confirmed the final fill." :
       `Filled ${order.filled_qty} of ${row.quantity} sandbox contracts${order.avg_price == null ? "" : " at an average of " + Math.round(Number(order.avg_price) * 100) + "¢"}.`;
     return {
@@ -252,7 +267,12 @@ async function recordedResult(store: Store, row) {
   }
   if (row.status === "EXECUTING")
     return { ok: true, status: row.status };
-  return { ok: false, error: "INACTIVE", status: row.status, message: "Proposal closed. Ask for a fresh quote." };
+  const [error, say] = row.status === "PROPOSED" || row.status === "EXPIRED"
+    ? ["EXPIRED", "Quote expired. Requote?"]
+    : row.status === "SUPERSEDED"
+      ? ["SUPERSEDED", "A newer order replaced this one."]
+      : ["INACTIVE", row.status === "REJECTED" ? "The sandbox order was rejected." : "Check this order in Account."];
+  return { ok: false, error, status: row.status, message: say, say };
 }
 
 function confirmedInCall(history: unknown, row): boolean {
@@ -264,10 +284,16 @@ function confirmedInCall(history: unknown, row): boolean {
     const expected = spokenProposal(row);
     const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     for (const turn of entries) {
-      for (const result of turn.role === "tool" ? turn.tool_results ?? [] : []) {
+      for (const result of turn.role === "tool" || turn.role === "agent" ? turn.tool_results ?? [] : []) {
         if (!["prepare_sandbox_buy", "prepare_sandbox_remainder"].includes(result.tool_name)) continue;
-        const data = typeof result.result_value === "string" ? JSON.parse(result.result_value) : result.result_value;
-        steps = data?.ok && data.proposal_id === row.id ? 1 : 0;
+        // An interrupted preparation returns a plain-text error. Only its own attempt is invalid.
+        steps = 0;
+        if (result.is_error) continue;
+        let data = result.result_value;
+        if (typeof data === "string") {
+          try { data = JSON.parse(data); } catch { continue; }
+        }
+        if (data?.ok === true && data.proposal_id === row.id) steps = 1;
       }
       if (typeof turn.message !== "string" || !turn.message.trim()) continue;
       if (turn.role === "tool") continue;
@@ -287,7 +313,7 @@ async function callConfirm(store: Store, token: string | undefined, body) {
     throw new TradeError("CALL_REQUIRED", "Confirm in the active voice call.", 403);
   const row = await ownedIntent(store, body.proposal_id, s);
   if (!confirmedInCall(body.history, row))
-    throw new TradeError("CONFIRMATION_REQUIRED", "Read the order and wait for the caller to say confirm.");
+    throw new TradeError("CONFIRMATION_REQUIRED", "Repeat the confirmation question and wait for yes.");
   const config = await availability();
   if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
   const it = await store.claim(row.id, s.caller);
@@ -347,6 +373,7 @@ async function portfolio(store: Store, body) {
     accountSection("/v1/prediction-markets/orders/history", "orders"),
     getUsdAvailable(),
   ]);
+  if (!history.error) await store.reconcileOpen?.(history.rows);
   return { ok: true, as_of: new Date().toISOString(), source: "Gemini Sandbox", orders, positions, history, usd_available: balance.usd, balance_error: balance.error };
 }
 
@@ -403,7 +430,12 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
     const token = action === "call-confirm" ? req.headers.get("x-trade-session-token") ?? undefined : /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
     return reply(200, await runBrowserTrading({ action, method: req.method, token, body, callSecret }));
   } catch (e) {
-    if (e instanceof TradeError) return reply(e.status, { ok: false, error: e.code, message: e.message });
+    if (e instanceof TradeError) {
+      // ElevenLabs treats non-2xx as a failed webhook and may improvise a reason.
+      // An authenticated order decision is a successful tool result, including a refusal.
+      const decision = action === "call-confirm" && ["CONFIRMATION_REQUIRED", "CAP_EXCEEDED", "EXECUTION_DISABLED"].includes(e.code);
+      return reply(decision ? 200 : e.status, { ok: false, error: e.code, message: e.message, ...(decision && { say: e.message }) });
+    }
     console.error(JSON.stringify({ event: "browser_trading_error", action, error_name: (e as Error)?.name ?? null }));
     return reply(503, {
       ok: false, error: "SERVICE_UNAVAILABLE",

@@ -15,10 +15,11 @@ export type Proposal = {
   outcome: string;
   quantity: number;
   limit_price: number;
-  quote_price: number;
+  quote_price: number | null;
   est_fee_usd: number;
   notional_usd: number;
   expires_at: string;
+  confirmationDeadline?: number;
   readback: string;
   voice_readback?: string;
 };
@@ -44,7 +45,15 @@ export async function tradingRequest(
       ...(body && { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout((path === "voice-confirm") ? 30000 : 18000),
     });
+    const receivedAt = performance.now();
+    const serverNow = Date.parse(response.headers.get("date") ?? "");
     const result = await response.json();
+    if (path === "proposals" && result?.proposal) {
+      const expiresAt = Date.parse(result.proposal.expires_at);
+      if (Number.isFinite(expiresAt)) {
+        result.proposal.confirmationDeadline = receivedAt + expiresAt - (Number.isFinite(serverNow) ? serverNow : Date.now());
+      }
+    }
     if (typeof result?.ok === "boolean") return { ...result, message: result.message ?? result.error?.message };
   } catch {
     /* Return a bounded message for network or deployment failures. */

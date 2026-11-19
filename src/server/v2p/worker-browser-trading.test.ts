@@ -201,14 +201,14 @@ describe("approval: the only order-submission path", () => {
     return { s, id: r.proposal.proposal_id as string };
   }
 
-  it("submits exactly one IOC limit order after a provider-attested spoken confirmation and returns Gemini's order id", async () => {
+  it("submits exactly one resting limit order after a provider-attested spoken confirmation and returns Gemini's order id", async () => {
     const { s, id } = await proposed();
     const r = (await callConfirm(id, s.session_token)) as any;
     expect(r).toMatchObject({ ok: true, outcome_summary: "FILLED", order_id: "73797746498585286", exchange_status: "filled" });
     expect(geminiOrderCalls()).toHaveLength(1);
     expect(geminiOrderCalls()[0]?.[1]).toEqual({
       symbol: "GEMI-BTC2611191200-HI95000", orderType: "limit", side: "buy", outcome: "yes",
-      quantity: "1", price: "0.31", timeInForce: "immediate-or-cancel", makerOrCancel: false,
+      quantity: "1", price: "0.31", timeInForce: "good-til-cancel", makerOrCancel: false,
     });
     expect(store.intents.get(id).status).toBe("DONE");
     expect(store.orders[0]).toMatchObject({ gemini_order_id: "73797746498585286", outcome_summary: "FILLED" });
@@ -258,6 +258,16 @@ describe("approval: the only order-submission path", () => {
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 
+  it("accepts a valid confirmation after an earlier interrupted preparation", async () => {
+    const { s, id } = await proposed();
+    const entries = [
+      { role: "tool", tool_results: [{ tool_name: "prepare_sandbox_buy", result_value: "Tool execution was abandoned due to user input" }] },
+      ...conversationEntries(id),
+    ];
+    expect(await callConfirm(id, s.session_token, { history: JSON.stringify({ entries }) })).toMatchObject({ outcome_summary: "FILLED" });
+    expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
   it("keeps private portfolio reads PIN-protected with an account-wide lock", async () => {
     for(let i=0;i<10;i++) await expect(run("portfolio",{pin:"000000"})).rejects.toMatchObject({code:"WRONG_PIN"});
     expect(Date.parse(store.guards.get(GLOBAL_GUARD)!.locked_until!)).toBeGreaterThan(Date.now());
@@ -274,7 +284,7 @@ describe("approval: the only order-submission path", () => {
   it("refuses an expired proposal", async () => {
     const { s, id } = await proposed();
     store.intents.get(id).expires_at = new Date(Date.now() - 1000).toISOString();
-    expect(await callConfirm(id, s.session_token)).toMatchObject({ok:false,error:"INACTIVE"});
+    expect(await callConfirm(id, s.session_token)).toMatchObject({ok:false,error:"EXPIRED"});
     expect(geminiOrderCalls()).toHaveLength(0);
   });
 
@@ -297,7 +307,7 @@ describe("approval: the only order-submission path", () => {
     expect(await store.committedUsd()).toBeGreaterThan(0.3);
   });
 
-  it("reports a cancelled IOC's partial fill and leaves the remainder unsubmitted", async () => {
+  it("reports a cancelled order's partial fill and leaves the remainder unsubmitted", async () => {
     const { s, id } = await proposed();
     vi.mocked(gPrivate).mockResolvedValue({ ok: true, status: 201, text: "", data: { orderId: "1", status: "cancelled", filledQuantity: "0.25", remainingQuantity: "0.75" } });
     const result = await callConfirm(id, s.session_token);

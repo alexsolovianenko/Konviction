@@ -15,6 +15,13 @@
       "when": 1795050349848,
       "tag": "0001_voice_to_predict_service_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795104500000,
+      "tag": "0002_resting_limit_buys",
+      "breakpoints": true
     }
   ]
 }

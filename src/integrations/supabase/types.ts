@@ -89,6 +89,7 @@ export type Database = {
           quote_price: number | null
           side: string
           status: string
+          time_in_force: string
           title: string | null
           updated_at: string
         }
@@ -112,6 +113,7 @@ export type Database = {
           quote_price?: number | null
           side: string
           status?: string
+          time_in_force?: string
           title?: string | null
           updated_at?: string
         }
@@ -135,6 +137,7 @@ export type Database = {
           quote_price?: number | null
           side?: string
           status?: string
+          time_in_force?: string
           title?: string | null
           updated_at?: string
         }

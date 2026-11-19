@@ -26,7 +26,7 @@ it('routes hosted confirmations to the call and reads the recorded exchange resu
     await voice.start();
     const opts = start.mock.calls[0]![0];
     expect(opts.dynamicVariables.secret__trade_session_token).toBe(credentials.session_token);
-    const reply = JSON.parse(await opts.clientTools.prepare_sandbox_buy({quantity:1}));
+    const reply = JSON.parse(await opts.clientTools.prepare_sandbox_buy({quantity:1,limit_price:.4}));
     expect(reply).toMatchObject({proposal_id:'proposal-1', confirmation_tool:'confirm_hosted_sandbox_buy',say:readback});
     expect(JSON.stringify(reply)).not.toContain(credentials.session_token);
     await vi.advanceTimersByTimeAsync(2100);

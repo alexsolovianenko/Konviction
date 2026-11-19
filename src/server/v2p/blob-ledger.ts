@@ -1,3 +1,4 @@
+import { settledOpenOrders } from "./reconcile-open";
 // A single conditional write commits every reservation against the same account total.
 // An unresolved submission stays reserved until its exchange result is known.
 import { BlobPreconditionFailedError, get, put } from "@vercel/blob";
@@ -7,10 +8,10 @@ import { dailyCapError, orderCapError } from "./ledger";
 
 interface Guard { phone: string; pin_failures: number; locked_until: string | null; expires: number | null }
 interface Intent {
-  id: string; caller: string; status: string; side: string; expires_at: string; updated_at: number;
+  instrument_symbol?: string; id: string; caller: string; status: string; side: string; expires_at: string; updated_at: number;
   quantity: number; limit_price: number; notional_usd: number; est_fee_usd: number;
 }
-interface Order { intent_id: string; outcome_summary: string; filled_notional_usd: number; created_at: number }
+interface Order { gemini_order_id?: string; intent_id: string; outcome_summary: string; filled_notional_usd: number; created_at: number }
 interface State { version: 1; guards: Record<string, Guard>; intents: Record<string, Intent>; orders: Record<string, Order> }
 const path = "browser-trading/v1/account.json";
 const empty = (): State => ({ version: 1, guards: {}, intents: {}, orders: {} });
@@ -45,7 +46,7 @@ function committed(state: State, exclude?: string) {
   for (const it of Object.values(state.intents)) {
     if (it.id === exclude || it.side !== "buy") continue;
     const order = state.orders[it.id];
-    if (order?.outcome_summary === "PENDING_UNKNOWN" || (!order && it.status === "EXECUTING")) {
+    if (order?.outcome_summary === "OPEN" || order?.outcome_summary === "PENDING_UNKNOWN" || (!order && it.status === "EXECUTING")) {
       sum += Number(it.notional_usd) + Number(it.est_fee_usd);
     } else if (order && order.created_at >= today && order.filled_notional_usd > 0) {
       sum += Number(order.filled_notional_usd) + Number(it.est_fee_usd);
@@ -62,7 +63,7 @@ function prune(state: State) {
   }
   for (const it of Object.values(state.intents)) {
     // Immutable receipts are separate. Keep replay details longer than the bearer lifetime and UTC risk day.
-    if (it.updated_at > now - 2 * 86400000 || it.status === "EXECUTING" || state.orders[it.id]?.outcome_summary === "PENDING_UNKNOWN") continue;
+    if (it.updated_at > now - 2 * 86400000 || it.status === "EXECUTING" || ["OPEN", "PENDING_UNKNOWN"].includes(state.orders[it.id]?.outcome_summary ?? "")) continue;
     delete state.intents[it.id];
     delete state.orders[it.id];
   }
@@ -155,6 +156,27 @@ export function blobStore(io = backend) {
       await update(s => {
         if (s.intents[row.intent_id]?.status !== "EXECUTING" || s.orders[row.intent_id]) throw new Error("Invalid order transition");
         s.orders[row.intent_id] = { ...row, created_at: Date.now() };
+      });
+    },
+    async reconcileOpen(history?: Parameters<typeof settledOpenOrders>[1]) {
+      const snapshot = await read();
+      const open = Object.values(snapshot.orders).flatMap(row => {
+        const it = snapshot.intents[row.intent_id];
+        if (row.outcome_summary !== "OPEN" || !row.gemini_order_id || !it?.instrument_symbol) return [];
+        return [{ ...row, gemini_order_id: row.gemini_order_id, instrument_symbol: it.instrument_symbol,
+          limit_price: it.limit_price, quantity: it.quantity }];
+      });
+      const settled = await settledOpenOrders(open, history);
+      if (!settled.length) return;
+      await update(state => {
+        for (const fields of settled) {
+          const row = state.orders[fields.intent_id];
+          if (row?.outcome_summary === "OPEN") {
+            Object.assign(row, fields, { created_at: Date.now() });
+            const intent = state.intents[fields.intent_id];
+            if (intent) intent.updated_at = Date.now();
+          }
+        }
       });
     },
     async committedUsd({ excludeIntentId }: { excludeIntentId?: string } = {}) { return committed(await read(), excludeIntentId); },

@@ -2,7 +2,7 @@
 import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
 import { liquiditySnapshot } from "./book-liquidity";
 import { comboEligibility } from "./native-combo";
-import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, speakTime, usd } from "./util";
+import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, usd } from "./util";
 type Body = Record<string, any>;
 const err = (error: string, message: string, extra = {}) =>
   json({ ok: false, error, message, ...extra });
@@ -73,12 +73,12 @@ export async function prepareTrade(b: Body, saveProposal) {
   const label = c.label ?? c.ticker ?? symbol;
   const outcomeText = outcome === "yes" ? `YES (${label})` : `NO (not ${label})`;
 
-  let quantity: number, limit: number, quotePrice: number;
+  let quantity: number, limit: number, quotePrice: number | null;
   if (side === "buy") {
-    if (q.buy === null)
+    if (q.buy === null && (priceLimitIn === null || c.isCombo))
       return err(
         "NO_LIQUIDITY",
-        "Gemini shows no buy price for this outcome. Check for a fresh quote or choose another contract.",
+        c.isCombo ? "No ask for this combo." : "No ask available. What limit price?",
       );
     quotePrice = q.buy;
     limit = priceLimitIn ?? q.buy;
@@ -149,14 +149,17 @@ export async function prepareTrade(b: Body, saveProposal) {
       `Demo limit is ${usd(LIMITS.maxOrderUsd)} per order including fees. This would be ${usd(notional + fee)}.`,
     );
   }
-  const expiresAt = new Date(Date.now() + LIMITS.intentTtlSeconds * 1000).toISOString();
+  const confirmationEnd = Date.now() + LIMITS.intentTtlSeconds * 1000;
+  const marketCutoff = side === "buy" && expiryIso ? Date.parse(expiryIso) - BUY_CUTOFF_MS : Infinity;
+  const expiresAt = new Date(Math.min(confirmationEnd, Number.isFinite(marketCutoff) ? marketCutoff : Infinity)).toISOString();
   const readback =
     side === "buy"
-      ? `Buy ${quantity} ${outcomeText} contracts on "${event.title}", expiring ${speakTime(expiryIso)}, at up to ${cents(limit)} each. That's at most ${usd(notional)} plus an estimated ${usd(fee)} fee. Only what fills immediately at or under that price is bought; the rest is cancelled.`
+      ? `Buy ${quantity} ${outcomeText} on "${event.title}" at up to ${cents(limit)}. Confirm?`
       : `Sell ${quantity} ${outcomeText} contracts on "${event.title}" at no less than ${cents(limit)} each — about ${usd(notional)} before an estimated ${usd(fee)} fee. Only what sells immediately is sold.`;
 
   return saveProposal({
     side,
+    time_in_force: side === "buy" ? "good-til-cancel" : "immediate-or-cancel",
     event_ticker: eventTicker,
     instrument_symbol: symbol,
     title: event.title,
@@ -191,6 +194,16 @@ function rejectionMessage(data: Record<string, unknown> | null, status: number):
   if (status === 429) return "Gemini rate-limited the order. Wait before requesting a fresh quote.";
   if (status === 401 || status === 403) return "Gemini denied the order. Check the sandbox API key’s trading permissions.";
   return "Gemini rejected the order without a recognized reason. Check the sandbox account’s permissions and contract status before retrying.";
+}
+
+export function classifyExchangeOrder(order, quantity: number, resting = true) {
+  const status = String(order?.status ?? "").toLowerCase();
+  const filled = exchangeQuantity(order?.filledQuantity);
+  if (filled === null || filled < 0 || filled > quantity) return "PENDING_UNKNOWN";
+  if (filled === quantity) return "FILLED";
+  if (resting && order?.orderId && status === "open") return "OPEN";
+  if (["cancelled", "canceled", "closed"].includes(status)) return filled === 0 ? "NOT_FILLED" : "PARTIAL";
+  return "PENDING_UNKNOWN";
 }
 
 function exchangeQuantity(value: unknown) {
@@ -228,7 +241,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   }
   const q = quoteFor(c, it.outcome);
   const limit = Number(it.limit_price);
-  // The signed IOC limit caps the exchange price even if the ask changes between
+  // The signed limit caps the exchange price even if the ask changes between
   // this snapshot and matching. A buy below the current ask can still be tried.
   if (it.side === "sell" && (q.sell === null || q.sell < limit - 1e-9)) {
     await finish("REJECTED");
@@ -252,7 +265,8 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   }
   const callerHash = await hashPhone(caller);
 
-  // Place ONE immediate-or-cancel limit order. Never retried on timeout.
+  // Older proposals promised immediate cancellation and must retain that condition.
+  const resting = it.side === "buy" && it.time_in_force === "good-til-cancel";
   const orderFields = {
     symbol: it.instrument_symbol,
     orderType: "limit",
@@ -260,7 +274,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     outcome: it.outcome,
     quantity: String(it.quantity),
     price: limit.toFixed(2),
-    timeInForce: "immediate-or-cancel",
+    timeInForce: resting ? "good-til-cancel" : "immediate-or-cancel",
     makerOrCancel: false,
   };
   await Promise.all([
@@ -274,7 +288,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
       approved_at: new Date().toISOString(),
       quote_at_execution: it.side === "buy" ? q.buy : q.sell,
     }),
-    log("ORDER_SENT", caller, `${code}: sending IOC ${it.side} ${it.quantity} ${it.outcome} @ ${limit.toFixed(2)}`, orderFields),
+    log("ORDER_SENT", caller, `${code}: sending ${orderFields.timeInForce} ${it.side} ${it.quantity} ${it.outcome} @ ${limit.toFixed(2)}`, orderFields),
   ]);
   const placed = await gPrivate("/v1/prediction-markets/order", orderFields, { submitBefore });
   if (placed.missedDeadline) {
@@ -282,7 +296,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remained before submission.");
   }
 
-  let summary: "FILLED" | "PARTIAL" | "NOT_FILLED" | "PENDING_UNKNOWN" | "EXCHANGE_REJECTED";
+  let summary: "OPEN" | "FILLED" | "PARTIAL" | "NOT_FILLED" | "PENDING_UNKNOWN" | "EXCHANGE_REJECTED";
   // deno-lint-ignore no-explicit-any
   let o: any = placed.data;
   if (placed.status === 0 || placed.status === 408 || placed.status >= 500) {
@@ -290,30 +304,20 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   } else if (!placed.ok) {
     summary = "EXCHANGE_REJECTED";
   } else {
-    // The placement response can precede matching. Reconcile once by the exact order id.
-    const terminal = (order: any) => ["filled", "cancelled", "canceled", "closed"].includes(String(order?.status ?? "").toLowerCase());
-    if (o?.orderId && (exchangeQuantity(o.filledQuantity) === null || (!terminal(o) && Number(o.filledQuantity) < it.quantity))) {
-      await new Promise((r) => setTimeout(r, 1500));
+    summary = classifyExchangeOrder(o, Number(it.quantity), resting);
+    if (o?.orderId && summary === "PENDING_UNKNOWN") {
       const h = await gPrivate("/v1/prediction-markets/orders/history", {
         symbol: it.instrument_symbol,
         limit: 20,
       });
-      // deno-lint-ignore no-explicit-any
       const match = (h.data?.orders ?? []).find(
         (x: any) => String(x.orderId) === String(o.orderId),
       );
-      if (h.ok && match) o = match;
+      if (h.ok && match) {
+        o = match;
+        summary = classifyExchangeOrder(o, Number(it.quantity), resting);
+      }
     }
-    const filled = exchangeQuantity(o?.filledQuantity) ?? 0;
-    summary =
-      exchangeQuantity(o?.filledQuantity) === null || filled < 0 || filled > Number(it.quantity) + 1e-9 ||
-      (filled < it.quantity && (!terminal(o) || String(o?.status).toLowerCase() === "filled"))
-        ? "PENDING_UNKNOWN"
-        : filled <= 0
-          ? "NOT_FILLED"
-          : filled + 1e-9 >= it.quantity
-            ? "FILLED"
-            : "PARTIAL";
   }
 
   const filledQty = exchangeQuantity(o?.filledQuantity);
@@ -370,6 +374,9 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   const reason = placed.data?.reason ?? placed.data?.error;
   const average = avg !== null ? ` at an average of ${cents(avg)}` : "";
   const say: Record<string, string> = {
+    OPEN: filledQty > 0
+      ? `${filledQty} filled. The rest is open at ${cents(limit)}.`
+      : `Sandbox limit order open at ${cents(limit)}.`,
     FILLED: `Filled ${filledQty} of ${it.quantity} sandbox contracts${average}.`,
     PARTIAL: `Filled ${filledQty} of ${it.quantity} sandbox contracts${average}.`,
     NOT_FILLED: `Zero of ${it.quantity} contracts filled at your ${cents(limit)} limit.`,

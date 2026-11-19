@@ -25,8 +25,9 @@ function spokenLabel(label) {
 
 export function spokenProposal(terms) {
   const cents = Math.round(terms.limit_price * 100);
-  return 'Buy ' + count(terms.quantity) + ' ' + terms.outcome.toLowerCase() + ' on ' +
-    spokenLabel(terms.title) + ', ' + spokenLabel(terms.contract_label) + ', up to ' + count(cents) + (cents === 1 ? ' cent' : ' cents') +
-    ' each. Estimated risk ' + dollars(terms.notional_usd + terms.est_fee_usd) +
-    ' including fees. Payout ' + dollars(terms.quantity) + ' if all fill and win. Say confirm.';
+  const title = spokenLabel(terms.title.replace(/\bprice today at\b/i, 'at'));
+  const label = spokenLabel(terms.contract_label);
+  const market = title.toLowerCase() === label.toLowerCase() ? title : title + ', ' + label;
+  return market + '. Buy ' + count(terms.quantity) + ' ' + terms.outcome.toLowerCase() +
+    ' up to ' + count(cents) + (cents === 1 ? ' cent' : ' cents') + '. Confirm?';
 }

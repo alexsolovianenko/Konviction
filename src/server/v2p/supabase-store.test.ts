@@ -50,11 +50,11 @@ it("claim returns null when nothing (or more than one row) matched", async () =>
   expect(await supabaseStore().claim("i1", "session:abc")).toBeNull();
 });
 
-it("ledger sums filled buys, reserves unknown outcomes and in-flight approvals", async () => {
+it.each(["OPEN", "PENDING_UNKNOWN"])("ledger sums filled buys and reserves %s and in-flight approvals", async (summary) => {
   queue["orders"] = [{ data: [
     { intent_id: "a", outcome_summary: "FILLED", filled_notional_usd: 1.5 },
     { intent_id: "b", outcome_summary: "NOT_FILLED", filled_notional_usd: 0 },
-    { intent_id: "c", outcome_summary: "PENDING_UNKNOWN", filled_notional_usd: 0 },
+    { intent_id: "c", outcome_summary: summary, filled_notional_usd: 0 },
   ], error: null }];
   queue["intents"] = [
     { data: [{ id: "x", notional_usd: 2, est_fee_usd: 0.1 }, { id: "c", notional_usd: 3, est_fee_usd: 0.2 }, { id: "self", notional_usd: 9, est_fee_usd: 1 }], error: null }, // EXECUTING

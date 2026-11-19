@@ -36,7 +36,7 @@ it("claims at most one order across workers competing for the last available ris
   expect(await b.committedUsd()).toBe(20.1);
 });
 
-it("keeps unresolved and unsaved exchange results reserved across UTC rollover", async () => {
+it.each(["OPEN", "PENDING_UNKNOWN"])("keeps %s and unsaved exchange results reserved across UTC rollover", async (summary) => {
   const clock = vi.spyOn(Date, "now");
   const io = memoryBackend();
   const store = blobStore(io);
@@ -48,7 +48,7 @@ it("keeps unresolved and unsaved exchange results reserved across UTC rollover",
   await expect(store.saveOrder({intent_id:first, outcome_summary:"FILLED", filled_notional_usd:20})).rejects.toThrow();
   const second = await store.insertIntent(proposal(caller));
   await store.claim(second, caller);
-  await store.saveOrder({intent_id:second, outcome_summary:"PENDING_UNKNOWN", filled_notional_usd:0});
+  await store.saveOrder({intent_id:second, outcome_summary:summary, filled_notional_usd:0});
   await store.setIntentStatus(second, "DONE");
   clock.mockReturnValue(Date.now() + 3 * 86400000);
   await store.createSession("nextday");

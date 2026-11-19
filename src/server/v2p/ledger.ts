@@ -1,7 +1,7 @@
 // @ts-nocheck -- supabase-js rows are untyped here, like the rest of src/server/v2p.
 // One account-wide daily risk ledger shared by every channel (browser approval, phone tools).
 // Committed today = filled buy notional + full reservations for orders whose outcome is not yet
-// known (PENDING_UNKNOWN) + full reservations for intents currently EXECUTING.
+// known or final (PENDING_UNKNOWN or OPEN) + full reservations for intents currently EXECUTING.
 import { db } from "./db";
 import { LIMITS, round2, usd } from "./util";
 
@@ -19,7 +19,7 @@ export const supabaseLedger: Ledger = {
   async committedUsd({ excludeIntentId } = {}) {
     const [orders, executing] = await Promise.all([
       db.from("orders").select("intent_id,outcome_summary,filled_notional_usd")
-        .eq("side", "buy").or(`created_at.gte.${startOfUtcDay()},outcome_summary.eq.PENDING_UNKNOWN`),
+        .eq("side", "buy").or(`created_at.gte.${startOfUtcDay()},outcome_summary.eq.PENDING_UNKNOWN,outcome_summary.eq.OPEN`),
       db.from("intents").select("id,notional_usd,est_fee_usd").eq("status", "EXECUTING").eq("side", "buy"),
     ]);
     if (orders.error || executing.error) return null;
@@ -28,7 +28,7 @@ export const supabaseLedger: Ledger = {
     const unknownIds = [];
     for (const o of orders.data ?? []) {
       recordedIds.add(o.intent_id);
-      if (o.outcome_summary === "PENDING_UNKNOWN") unknownIds.push(o.intent_id);
+      if (o.outcome_summary === "PENDING_UNKNOWN" || o.outcome_summary === "OPEN") unknownIds.push(o.intent_id);
       else total += Number(o.filled_notional_usd ?? 0);
     }
     if (unknownIds.length) {

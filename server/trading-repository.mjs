@@ -8,6 +8,15 @@ export class TradeError extends Error {
     this.status = status;
   }
 }
+function requirePendingProposal(row, terms) {
+  if (row.status === "SUPERSEDED")
+    throw new TradeError("SUPERSEDED", "A newer order replaced this one.");
+  if (row.status !== "PROPOSED")
+    throw new TradeError("INACTIVE", "This proposal is no longer awaiting confirmation.");
+  if (!(Date.parse(terms.expires_at) > Date.now()))
+    throw new TradeError("EXPIRED", "Quote expired. Requote?");
+}
+
 export class TradingRepository {
   constructor(repository) {
     this.repository = repository;
@@ -44,14 +53,26 @@ export class TradingRepository {
     if (!row) return null;
     if (row.fingerprint !== fingerprint)
       throw new TradeError("KEY_REUSED", "Request identifier already used with different terms.");
-    if (row.status !== "PROPOSED" || Date.parse(JSON.parse(row.terms).expires_at) <= Date.now())
-      throw new TradeError("INACTIVE", "This proposal is no longer awaiting approval.");
-    return { ...JSON.parse(row.terms), proposal_id: row.id };
+    const terms = JSON.parse(row.terms);
+    requirePendingProposal(row, terms);
+    return { ...terms, proposal_id: row.id };
+  }
+  openOrders() {
+    return this.db.prepare(`
+      SELECT id AS intent_id, json_extract(result, '$.order_id') AS gemini_order_id,
+        json_extract(terms, '$.instrument_symbol') AS instrument_symbol,
+        json_extract(terms, '$.quantity') AS quantity, json_extract(terms, '$.limit_price') AS limit_price
+      FROM browser_proposals WHERE status='OPEN'
+    `).all();
+  }
+  finalizeOpenOrder(id, result, spentCents) {
+    this.db.prepare(`UPDATE browser_proposals SET status='DONE', result=?, reserved_cents=?, approval_day=?
+      WHERE id=? AND status='OPEN'`).run(JSON.stringify(result), spentCents, new Date().toISOString().slice(0, 10), id);
   }
   reservedToday(day) {
     return this.db
       .prepare(
-        "SELECT COALESCE(SUM(reserved_cents),0) AS total FROM browser_proposals WHERE approval_day=? OR status IN ('EXECUTING','UNKNOWN')",
+        "SELECT COALESCE(SUM(reserved_cents),0) AS total FROM browser_proposals WHERE approval_day=? OR status IN ('EXECUTING','UNKNOWN','OPEN')",
       )
       .get(day).total;
   }
@@ -102,11 +123,7 @@ export class TradingRepository {
           "Approval already received. Check order status before taking further action.",
         );
       const terms = JSON.parse(row.terms);
-      if (row.status !== "PROPOSED" || Date.parse(terms.expires_at) <= Date.now())
-        throw new TradeError(
-          "INACTIVE",
-          "This proposal was replaced or expired. Request a fresh quote.",
-        );
+      requirePendingProposal(row, terms);
       const day = new Date().toISOString().slice(0, 10);
       const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
       if (
@@ -142,6 +159,6 @@ export class TradingRepository {
     }
     this.db
       .prepare("UPDATE browser_proposals SET status=?,result=?,reserved_cents=ceil(reserved_cents * ?) WHERE id=? AND status='EXECUTING'")
-      .run(unknown ? "UNKNOWN" : "DONE", JSON.stringify(result), retainedFraction, id);
+      .run(unknown ? "UNKNOWN" : result.outcome_summary === "OPEN" ? "OPEN" : "DONE", JSON.stringify(result), retainedFraction, id);
   }
 }

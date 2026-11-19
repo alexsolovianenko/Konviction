@@ -32,7 +32,7 @@
         "type": "number",
         "minimum": 0.01,
         "maximum": 0.99,
-        "description": "User-stated maximum per contract in dollars (97 cents = 0.97). Omit for the current ask or an unstated limit."
+        "description": "Required entry cap in dollars. Use the caller’s price, or the quoted ask they accepted (97 cents = 0.97). If missing, ask first."
       },
       "budget_usd": {
         "type": "number",
@@ -43,7 +43,8 @@
     "required": [
       "event_ticker",
       "contract_symbol",
-      "outcome"
+      "outcome",
+      "limit_price"
     ]
   }
 }

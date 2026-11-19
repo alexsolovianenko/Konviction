@@ -32,7 +32,8 @@ export function TradeApproval({
     if (!proposal) return;
     const timer = setTimeout(
       () => setExpired(true),
-      Math.max(0, Date.parse(proposal.expires_at) - Date.now()),
+      Math.max(0, proposal.confirmationDeadline === undefined
+        ? Date.parse(proposal.expires_at) - Date.now() : proposal.confirmationDeadline - performance.now()),
     );
     return () => clearTimeout(timer);
   }, [proposal]);
@@ -67,7 +68,6 @@ export function TradeApproval({
             <h2 className="text-lg font-semibold tracking-tight">
               {proposal.title} · {proposal.contract_label}
             </h2>
-            <p className="mt-0.5 text-sm text-subtle">{proposal.readback}</p>
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
             {(
@@ -84,10 +84,6 @@ export function TradeApproval({
               </div>
             ))}
           </dl>
-          <p className="tnum break-words text-xs text-muted-foreground">
-            {proposal.instrument_symbol} · Quoted at {Math.round(proposal.quote_price * 100)}¢ ·
-            Expires {new Date(proposal.expires_at).toLocaleTimeString()}
-          </p>
           {expired ? (
             <p className="text-sm text-warning">Proposal expired. Ask for a fresh quote.</p>
           ) : voiceReady && config?.execution_enabled ? (

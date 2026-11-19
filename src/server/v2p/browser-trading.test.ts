@@ -113,7 +113,7 @@ it("stores exact fresh terms, deduplicates proposals, rejects changed parameters
   expect(gPrivate).not.toHaveBeenCalled();
 });
 
-it("requires owner, spoken confirmation and enabled execution; moved asks preserve the signed IOC limit", async () => {
+it("requires owner, spoken confirmation and enabled execution; moved asks preserve the signed resting limit", async () => {
   const t = token(),
     id = (await propose(t)).proposal.proposal_id;
   await expect(approve(token(), id)).rejects.toMatchObject({ code: "UNKNOWN_PROPOSAL" });
@@ -167,10 +167,49 @@ it("atomically reserves aggregate daily exposure, submits at most once and repla
       price: "0.40",
       side: "buy",
       outcome: "yes",
-      timeInForce: "immediate-or-cancel",
+      timeInForce: "good-til-cancel",
     }),
     {submitBefore:expect.any(Number)},
   );
+});
+
+it.each(["0", "1"])("rests an explicit buy limit without an ask, with %s filled and no duplicate submission", async (filled) => {
+  quote("");
+  const t = token();
+  const { proposal } = await propose(t);
+  expect(proposal).toMatchObject({ quote_price: null, limit_price: .4, time_in_force: "good-til-cancel" });
+  vi.mocked(gPrivate).mockResolvedValue({
+    ok: true, status: 201, text: "", data: { orderId: "open-order", status: "open",
+      filledQuantity: filled, remainingQuantity: String(2 - Number(filled)) },
+  });
+  const result = await approve(t, proposal.proposal_id);
+  expect(result).toMatchObject({ ok: true, outcome_summary: "OPEN", filled_quantity: Number(filled) });
+  expect(result.remainder_buy).toBeUndefined();
+  expect(result.say).toMatch(/open at 40 cents/i);
+  expect(await approve(t, proposal.proposal_id)).toMatchObject({ outcome_summary: "OPEN" });
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+  expect(repo.db.prepare("SELECT status,reserved_cents FROM browser_proposals").get()).toMatchObject({
+    status: "OPEN", reserved_cents: Math.round(100 * (proposal.notional_usd + proposal.est_fee_usd)),
+  });
+});
+
+it("reconciles a cancelled resting order before refusing a new proposal against the daily cap", async () => {
+  vi.stubEnv("MAX_DAILY_USD", "1.30");
+  const t = token();
+  const id = (await propose(t)).proposal.proposal_id;
+  vi.mocked(gPrivate).mockResolvedValueOnce({
+    ok: true, status: 201, text: "", data: { orderId: "resting", status: "open", filledQuantity: "0", remainingQuantity: "2" },
+  });
+  expect(await approve(t, id)).toMatchObject({ outcome_summary: "OPEN" });
+  vi.mocked(gPrivate).mockResolvedValueOnce({
+    ok: true, status: 200, text: "", data: { orders: [{ orderId: "resting", symbol: input.contract_symbol,
+      status: "cancelled", filledQuantity: "1", remainingQuantity: "1", avgExecutionPrice: ".39" }] },
+  });
+  expect((await propose(t)).ok).toBe(true);
+  expect(repo.db.prepare("SELECT status,reserved_cents,approval_day FROM browser_proposals WHERE id=?").get(id))
+    .toMatchObject({ status: "DONE", reserved_cents: 41, approval_day: new Date().toISOString().slice(0, 10) });
+  expect(await approve(t, id)).toMatchObject({ outcome_summary: "PARTIAL", filled_quantity: 1 });
+  expect(vi.mocked(gPrivate).mock.calls.filter(([path]) => path === "/v1/prediction-markets/order")).toHaveLength(1);
 });
 
 it("retains uncertain exposure and reports uncertain fills without a retry", async () => {
@@ -195,13 +234,13 @@ it("rejects superseded, expired and ended-session proposals", async () => {
   const t = token(),
     a = (await propose(t)).proposal.proposal_id,
     b = (await propose(t)).proposal.proposal_id;
-  await expect(approve(t, a)).rejects.toMatchObject({ code: "INACTIVE" });
+  await expect(approve(t, a)).rejects.toMatchObject({ code: "SUPERSEDED" });
   repo.db
     .prepare(
       "UPDATE browser_proposals SET terms=json_set(terms,'$.expires_at','2000-01-01') WHERE id=?",
     )
     .run(b);
-  await expect(approve(t, b)).rejects.toMatchObject({ code: "INACTIVE" });
+  await expect(approve(t, b)).rejects.toMatchObject({ code: "EXPIRED" });
   repo.db.exec("UPDATE sessions SET state='ended'");
   await expect(propose(t)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   expect(gPrivate).not.toHaveBeenCalled();
@@ -280,7 +319,7 @@ it("executes one local sandbox buy only after the unpaired call hears its fresh 
   const t = token();
   const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
   const { proposal } = await run({ ...device, token:t, method:"POST", path:"proposals", key:randomUUID(), body:input });
-  expect(proposal.voice_readback).toBe("Buy two yes on Example event, Option, up to forty cents each. Estimated risk eighty four cents including fees. Payout two dollars if all fill and win. Say confirm.");
+  expect(proposal.voice_readback).toBe("Example event, Option. Buy two yes up to forty cents. Confirm?");
   const confirm = (seq:number, credentials: Record<string,string> = device) =>
     run({ ...credentials, token:t, method:"POST", path:"voice-confirm", body:{proposal_id:proposal.proposal_id, confirmation_seq:seq} });
   const entry = (seq:number, role:string, text:string, interrupted = false, now = Date.now()) =>
