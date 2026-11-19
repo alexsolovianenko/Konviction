@@ -102,7 +102,7 @@ function enforcePredictionScope(path, body) {
   );
 }
 
-function handle(repo, session, path, method, body, key, now) {
+function handle(repo, session, path, method, body, key, now, market, legacyMarket) {
   requireRule(body?.session_id == null || body.session_id === session.id, 'unauthorized');
   requireRule(now < session.expires, 'session_not_found');
   const ended =
@@ -167,7 +167,7 @@ function handle(repo, session, path, method, body, key, now) {
       path === '/intents' ? body : body.parameters,
       session.id,
       transcript,
-      now,
+      now, market, legacyMarket,
     );
     repo.touch(session.id, now, session.state);
   } catch (err) {
@@ -178,7 +178,7 @@ function handle(repo, session, path, method, body, key, now) {
   return result;
 }
 
-export function createApi({ repo, apiKey, agentId, upstream = fetch, clock = Date.now }) {
+export function createApi({ repo, apiKey, agentId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
   return createServer(async (req, res) => {
     function reply([status, body]) {
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -194,12 +194,27 @@ export function createApi({ repo, apiKey, agentId, upstream = fetch, clock = Dat
         requireRule(requests[path](await readBody(req)), 'invalid_parameters');
         return reply(await sign(repo, { apiKey, agentId, upstream, clock }));
       }
+      if (!legacyMarket && ['/tools/search_markets', '/tools/get_orderbook'].includes(path))
+        return reply([410, { ok: false, error: 'Use /api/public/market-tools for live sandbox reads.' }]);
       const token = /^Bearer ([^ ]+)$/i.exec(req.headers.authorization ?? '')?.[1];
       requireRule(token, 'unauthorized');
       const digest = hash(token);
-      requireRule(repo.authenticate(digest), 'unauthorized');
+      const scopedSession = repo.authenticate(digest);
+      requireRule(scopedSession, 'unauthorized');
       const body =
         req.method === 'GET' ? Object.fromEntries(url.searchParams) : await readBody(req);
+      const key = req.headers['idempotency-key'];
+      const params = path === '/intents' ? body : body.parameters;
+      let market = false;
+      const capture = path === '/intents' || path.startsWith('/tools/capture_');
+      if (req.method === 'POST' && (legacyMarket || (capture && params?.venue === 'gemini_prediction')) &&
+          typeof params?.instrument === 'string' && params.instrument && params.instrument.length <= 64 &&
+          uuid4.test(key) && requests[path](body) && scopedSession.id === body.session_id &&
+          !repo.replay(scopedSession.id, key)) {
+        // A recorded order can be cancelled after its market closes. Fresh captures require a live contract.
+        const knownTarget = params.order_id && repo.intents(scopedSession.id).some(row => row.intent.id === params.order_id);
+        if (!knownTarget) market = await lookupInstrument(params.instrument, params.venue);
+      }
       reply(
         repo.transaction(() =>
           handle(
@@ -209,7 +224,7 @@ export function createApi({ repo, apiKey, agentId, upstream = fetch, clock = Dat
             req.method,
             body,
             req.headers['idempotency-key'],
-            clock(),
+            clock(), market, legacyMarket,
           ),
         ),
       );

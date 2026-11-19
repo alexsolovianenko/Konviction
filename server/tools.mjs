@@ -1,22 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { api, requireRule, validIntent } from './contracts.mjs';
 
-const catalog = api['x-simulated-catalog'];
-const stopWords = new Set([
-  'market',
-  'markets',
-  'contract',
-  'contracts',
-  'price',
-  'prices',
-  'spot',
-  'prediction',
-  'predictions',
-  'gemini',
-  'the',
-  'and',
-  'for',
-]);
 const bounded = (text, max) => Array.from(text).slice(0, max).join('');
 const { yes_words, allowed_fillers } = api['x-confirmation-enforcement'].explicit_yes;
 const fold = (s) =>
@@ -91,7 +75,7 @@ export function visibleIntent(intent) {
   return intent.venue === 'gemini_prediction' || intent.intent === 'market_query';
 }
 
-export function runTool(repo, name, p, session, transcript, now) {
+export function runTool(repo, name, p, session, transcript, now, market, legacyMarket) {
   const records = repo.intents(session).filter(({ intent }) => visibleIntent(intent));
   const orders = records.map((row) => row.intent);
   const speech = transcript.filter((entry) => entry.role !== 'tool');
@@ -99,7 +83,6 @@ export function runTool(repo, name, p, session, transcript, now) {
   const userText = users.map((entry) => entry.text).join(' ');
   const utteranceMatches =
     plain(p.utterance).length > 0 && plain(userText).includes(plain(p.utterance));
-  const market = catalog[p.venue].find((item) => item.instrument === p.instrument);
   const intent = {
     id: randomUUID(),
     session_id: session,
@@ -235,47 +218,8 @@ export function runTool(repo, name, p, session, transcript, now) {
         capture_status: 'captured',
         cancel_captured: cancelled.has(id),
       }));
-  } else if (name === 'search_markets') {
-    intent.instrument = bounded(p.query.trim(), 64);
-    const words = fold(p.query).match(/[\p{L}\p{Nd}]+/gu) ?? [];
-    const terms = words.filter((word) => Array.from(word).length >= 3 && !stopWords.has(word));
-    const results = catalog[p.venue]
-      .filter(
-        (item) =>
-          terms.length > 0 &&
-          terms.every((term) =>
-            [item.title, item.instrument, ...item.aliases].some((s) => fold(s).includes(term)),
-          ),
-      )
-      .slice(0, p.limit ?? 3)
-      .map(({ aliases, yes_book, bids, asks, ...item }) =>
-        bids
-          ? { ...item, venue: p.venue, best_bid: bids[0].price, best_ask: asks[0].price }
-          : { ...item, venue: p.venue },
-      );
-    Object.assign(result, {
-      venue: p.venue,
-      as_of: intent.created_at,
-      count: results.length,
-      results,
-    });
   } else {
-    const book = market.yes_book ?? market;
-    const bids = book.bids.slice(0, p.depth ?? 3),
-      asks = book.asks.slice(0, p.depth ?? 3);
-    const best_bid = bids[0]?.price ?? null,
-      best_ask = asks[0]?.price ?? null;
-    Object.assign(result, {
-      venue: p.venue,
-      instrument: market.instrument,
-      as_of: intent.created_at,
-      bids,
-      asks,
-      best_bid,
-      best_ask,
-      spread:
-        best_ask == null || best_bid == null ? null : Number((best_ask - best_bid).toFixed(2)),
-    });
+    legacyMarket(name, p, intent, result);
   }
   if (!validIntent(intent)) throw new Error('Derived audit record failed schema validation');
   repo.insert(intent);

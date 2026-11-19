@@ -1,20 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { applyChartAction, initialChart, type ChartAction } from '../demoChart';
-import { DemoChartPanel } from './DemoChartPanel';
+import { useEffect, useState } from 'react';
+import { useMarketTools } from './useMarketTools';
 import { Voice, initial } from '../voice';
 
 export function Dashboard() {
-  const [chart, setChart] = useState(initialChart);
-  const chartRef = useRef(chart);
-  const act = (action: ChartAction | 'cancel') => {
-    const next = applyChartAction(chartRef.current, action);
-    chartRef.current = next;
-    setChart(next);
-    return next;
-  };
+  const market = useMarketTools();
+  const [query, setQuery] = useState('');
   const [view, setView] = useState(initial);
   const [voice] = useState(
-    () => new Voice((patch) => setView((previous) => ({ ...previous, ...patch })), act),
+    () => new Voice((patch) => setView((previous) => ({ ...previous, ...patch })), market.run),
   );
   useEffect(() => {
     const close = () => {
@@ -27,10 +20,10 @@ export function Dashboard() {
     };
   }, [voice]);
   return (
-    <main>
+    <section className="voice-panel panel">
       <header>
-        <h1>Call-to-Predict</h1>
-        <p>Prepare YES or NO prediction contracts by voice. Market data is simulated.</p>
+        <h2>Browser voice</h2>
+        <p>Explore Gemini Sandbox prediction contracts and capture an intent by voice.</p>
       </header>
       <section aria-label="Voice controls" className="controls">
         <button disabled={view.status !== 'Idle'} onClick={() => void voice.start()}>
@@ -47,7 +40,26 @@ export function Dashboard() {
         {view.error && <p role="alert">{view.error}</p>}
       </section>
       <div className="panels">
-        <DemoChartPanel chart={chart} act={act} />
+        <section aria-label="Gemini market tools">
+          <h2>Search prediction markets</h2>
+          <form onSubmit={e => { e.preventDefault(); void market.run('search_markets', { query }); }}>
+            <input aria-label="Market search" placeholder="Event, ticker, or category" value={query} onChange={e => setQuery(e.target.value)} />
+            <button>Search markets</button>
+          </form>
+          {market.busy && <p role="status">Refreshing Gemini Sandbox…</p>}
+          {market.result && <div aria-live="polite">
+            {market.result.error && <p role="alert">{market.result.error}</p>}
+            {market.result.events?.length === 0 && <p>No matching events in the current sandbox listing.</p>}
+            {market.result.events?.map(e => <details open key={e.ticker}><summary>{e.title} · {e.ticker}</summary>
+              {e.contracts.map(c => <button key={c.symbol} onClick={() => void market.run('get_orderbook', { event_ticker: e.ticker, contract_symbol: c.symbol })}>Quote {c.label ?? c.symbol}</button>)}</details>)}
+            {market.result.contract && <div><strong>{market.result.title} · {market.result.contract.label}</strong><p>{market.result.contract.symbol}</p>
+              {(['yes','no'] as const).map(side => <p key={side}>{side.toUpperCase()} · {(['buy','sell'] as const).map(action => {
+                const price = market.result!.contract![action][side];
+                return action + ' ' + (price === null ? 'unavailable' : (100 * price).toFixed(0) + '¢');
+              }).join(' · ')}</p>)}</div>}
+            {market.result.as_of && <small>Gemini Sandbox · {market.result.as_of}</small>}
+          </div>}
+        </section>
         <div className="history-panels">
           <section>
             <h2>Live transcript</h2>
@@ -65,7 +77,7 @@ export function Dashboard() {
                   </div>
                   {entry.role === 'tool' ? (
                     <details>
-                      <summary>Simulated tool result</summary>
+                      <summary>Capture tool result</summary>
                       <pre>{entry.text}</pre>
                     </details>
                   ) : (
@@ -113,6 +125,6 @@ export function Dashboard() {
           </section>
         </div>
       </div>
-    </main>
+    </section>
   );
 }

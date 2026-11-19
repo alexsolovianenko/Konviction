@@ -1,4 +1,3 @@
-import { isChartAction, type ChartAction, type DemoChart } from './demoChart';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
 import { Session, startCredentials, type Entry, type Intent } from './session';
 
@@ -20,12 +19,12 @@ export const initial: VoiceView = {
 export class Voice {
   private attempt = 0;
   private active = false;
-  private session?: Session;
-  private conversation?: { endSession: () => Promise<void> };
-  private finishSpeech?: () => void;
+  private session: Session | undefined;
+  private conversation: undefined | { endSession: () => Promise<void> };
+  private finishSpeech: undefined | (() => void);
   constructor(
     private update: (patch: Partial<VoiceView>) => void,
-    private chartAction: (action: ChartAction) => DemoChart,
+    private marketAction: (name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) => Promise<unknown>,
   ) {}
 
   async start() {
@@ -77,7 +76,7 @@ export class Voice {
             alignment.chars
               .filter(
                 (_, i) =>
-                  alignment.char_start_times_ms[i] + alignment.char_durations_ms[i] <=
+                  (alignment.char_start_times_ms[i] ?? Infinity) + (alignment.char_durations_ms[i] ?? Infinity) <=
                   performance.now() - start,
               )
               .join(''),
@@ -236,15 +235,10 @@ export class Voice {
         connectionType: 'websocket',
         clientTools: {
           ...session.tools,
-          explore_demo_chart: ({ action }: { action?: unknown }) => {
-            if (!current() || !isChartAction(action))
-              return JSON.stringify({
-                simulated: true,
-                ok: false,
-                error: 'Chart action unavailable',
-              });
-            return JSON.stringify(this.chartAction(action));
-          },
+          ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
+            name, async (params: Record<string, unknown>) => JSON.stringify(current()
+              ? await this.marketAction(name, params) : { ok: false, error: 'Session ended.' }),
+          ])),
         },
         ...callbacks,
       });

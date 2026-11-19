@@ -1,3 +1,4 @@
+import { legacyMarket } from './test-support/legacy-markets.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -40,6 +41,8 @@ async function setup(t, overrides = {}) {
   };
   const server = createApi({
     repo,
+    legacyMarket,
+    lookupInstrument: async (symbol, venue) => api['x-simulated-catalog'][venue]?.find(c => c.instrument === symbol),
     apiKey: 'secret',
     agentId: 'private',
     upstream,
@@ -707,4 +710,23 @@ test('legacy spot trades stay in SQLite and read-only spot queries remain visibl
   );
   assert.equal(app.repo.intents(s.session_id).length, 5);
   assert.equal((await s.list()).data.count, 2);
+});
+
+test('running capture API accepts a verified sandbox contract and replays without rechecking its quote', async t => {
+  const symbol = 'GEMI-EVENT-OUTCOME';
+  const seen = [];
+  const f = await setup(t, {
+    legacyMarket: undefined,
+    lookupInstrument: async instrument => { seen.push(instrument); return instrument === symbol; },
+  });
+  const s = await f.start();
+  await s.append(s.entry('user', place.utterance), s.entry('agent', readback.replace(place.instrument, symbol)), s.entry('user', 'yes'));
+  const params = { ...place, instrument: symbol };
+  const key = randomUUID();
+  const response = await s.tool('capture_order_intent', params, key);
+  assert.equal(response.status, 201);
+  assert.equal(response.data.intent.instrument, symbol);
+  assert.deepEqual((await s.tool('capture_order_intent', params, key)).data, response.data);
+  code(await s.tool('capture_order_intent', { ...params, instrument: 'BTCUSD' }), 422, 'unknown_instrument');
+  assert.deepEqual(seen, [symbol, 'BTCUSD']);
 });

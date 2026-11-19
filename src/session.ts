@@ -47,7 +47,7 @@ export class Session {
   captured: Intent[] = [];
   conversationId?: string;
   // Resolves to the sequence including a user turn awaiting late playback evidence.
-  pendingEvidence?: Promise<number>;
+  pendingEvidence: Promise<number> | undefined;
   private synced = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
@@ -81,7 +81,7 @@ export class Session {
         'Content-Type': 'application/json',
         ...(key && { 'Idempotency-Key': key }),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? null : JSON.stringify(body),
       keepalive,
       signal: deadline
         ? AbortSignal.any([deadline, AbortSignal.timeout(3500)])
@@ -130,7 +130,9 @@ export class Session {
     this.intents(this.captured);
   }
   readonly tools = Object.fromEntries(
-    toolContract.tools.map((tool) => [
+    toolContract.tools.filter(tool =>
+      ['capture_order_intent', 'capture_cancel_intent', 'get_order_status'].includes(tool.name),
+    ).map((tool) => [
       tool.name,
       (parameters: Record<string, unknown>) => {
         if (this.closed) return Promise.resolve(JSON.stringify(unavailable));

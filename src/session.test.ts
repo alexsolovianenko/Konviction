@@ -32,14 +32,14 @@ it('bounds flush plus retry plus response at nine seconds and aborts the in-flig
     );
   });
   const session = start();
-  const answer = session.tools.get_orderbook({});
+  const answer = session.tools['get_order_status']!({});
   await vi.advanceTimersByTimeAsync(8999);
   expect(attempts).toHaveLength(2);
   expect(session.entries).toHaveLength(0);
   await vi.advanceTimersByTimeAsync(1);
   expect(JSON.parse(await answer).error.code).toBe('backend_unavailable');
-  expect(attempts[1].signal?.aborted).toBe(true);
-  expect(attempts[0].headers).toEqual(attempts[1].headers);
+  expect(attempts[1]!.signal?.aborted).toBe(true);
+  expect(attempts[0]!.headers).toEqual(attempts[1]!.headers);
   expect(session.entries).toHaveLength(1);
 });
 
@@ -62,7 +62,7 @@ it('expires in the queue and never starts that capture after the agent received 
   vi.stubGlobal('fetch', fetchMock);
   const session = start();
   session.append({ role: 'user', text: 'yes' });
-  const answer = session.tools.capture_order_intent({});
+  const answer = session.tools['capture_order_intent']!({});
   await vi.advanceTimersByTimeAsync(9000);
   expect(JSON.parse(await answer).error.code).toBe('backend_unavailable');
   release();
@@ -84,7 +84,7 @@ it('returns the completed result even if the audit flush and dashboard refresh a
     return Response.json(path.includes('/intents?') ? { intents: [] } : { ok: true });
   });
   vi.stubGlobal('fetch', fetchMock);
-  const answer = session.tools.search_markets({});
+  const answer = session.tools['get_order_status']!({});
   await vi.advanceTimersByTimeAsync(3000);
   expect(JSON.parse(await answer)).toEqual({ ok: true });
   expect(fetchMock.mock.calls.some(([path]) => path.includes('/intents?'))).toBe(false);
