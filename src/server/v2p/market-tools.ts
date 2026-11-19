@@ -73,6 +73,10 @@ export async function marketTool(name: string, params: URLSearchParams) {
       matches = await rankDiscovery(matches, search.words.includes("down") ? "no" : "yes");
     return Response.json({ ok: true, as_of, source: "Gemini Sandbox", query: filterQuery, topic: query,
       ...(sort && { sort, say: matches.length ? "Sorted." : "No matching markets." }), ...(minVolume !== null && { min_volume: minVolume }), ...(endingMinutes !== null && { ending_minutes: endingMinutes }),
+      ...(!sort && matches.length > 0 && (matches.length > 1 || matches[0]!.contracts.length > 1) && {
+        clarification_question: matches.length === 1 ? "Which prediction?" :
+          new Set(matches.map(event => event.contracts[0]?.expiry)).size > 1 ? "What time?" : "Which market?",
+      }),
       events: matches.slice(0, 8).map(event => ({ ...event, matched_contracts: event.contracts.length, contracts: event.contracts.slice(0,8) })), matched_events: matches.length });
   }
   const ticker = params.get("event_ticker")!;
