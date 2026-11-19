@@ -108,14 +108,20 @@ export async function fiveMinuteDiscovery(assets: string[], query: string) {
 }
 
 export async function discoverCombos(query: string) {
-  const result = await gPublic("/v1/prediction-markets/combos", {
-    status: "Active",
-    instrumentRegistered: "true",
-    limit: 100,
-  });
-  if (!result.ok) throw new Error(geminiReadError(result));
-  const rows = result.data?.combos;
-  if (!Array.isArray(rows)) throw new Error("Invalid Gemini combo response.");
+  const page = async (offset: number) => {
+    const result = await gPublic("/v1/prediction-markets/combos", { status: "Active", instrumentRegistered: "true", limit: 100, offset });
+    if (!result.ok) throw new Error(geminiReadError(result));
+    if (!Array.isArray(result.data?.combos)) throw new Error("Invalid Gemini combo response.");
+    return result.data;
+  };
+  const first = await page(0);
+  const rows = [...first.combos];
+  const total = first.pagination?.total;
+  while (rows.length && Number.isSafeInteger(total) && rows.length < total) {
+    const next = await page(rows.length);
+    if (!next.combos.length) break;
+    rows.push(...next.combos);
+  }
   const words = query
     .replace(/\b(?:combos?|parlays?|and|on|the|with)\b/g, " ")
     .trim()

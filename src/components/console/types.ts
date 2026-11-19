@@ -21,11 +21,11 @@ export type Receipt = {
 export type MarketQuote = { yes: number | null; no: number | null };
 export type MarketContract = {
   symbol: string; label: string | null; status: string | null; market_state: string | null;
-  expiry: string | null; buy: MarketQuote; sell: MarketQuote;
+  strike?: { type: string; value: number } | null; expiry: string | null; buy: MarketQuote; sell: MarketQuote;
 };
 export type MarketEvent = {
   ticker: string; title: string; category: string | null; status: string | null; volume_usd?: number | null;
-  volume_24h_usd?: number | null; created_at?: string | null; featured_rank?: number | null; contracts: MarketContract[];
+  tags?: string[]; series?: string | null; start_time?: string | null; volume_24h_usd?: number | null; created_at?: string | null; featured_rank?: number | null; contracts: MarketContract[];
 };
 export type NativeCombo = {
   can_request_quote: boolean; event_ticker: string; symbol: string; title: string; status: string | null; expiry: string | null;

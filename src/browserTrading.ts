@@ -29,7 +29,7 @@ export type Proposal = {
 export const workerTrading = import.meta.env["VITE_WORKER_TRADING"] === true;
 
 export async function tradingRequest(
-  path: "availability" | "session" | "proposals" | "dismiss-proposal" | "order-result" | "end" | "portfolio" | "pair" | "voice-confirm",
+  path: "build-combo" | "availability" | "session" | "proposals" | "dismiss-proposal" | "order-result" | "end" | "portfolio" | "pair" | "voice-confirm",
   body?: object,
   token?: string,
   options: { keepalive?: boolean; idempotencyKey?: string } = {},

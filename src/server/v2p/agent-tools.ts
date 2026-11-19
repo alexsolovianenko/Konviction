@@ -175,7 +175,7 @@ async function findMarket(b: Body) {
 async function prepareTrade(b: Body) {
   if (b.order_mode === "market") return err("BAD_INPUT", "Market buys are available in the browser voice call.");
   const caller = callerOf(b);
-  return prepareQuotedTrade(b, async ({ readback: _displayReadback, ...terms }) => {
+  return prepareQuotedTrade(b, async ({ readback: _displayReadback, budget_usd: _browserBudget, ...terms }) => {
     const { side, outcome, quantity, limit_price: limit, notional_usd: notional, est_fee_usd: fee, instrument_symbol: symbol, quote_price: quotePrice } = terms;
     if (side === "buy") {
       // Same account-wide ledger as browser approval (filled + in-flight + unknown reservations).

@@ -1,3 +1,5 @@
+import { rankDiscovery } from "./discovery-liquidity";
+import { marketSearch } from "../../lib/market-search";
 import { browseQuery, isMarketSort } from "../../lib/market-sort";
 import { compareMarketRanks, marketRank } from "../../lib/market-rank";
 import { liquiditySnapshot, type LiquidityQuery } from "./book-liquidity";
@@ -46,31 +48,32 @@ export async function marketTool(name: string, params: URLSearchParams) {
     }
     const { events, error, as_of } = await dashboardMarkets({ fresh: !browsing, requireFeatured: sort === "featured" });
     if (error) return fail(error, 502);
-    const words = query.split(/\s+/);
-    const fiveMinute = words.includes("05m");
     const now = Date.now();
-    const matches = events.flatMap(event => {
+    const search = marketSearch(query, now);
+    const fiveMinute = search.words.includes("05m");
+    let matches = events.flatMap(event => {
       if (minVolume !== null && (event.volume_usd == null || event.volume_usd < minVolume)) return [];
-      const title = [event.title, event.category, event.ticker].join(" ").toLowerCase();
       const contracts = event.contracts.filter(c => {
         const expiry = Date.parse(c.expiry ?? "");
         if (fiveMinute && !(c.status === "active" && c.market_state === "open" && expiry > now)) return false;
         if ((endingMinutes !== null || (rankByExpiry && Number.isFinite(expiry))) && !(expiry > now)) return false;
         if (endingMinutes !== null && expiry > now + endingMinutes * 60_000) return false;
-        return words.every(w => (title + " " + c.symbol + " " + c.label).toLowerCase().includes(w));
+        return search.matches(event, c);
       });
       if (rankByExpiry || fiveMinute) contracts.sort((a, b) => compareMarketRanks(
         marketRank("expiry", event, a.expiry), marketRank("expiry", event, b.expiry), false));
-      return contracts.length ? [{ ...event, contracts: contracts.slice(0, 8) }] : [];
+      return contracts.length ? [{ ...event, contracts }] : [];
     });
     const order = sort ?? (fiveMinute ? "expiry" : null);
     if (order) {
       const descending = order === "volume" || order === "volume_24h" || order === "newest";
       matches.sort((a, b) => compareMarketRanks(marketRank(order, a, a.contracts[0]!.expiry), marketRank(order, b, b.contracts[0]!.expiry), descending));
     }
+    if (!order && query && matches.length > 1 && !search.hasStrike && !search.hasExpiry)
+      matches = await rankDiscovery(matches, search.words.includes("down") ? "no" : "yes");
     return Response.json({ ok: true, as_of, source: "Gemini Sandbox", query: filterQuery, topic: query,
       ...(sort && { sort, say: matches.length ? "Sorted." : "No matching markets." }), ...(minVolume !== null && { min_volume: minVolume }), ...(endingMinutes !== null && { ending_minutes: endingMinutes }),
-      events: matches.slice(0, 8), matched_events: matches.length });
+      events: matches.slice(0, 8).map(event => ({ ...event, matched_contracts: event.contracts.length, contracts: event.contracts.slice(0,8) })), matched_events: matches.length });
   }
   const ticker = params.get("event_ticker")!;
   const symbol = params.get("contract_symbol")!;

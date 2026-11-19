@@ -1,7 +1,7 @@
 {
   "type": "webhook",
   "name": "confirm_hosted_sandbox_buy",
-  "description": "Only when a hosted proposal names this tool and the caller explicitly confirms its exact spoken readback, submit that proposal once. Copy its proposal_id silently. Speak the returned say field.",
+  "description": "Only when a hosted proposal names this tool and the caller explicitly approves its complete spoken readback (including Buy now for an immediate buy only), submit that proposal once. Copy its proposal_id silently. Speak the returned say field.",
   "pre_tool_speech": "off",
   "response_timeout_secs": 30,
   "follow_redirects": false,

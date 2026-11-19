@@ -35,12 +35,16 @@ export function dashboardMarketsFrom(data: unknown): MarketEvent[] | null {
         const symbol = text(c?.['instrumentSymbol']);
         if (!c || !symbol) continue;
         const prices = record(c['prices']);
+        const strike = record(c["strike"]);
+        const strikeValue = nonnegative(strike?.["value"]);
         contracts.push({
+          ...(typeof strike?.["type"] === "string" && strikeValue !== null && {strike:{type:strike["type"],value:strikeValue}}),
           symbol, label: text(c['label']), status: text(c['status']), market_state: text(c['marketState']),
           expiry: text(c['expiryDate']), buy: quote(prices?.['buy']), sell: quote(prices?.['sell']),
         });
       }
-      events.push({ ticker, title, category: text(e['category']), status: text(e['status']), volume_usd: nonnegative(e['volume']),
+      const tags = [...(Array.isArray(e["tags"]) ? e["tags"] : []), ...(Array.isArray(e["eventTags"]) ? e["eventTags"].map(t => record(t)?.["name"]) : [])].filter((t): t is string => typeof t === "string");
+      events.push({ tags, series:text(e["series"]), start_time:text(e["startTime"]), ticker, title, category: text(e['category']), status: text(e['status']), volume_usd: nonnegative(e['volume']),
         volume_24h_usd: nonnegative(e['volume24h']), created_at: text(e['createdAt']), contracts });
     }
     const children = e?.['events'];

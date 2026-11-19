@@ -1,3 +1,4 @@
+import { marketSearch } from "../../lib/market-search";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { workerTrading } from "../../browserTrading";
 import { PrivatePortfolio } from "./PrivatePortfolio";
@@ -324,18 +325,17 @@ export function MarketsTable({ market, onQuote }: { market: MarketTools; onQuote
   }, [browse.sort, market.result]);
   const all = useMemo(() => (markets?.events ?? []).flatMap((event) => event.contracts.map((contract) => ({ event, contract }))), [markets]);
   const rows = useMemo(() => {
-    const words = filter.toLowerCase().trim().split(/\s+/);
+    const search = marketSearch(filter, now);
     const get = sorters[sort.key];
     return all
       .filter(({ event, contract }) => {
         const expiry = Date.parse(contract.expiry ?? "");
-        const nearestWindow = words.includes("05m");
+        const nearestWindow = search.words.includes("05m");
         if ((openOnly || nearestWindow) && (!tradable(contract) || !(expiry > now))) return false;
         if (browse.sort === "expiry" && !(expiry > now)) return false;
         if (endingMinutes && !(expiry > now && expiry <= now + endingMinutes * 60_000)) return false;
         if (minVolume !== null && (event.volume_usd == null || event.volume_usd < minVolume)) return false;
-        const searchable = [event.title, event.ticker, event.category, contract.label, contract.symbol].join(" ").toLowerCase();
-        return words.every(word => searchable.includes(word));
+        return search.matches(event, contract);
       })
       .sort((a, b) => {
         const x = get(a), y = get(b);

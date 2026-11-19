@@ -1,6 +1,6 @@
 // @ts-nocheck -- shared with the mechanically ported phone backend.
 import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
-import { spokenFill } from "../../spoken-fill";
+import { spokenBudgetFill, spokenFill } from "../../spoken-fill";
 import { liquiditySnapshot } from "./book-liquidity";
 import { comboEligibility } from "./native-combo";
 import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, usd } from "./util";
@@ -85,11 +85,13 @@ export async function prepareTrade(b: Body, saveProposal) {
         c.isCombo ? "No ask for this combo." : "No ask available. What limit price?",
       );
     quotePrice = q.buy;
-    limit = priceLimitIn ?? (market ? LIMITS.maxLimitPrice : q.buy);
+    limit = market ? Math.min(priceLimitIn ?? q.buy, q.buy) : priceLimitIn ?? q.buy;
     if (market && q.buy > limit)
       return err("PRICE_ABOVE_YOUR_MAX", "The ask is above your price ceiling.");
     if (limit < LIMITS.minLimitPrice || limit > LIMITS.maxLimitPrice)
       return err("LIMIT_PRICE_CAP", `The order limit must be between 1¢ and ${cents(LIMITS.maxLimitPrice)}.`, { max_price: LIMITS.maxLimitPrice });
+    if (Math.abs(limit * 100 - Math.round(limit * 100)) > 1e-8)
+      return err("BAD_INPUT", "The quoted price cannot be submitted in whole cents.");
     if (qtyIn !== null) {
       quantity = Math.floor(qtyIn);
     } else if (budget !== null) {
@@ -139,17 +141,8 @@ export async function prepareTrade(b: Body, saveProposal) {
   if (quantity > LIMITS.maxQuantity && !(side === "sell" && b.close_all === true))
     return err("CAP_EXCEEDED", `Demo limit is ${LIMITS.maxQuantity} contracts per order.`);
   const estimatePrice = side === "sell" && market ? q.sell : limit;
-  let notional = round2(quantity * estimatePrice);
-  let fee = feeEstimate(quantity, estimatePrice);
-  if (market && side === "buy") {
-    // Reserve up to the confirmed dollar amount even as the ask changes. Size
-    // from the quote, then recompute the affordable remainder at each attempt.
-    const maximum = Math.min(budget ?? Infinity, LIMITS.maxOrderUsd, round2(notional + fee + (quantity > 1 ? 0.01 : 0)));
-    if (budget === null && budgetQuantity(maximum, q.buy) < quantity)
-      return err("CAP_EXCEEDED", "The requested quantity exceeds the per-order limit at the current ask.");
-    fee = feeEstimate(quantity, q.buy);
-    notional = round2(maximum - fee);
-  }
+  const notional = round2(quantity * estimatePrice);
+  const fee = feeEstimate(quantity, estimatePrice);
   if (side === "buy" && notional + fee > LIMITS.maxOrderUsd + 1e-9) {
     return err(
       "CAP_EXCEEDED",
@@ -166,6 +159,7 @@ export async function prepareTrade(b: Body, saveProposal) {
 
   return saveProposal({
     side,
+    ...(side === "buy" && budget !== null && {budget_usd: Math.min(budget, LIMITS.maxOrderUsd)}),
     ...(market && {order_mode: "market"}),
     time_in_force: market ? "immediate-or-cancel" : "good-til-cancel",
     event_ticker: eventTicker,
@@ -438,17 +432,16 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     est_fee_usd: fillFee,
     ...(remainder && { remainder_buy: remainder }),
     say: say[summary],
-    voice_say: spokenFill(summary, filledQty, it.quantity, avg) ?? say[summary],
+    voice_say: spokenBudgetFill(it, summary, filledQty, avg) ?? spokenFill(summary, filledQty, it.quantity, avg) ?? say[summary],
     ...(summary === "EXCHANGE_REJECTED" && { voice_say: typeof reason === "string" && Object.hasOwn(voiceReasons, reason) ? voiceReasons[reason] : "Rejected. Check order details." }),
   });
 }
 
-// Gemini's marketable limit orders are IOC. Retry only an explicitly cancelled,
-// identified order's unfilled amount. A transport failure never justifies a retry.
+// A buy submits one IOC at the quoted ceiling. Market exits retain their confirmed retry policy.
 async function executeMarketOrder(it, caller, contract, submitBefore, { finish, log, receipt, saveOrder }) {
   const target = Number(it.quantity);
   const buy = it.side === "buy";
-  const limit = Number(it.limit_price);
+  const limit = buy ? Math.min(Number(it.limit_price), Number(it.quote_price ?? it.limit_price)) : Number(it.limit_price);
   const maxCost = round2(Number(it.notional_usd) + Number(it.est_fee_usd));
   let spent = 0, fees = 0, filled = 0;
   let knownAverage = true, uncertain = false, rejected = false;
@@ -459,7 +452,7 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
     side: it.side, quantity: target, order_mode: "market", ...(buy && {max_cost_usd: maxCost}), limit_price: limit,
     approved_at: new Date().toISOString(),
   });
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < (buy ? 1 : 2); attempt++) {
     if (attempt) {
       const { event } = await getEvent(it.event_ticker);
       contract = findContract(event, it.instrument_symbol);
@@ -472,10 +465,10 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
     }
     if (submitBefore !== undefined && Date.now() >= submitBefore) { reason = "Market cutoff reached."; break; }
     const quote = quoteFor(contract, it.outcome)[buy ? "buy" : "sell"];
-    if (quote === null) { reason = buy ? "No current ask." : "No current bid."; break; }
-    const price = (buy ? Math.ceil(quote * 100 - 1e-9) : Math.floor(quote * 100 + 1e-9)) / 100;
-    if (buy ? price > limit : price < limit) {
-      reason = buy ? "Ask above the approved price ceiling." : "Bid below the approved price floor.";
+    if (!buy && quote === null) { reason = "No current bid."; break; }
+    const price = buy ? limit : Math.floor(quote * 100 + 1e-9) / 100;
+    if (!buy && price < limit) {
+      reason = "Bid below the approved price floor.";
       break;
     }
     const costLeft = Math.max(0, Math.floor((maxCost - spent - fees) * 100 + 1e-8) / 100);
@@ -504,7 +497,7 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
     if (!placed.ok) {
       uncertain = placed.status === 0 || placed.status === 408 || placed.status >= 500 || order?.reason === "DuplicateOrder";
       rejected = !uncertain;
-      if (rejected && (order?.reason ?? order?.error) === "InsufficientLiquidity" && !attempt && order?.orderId == null) {
+      if (!buy && rejected && (order?.reason ?? order?.error) === "InsufficientLiquidity" && !attempt && order?.orderId == null) {
         rejected = false;
         continue;
       }
@@ -543,7 +536,7 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
   const last = attempts.at(-1)?.order;
   const gross = filled > 0 && knownAverage ? round2(spent) : (filled === 0 && !uncertain ? 0 : null);
   const result = { side: it.side, ok: outcome !== "EXCHANGE_REJECTED", order_mode: "market", outcome_summary: outcome, say,
-    voice_say: spokenFill(outcome, filled, target, avg) ?? say,
+    voice_say: spokenBudgetFill(it, outcome, filled, avg) ?? spokenFill(outcome, filled, target, avg) ?? say,
     order_id: ids[0] ?? null, order_ids: ids, exchange_status: last?.status ?? null, filled_quantity: filled || (uncertain ? null : 0),
     remaining_quantity: uncertain ? null : Number((target - filled).toFixed(8)), avg_price: avg,
     filled_notional_usd: buy ? round2(spent) : 0, ...(!buy && {gross_proceeds_usd: gross}), est_fee_usd: fees };

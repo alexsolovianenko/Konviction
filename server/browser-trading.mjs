@@ -1,7 +1,8 @@
-import { spokenFill } from "../src/spoken-fill.ts";
+import { buildSandboxCombo } from "../src/server/v2p/build-combo.ts";
+import { spokenBudgetFill, spokenFill } from "../src/spoken-fill.ts";
 import { validOrderKeys } from "../src/server/v2p/browser-order-input.ts";
 import { sandboxPortfolio } from "../src/server/v2p/portfolio.ts";
-import { spokenProposal } from "./spoken-proposal.mjs";
+import { hasSpokenMarketName, spokenProposal } from "./spoken-proposal.mjs";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { prepareTrade, executeTrade } from "../src/server/v2p/trade-engine.ts";
 import { hasCredentials } from "../src/server/v2p/gemini.ts";
@@ -68,7 +69,7 @@ export function browserTrading(repo) {
         ok: true, order_id: original.gemini_order_id, outcome_summary: record.outcome_summary,
         exchange_status: record.exchange_status, filled_quantity: record.filled_qty,
         remaining_quantity: record.remaining_qty, avg_price: record.avg_price, est_fee_usd: fee, say,
-        voice_say: spokenFill(record.outcome_summary, record.filled_qty, original.quantity, record.avg_price) ?? say,
+        voice_say: spokenBudgetFill(original, record.outcome_summary, record.filled_qty, record.avg_price) ?? spokenFill(record.outcome_summary, record.filled_qty, original.quantity, record.avg_price) ?? say,
       }, original.side === "sell" ? 0 : Math.round((record.filled_notional_usd + fee) * 100));
     }
   }
@@ -97,6 +98,10 @@ export function browserTrading(repo) {
       return account;
     }
     const owner = sessionOwner(repo, token);
+    if (path === "build-combo") {
+      if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
+      return buildSandboxCombo(body);
+    }
     if (path === "proposals") {
       const keys = validOrderKeys(body);
       if (!keys || !uuid.test(key)) bad();
@@ -108,8 +113,7 @@ export function browserTrading(repo) {
       const response = await prepareTrade(
         { ...body, instrument_symbol: body.contract_symbol, side: body.side ?? "buy" },
         async (terms) => {
-          if (!terms.title || !terms.contract_label ||
-              [terms.title, terms.contract_label].some(name => name === terms.instrument_symbol || name === terms.event_ticker || /GEMI-[A-Z0-9._-]+/i.test(name)))
+          if (!hasSpokenMarketName(terms))
             throw new TradeError("BAD_INPUT", "A human-readable contract name is required for spoken confirmation.", 409);
           terms.voice_readback = spokenProposal(terms);
           const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);

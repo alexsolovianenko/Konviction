@@ -12,11 +12,12 @@
 //
 // The ElevenLabs system injects the conversation history and call ID into its server webhook.
 import { isSpokenConfirmation } from "../../spoken-confirmation";
-import { spokenFill } from "../../spoken-fill";
+import { spokenBudgetFill, spokenFill } from "../../spoken-fill";
 import { validOrderKeys } from "./browser-order-input";
-import { spokenProposal } from "../../../server/spoken-proposal.mjs";
+import { hasSpokenMarketName, normalizeReadback, spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { db, executionEnabled, logActivity } from "./db";
 import { settledOpenOrders } from "./reconcile-open";
+import { buildSandboxCombo } from "./build-combo";
 import { sandboxPortfolio } from "./portfolio";
 import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
@@ -52,7 +53,12 @@ export function supabaseStore() {
   const now = () => new Date().toISOString();
   // Proposal codes are opaque, immutable and server-generated. The prefix
   // preserves the selected execution strategy on pre-existing SQL schemas.
-  const decode = row => row?.code?.startsWith("market:") ? {...row, order_mode: "market"} : row;
+  const decode = row => {
+    if (!row) return row;
+    const budget = /^usd:(\d+):/.exec(row.code ?? "");
+    const modeCode = budget ? row.code.slice(budget[0].length) : row.code;
+    return {...row, ...(budget && {budget_usd: Number(budget[1]) / 100}), ...(modeCode?.startsWith("market:") && {order_mode: "market"})};
+  };
   return {
     async createSession(sid: string) {
       const { error } = await db.from("callers").insert({ phone: SESSION_PREFIX + sid, call_count: 1 });
@@ -78,8 +84,9 @@ export function supabaseStore() {
       if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Could not dismiss the proposal.", 503);
     },
     async insertIntent(row) {
-      const {order_mode, ...stored} = row;
+      const {order_mode, budget_usd, ...stored} = row;
       if (order_mode === "market") stored.code = "market:" + stored.code;
+      if (budget_usd != null) stored.code = "usd:" + Math.round(budget_usd * 100) + ":" + stored.code;
       const { data, error } = await db.from("intents").insert(stored).select("id").single();
       if (error?.code === "22P02" && row.side === "sell" && !Number.isInteger(row.quantity))
         throw new TradeError("FRACTIONAL_STORAGE_UNAVAILABLE", "This account ledger needs the fractional quantity migration before it can store that exit.", 503);
@@ -189,6 +196,7 @@ async function propose(store: Store, token: string | undefined, body) {
     { event_ticker: body.event_ticker, instrument_symbol: body.contract_symbol, side: body.side ?? "buy", close_all: body.close_all, outcome: body.outcome,
       quantity: body.quantity, budget_usd: body.budget_usd, limit_price: body.limit_price, order_mode: body.order_mode },
     async ({ readback, ...terms }) => {
+      if (!hasSpokenMarketName(terms)) throw new TradeError("BAD_INPUT", "Market name unavailable.", 409);
       if (terms.side === "buy") {
         let committed = await store.committedUsd();
         if (committed !== null && dailyCapError(committed, terms.notional_usd + terms.est_fee_usd) && store.reconcileOpen) {
@@ -230,7 +238,7 @@ async function recordedResult(store: Store, row) {
   if (order) {
     if (row.order_mode === "market" && order.raw?.result?.order_mode === "market") {
       const result = order.raw.result;
-      return { ...result, voice_say: spokenFill(result.outcome_summary, result.filled_quantity, row.quantity, result.avg_price) ?? result.voice_say };
+      return { ...result, voice_say: spokenBudgetFill(row, result.outcome_summary, result.filled_quantity, result.avg_price) ?? spokenFill(result.outcome_summary, result.filled_quantity, row.quantity, result.avg_price) ?? result.voice_say };
     }
     const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
     const say = order.outcome_summary === "EXCHANGE_REJECTED" ? "Gemini rejected the sandbox order." :
@@ -242,7 +250,7 @@ async function recordedResult(store: Store, row) {
       order_id: order.gemini_order_id, exchange_status: order.exchange_status, filled_quantity: order.filled_qty,
       remaining_quantity: order.remaining_qty, avg_price: order.avg_price,
       ...(remainder && { remainder_buy: remainder }),
-      voice_say: spokenFill(order.outcome_summary, order.filled_qty, row.quantity, order.avg_price) ?? say,
+      voice_say: spokenBudgetFill(row, order.outcome_summary, order.filled_qty, order.avg_price) ?? spokenFill(order.outcome_summary, order.filled_qty, row.quantity, order.avg_price) ?? say,
       say: say + (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
     };
   }
@@ -264,7 +272,6 @@ function confirmedInCall(history: unknown, row): boolean {
     let bound = false;
     let steps = 0;
     const expected = spokenProposal(row);
-    const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     for (const turn of entries) {
       for (const result of turn.role === "tool" || turn.role === "agent" ? turn.tool_results ?? [] : []) {
         if (!["prepare_sandbox_buy", "prepare_sandbox_remainder"].includes(result.tool_name)) continue;
@@ -280,8 +287,8 @@ function confirmedInCall(history: unknown, row): boolean {
       }
       if (typeof turn.message !== "string" || !turn.message.trim()) continue;
       if (turn.role === "tool") continue;
-      if (turn.role === "agent" && bound && !turn.interrupted && normalize(turn.message.replace(/^\[(?:neutral|slow)\]\s*/i, "")) === normalize(expected)) steps = 2;
-      else if (turn.role === "user" && steps === 2 && isSpokenConfirmation(turn.message)) steps = 3;
+      if (turn.role === "agent" && bound && !turn.interrupted && normalizeReadback(turn.message) === normalizeReadback(expected)) steps = 2;
+      else if (turn.role === "user" && steps === 2 && isSpokenConfirmation(turn.message, row.side === "buy" && row.order_mode === "market")) steps = 3;
       else {
         steps = 0;
         // A status question or hesitation can be followed by a fresh, exact readback.
@@ -376,6 +383,12 @@ export async function runBrowserTrading(
   if (method !== "POST") throw new TradeError("NOT_FOUND", "Not found.", 404);
   switch (action) {
     case "session": return startSession(store, fetchImpl);
+    case "build-combo": {
+      await requireSession(store, token);
+      const config = await availability();
+      if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
+      return buildSandboxCombo(body);
+    }
     case "proposals": return propose(store, token, body);
     case "call-confirm":
       if (!await secretEqual(callSecret ?? "", env("ELEVENLABS_CALL_CONFIRM_SECRET") ?? ""))

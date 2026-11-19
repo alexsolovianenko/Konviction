@@ -221,3 +221,45 @@ it('explicitly rejects a ranking unsupported by the separate native combo feed',
   expect(reply.status).toBe(422);
   expect(get).not.toHaveBeenCalled();
 });
+
+it('finds exact expiry and strike from the full listing when the title omits the hour', async () => {
+  // July is daylight time. The 5 PM Eastern event closes at 21:00Z.
+  const expiry = '2099-07-31T21:00:00Z';
+  const contracts = Array.from({length:12}, (_,i) => ({
+    instrumentSymbol:'threshold-'+i,label:'$'+(200+i)+' or above', expiryDate:expiry,
+    strike:{type:'above', value:String(200+i)}, status:'active',marketState:'open'
+  }));
+  const rows = [
+    {ticker:'X', title:'SOL price on July 31', tags:['Solana'], series:'SOL1H', contracts},
+    {ticker:'Y', title:'SOL price', contracts:[{...contracts[11],expiryDate:'2099-07-31T22:00:00Z'}]},
+    {ticker:'Z', title:'SOL price', contracts:[{...contracts[11],strike:{type:'reference',value:'211'}}]},
+  ];
+  const fetchPage = vi.fn(async () => Response.json({data:rows}));
+  vi.stubGlobal('fetch',fetchPage);
+  const search = async (query:string) => (await marketTool('search_markets',new URLSearchParams({query}))).json();
+  const result = await search('I think Solana will finish above $211 at 5 PM Eastern on July 31 2099. Put $25 on it.');
+  expect(result.matched_events).toBe(1);
+  expect(result.events[0].contracts.map((c:{symbol:string})=>c.symbol)).toEqual(['threshold-11']);
+  expect((await search('SOL above $999 end of July 2099')).events).toEqual([]);
+  expect((await search('SOL below $211 on July 31 2099')).events).toEqual([]);
+  expect((await search('SOL $211 at 5 pm on July 31 2099')).events[0].contracts).toHaveLength(1);
+  const ladder = await search('SOL hourly on July 31 2099');
+  expect(ladder.events[0].matched_contracts).toBe(12);
+  expect(fetchPage.mock.calls.length).toBe(5);
+});
+
+it('prioritizes tight two-sided markets and displayed size for a broad topic', async () => {
+  const rows = [['WIDE','.70','.40'],['THIN','.52','.50'],['DEEP','.52','.50']].map(([ticker,ask,bid])=>({
+    ticker, title:'Energy price', contracts:[{instrumentSymbol:ticker,status:'active',marketState:'open',label:'Up',
+      prices:{buy:{yes:ask},sell:{yes:bid}}}]
+  }));
+  vi.stubGlobal('fetch',vi.fn(async (url:URL)=>{
+    if (url.pathname.includes('/book/')) {
+      const e=rows.find(e=>url.pathname.endsWith('/'+e.ticker))!;
+      return Response.json({asks:[{price:e.contracts[0]!.prices.buy.yes,amount:e.ticker==='DEEP'?'200':'1'}]});
+    }
+    return Response.json({data:rows});
+  }));
+  const result=await (await marketTool('search_markets',new URLSearchParams({query:'energy'}))).json();
+  expect(result.events.map((e:{ticker:string})=>e.ticker)).toEqual(['DEEP','THIN','WIDE']);
+});

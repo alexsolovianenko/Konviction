@@ -198,6 +198,27 @@ describe("proposals (voice-reachable) never submit orders", () => {
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 
+  it("binds buy now to the exact spoken immediate quote and submits once", async () => {
+    const s = await startSession();
+    const request = {event_ticker:order.event_ticker,contract_symbol:order.contract_symbol,outcome:"yes",budget_usd:0.35};
+    const {proposal} = await run("proposals", {...request,order_mode:"market"},s.session_token) as any;
+    expect(proposal.voice_readback).toContain("Bitcoin price today at noon, ninety five thousand dollars or above");
+    expect(proposal.voice_readback).toContain("thirty percent market-implied");
+    expect(proposal.voice_readback).not.toContain("GEMI-");
+    const entries = conversationEntries(proposal.proposal_id,"Buy now.");
+    const confirm = (turns: typeof entries) => callConfirm(proposal.proposal_id, s.session_token, {history:JSON.stringify({entries:turns})});
+    const tampered = structuredClone(entries);
+    tampered[1]!.message = tampered[1]!.message!.replace("thirty cents each", "forty cents each");
+    await expect(confirm(tampered)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+    expect(geminiOrderCalls()).toHaveLength(0);
+    expect(await confirm(entries)).toMatchObject({outcome_summary:"FILLED",voice_say:"$0.30 filled before fees."});
+    await confirm(entries);
+    expect(geminiOrderCalls()).toHaveLength(1);
+    const limit = (await run("proposals",{...request,limit_price:.25},s.session_token) as any).proposal;
+    await expect(callConfirm(limit.proposal_id,s.session_token,{history:JSON.stringify({entries:conversationEntries(limit.proposal_id,"Buy now")})})).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+    expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
   it("rejects malformed or extra parameters", async () => {
     const s = await startSession();
     for (const bad of [{ ...order, side: "borrow" }, { ...order, close_all: true }, { ...order, quantity: 1.5 }, { ...order, limit_price: 0.315 }, { ...order, contract_symbol: "../x" }]) {

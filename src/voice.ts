@@ -338,7 +338,7 @@ export class Voice {
               this.orderReported = false;
               this.postOrderIdle();
               confirmedThisTurn = false;
-              preparedThisTurn = isSpokenConfirmation(message);
+              preparedThisTurn = isSpokenConfirmation(message, this.currentProposal?.side === "buy" && this.currentProposal.order_mode === "market");
             }
             if (endsConversation(message)) {
               finishTurn();
@@ -379,6 +379,15 @@ export class Voice {
         dynamicVariables: {secret__trade_session_token: workerTrading ? (credentials.session_token || 'quotes-only') : 'local'},
         clientTools: {
           ...session.tools,
+          build_sandbox_combo: async (params: Record<string, unknown>) => {
+            if (!current() || !credentials.session_token) return JSON.stringify({ok:false, say:'Combo creation unavailable.'});
+            const revision = this.selectionRevision;
+            const result = await tradingRequest('build-combo', {legs:params['legs']}, credentials.session_token);
+            if (!current() || this.selectionRevision !== revision) return JSON.stringify({ok:false, say:'Selection changed.'});
+            if (result.ok && result.event_ticker && result.contract_symbol)
+              this.selectMarket?.({eventTicker:result.event_ticker, symbol:result.contract_symbol});
+            return JSON.stringify(result);
+          },
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,say:'Session ended.'});
             if (params['order_mode'] !== 'market' && params['limit_price'] == null) return JSON.stringify({ok:false, error:'ENTRY_REQUIRED', say:'Your limit?'});
@@ -543,7 +552,7 @@ export class Voice {
           NOT_FILLED: 'No fill.', PENDING_UNKNOWN: 'Final fill pending.',
           EXCHANGE_REJECTED: 'Order rejected.',
         };
-        return {ok:result.ok, say:spoken ?? result.voice_say ?? result.say ?? fallback[result.outcome_summary] ?? 'Order status unconfirmed.'};
+        return {ok:result.ok, say:result.voice_say ?? spoken ?? result.say ?? fallback[result.outcome_summary] ?? 'Order status unconfirmed.'};
       }
       const code = typeof result.error === 'string' ? result.error : result.error?.code;
       const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'CAP_EXCEEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'NO_LIQUIDITY', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);

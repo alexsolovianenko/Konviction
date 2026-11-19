@@ -61,7 +61,7 @@ export class TradingRepository {
     return this.db.prepare(`
       SELECT id AS intent_id, json_extract(result, '$.order_id') AS gemini_order_id,
         json_extract(terms, '$.instrument_symbol') AS instrument_symbol, json_extract(terms, '$.side') AS side,
-        json_extract(terms, '$.quantity') AS quantity, json_extract(terms, '$.limit_price') AS limit_price
+        json_extract(terms, '$.budget_usd') AS budget_usd, json_extract(terms, '$.quantity') AS quantity, json_extract(terms, '$.limit_price') AS limit_price
       FROM browser_proposals WHERE status='OPEN'
     `).all();
   }

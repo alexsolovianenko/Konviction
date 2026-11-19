@@ -311,12 +311,22 @@ async function paired() {
   return { host, deviceCookie: cookie };
 }
 
+it("accepts buy now after the local dollar quote, never for a waiting limit", async () => {
+  const t = token();
+  const common = {event_ticker:input.event_ticker,contract_symbol:input.contract_symbol,outcome:input.outcome,budget_usd:.85};
+  const limit = await propose(t,randomUUID(),{...common,limit_price:.40});
+  await expect(approve(t,limit.proposal.proposal_id,"Buy now")).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+  const immediate = await propose(t,randomUUID(),{...common,order_mode:"market"});
+  expect(await approve(t,immediate.proposal.proposal_id,"Buy now")).toMatchObject({outcome_summary:"FILLED",voice_say:"$0.78 filled before fees."});
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+});
+
 it("executes one local sandbox buy only after the unpaired call hears its fresh readback and confirms", async () => {
   const device = {host:"localhost:5173"};
   const t = token();
   const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
   const { proposal } = await run({ ...device, token:t, method:"POST", path:"proposals", key:randomUUID(), body:input });
-  expect(proposal.voice_readback).toBe("Buy two yes at forty cents. Confirm?");
+  expect(proposal.voice_readback).toContain("forty cents each");
   const confirm = (seq:number, credentials: Record<string,string> = device) =>
     run({ ...credentials, token:t, method:"POST", path:"voice-confirm", body:{proposal_id:proposal.proposal_id, confirmation_seq:seq} });
   const entry = (seq:number, role:string, text:string, interrupted = false, now = Date.now()) =>

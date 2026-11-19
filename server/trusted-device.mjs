@@ -1,3 +1,4 @@
+import { normalizeReadback, spokenProposal } from "./spoken-proposal.mjs";
 import { isSpokenConfirmation } from "../src/spoken-confirmation.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { TradeError } from "./trading-repository.mjs";
@@ -61,12 +62,11 @@ export class TrustedDevices {
     const answer = entries.at(-1);
     const readback = entries.at(-2);
     const terms = JSON.parse(row.terms);
-    const normalize = s => s.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
     const received = this.repo.receivedAt(owner, seq);
     if (row.confirmation_seq !== null || !received || Date.now() - received > 30000 || received > Date.now() ||
-        answer?.role !== "user" || answer.seq !== seq || !isSpokenConfirmation(answer.text) ||
+        answer?.role !== "user" || answer.seq !== seq || !isSpokenConfirmation(answer.text, terms.side === "buy" && terms.order_mode === "market" && terms.voice_readback === spokenProposal(terms)) ||
         readback?.role !== "agent" || readback.seq <= row.min_seq || readback.interrupted ||
-        normalize(readback.text.replace(/^\[(?:neutral|slow)\]\s*/i, "")) !== normalize(terms.voice_readback))
+        normalizeReadback(readback.text) !== normalizeReadback(terms.voice_readback))
       throw new TradeError("CONFIRMATION_REQUIRED", "Listen to the complete order and say confirm.", 409);
     const updated = this.db.prepare("UPDATE OR IGNORE browser_voice_approvals SET confirmation_seq=? WHERE proposal=? AND confirmation_seq IS NULL").run(seq, id);
     if (updated.changes !== 1) throw new TradeError("CONFIRMATION_USED", "That confirmation has already been used.");

@@ -1,0 +1,27 @@
+{
+  "type": "client",
+  "name": "build_sandbox_combo",
+  "description": "Create or retrieve one native Gemini Sandbox combination from the caller's exact two to six selected predictions. Resolve each leg's event, threshold, expiry and outcome first. This tool places no order. Use only the returned joint quote and market-implied odds. When quoted, use that exact combined event and symbol, outcome yes, one USD budget and normal purchase approval. If unquoted or unavailable, relay its short say.",
+  "expects_response": true,
+  "pre_tool_speech": "off",
+  "response_timeout_secs": 20,
+  "parameters": {
+    "type": "object",
+    "required": ["legs"],
+    "properties": {
+      "legs": {
+        "type": "array",
+        "description": "Two to six distinct predictions the caller selected; use only verified event and contract identifiers from search.",
+        "items": {
+          "type": "object",
+          "required": ["event_ticker", "contract_symbol", "outcome"],
+          "properties": {
+            "event_ticker": {"type":"string","description":"Exact event ticker from search."},
+            "contract_symbol": {"type":"string","description":"Exact symbol from that same event."},
+            "outcome": {"type":"string","enum":["yes","no"],"description":"Required outcome on this leg."}
+          }
+        }
+      }
+    }
+  }
+}

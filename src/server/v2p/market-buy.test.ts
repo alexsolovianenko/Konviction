@@ -15,44 +15,32 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getEvent).mockResolvedValue(quote(.2));
 });
-it("sizes a market buy at the ask, retries just the cancelled remainder within its budget, and aggregates the fills", async () => {
-  const proposal=await prepareTrade(request, async (terms:Record<string, unknown>)=>terms);
-  expect(proposal.quantity).toBe(9);
-  expect(proposal.notional_usd+proposal.est_fee_usd).toBe(2);
-  vi.mocked(getEvent).mockResolvedValueOnce(quote(.20)).mockResolvedValueOnce(quote(.26));
-  vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",2,.2,"cancelled")).mockResolvedValueOnce(fill("B",5,.26,"filled"));
-  const result=await (await executeTrade(proposal,"test",hooks)).json();
-  expect(gPrivate).toHaveBeenCalledTimes(2);
-  expect(vi.mocked(gPrivate).mock.calls.map(([,b])=>[b?.["price"],b?.["quantity"],b?.["timeInForce"]])).toEqual([["0.20","9","immediate-or-cancel"],["0.26","5","immediate-or-cancel"]]);
-  expect(result).toMatchObject({outcome_summary:"PARTIAL",filled_quantity:7,remaining_quantity:2,order_ids:["A","B"],voice_say:"Filled 7 of 9 at 24.29 cents."});
-  expect(result.filled_notional_usd+result.est_fee_usd).toBeLessThanOrEqual(2);
+it("sizes within the USD budget including fees and sends one IOC at the approved ceiling", async () => {
+  const proposal = await prepareTrade(request, async (terms: Record<string, unknown>) => terms);
+  expect(proposal).toMatchObject({quantity:9, limit_price:.20, budget_usd:2});
+  expect(proposal.notional_usd + proposal.est_fee_usd).toBeLessThanOrEqual(2);
+  vi.mocked(getEvent).mockResolvedValue(quote(.26));
+  vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",2,.19,"cancelled"));
+  const result = await (await executeTrade(proposal,"test",hooks)).json();
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(gPrivate).mock.calls[0]?.[1]).toMatchObject({price:"0.20",quantity:"9",timeInForce:"immediate-or-cancel"});
+  expect(result).toMatchObject({outcome_summary:"PARTIAL",filled_quantity:2,remaining_quantity:7,order_ids:["A"],voice_say:"$0.38 of $2.00 filled before fees. The rest was cancelled."});
   expect(hooks.saveOrder).toHaveBeenCalledOnce();
 });
-it("retains known fills and never resubmits after an ambiguous second response", async () => {
-  const proposal=await prepareTrade(request, async (terms:Record<string, unknown>)=>terms);
-  vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",2,.2,"cancelled"))
-    .mockResolvedValueOnce({ok:false,status:0,data:null,text:""});
-  const result=await (await executeTrade(proposal,"test",hooks)).json();
-  expect(result).toMatchObject({outcome_summary:"PENDING_UNKNOWN",filled_quantity:2,remaining_quantity:null});
-  expect(result.say).toContain("At least 2 filled");
-  expect(result.remainder_buy).toBeUndefined();
-  expect(gPrivate).toHaveBeenCalledTimes(2);
-});
-it("does not retry an unresolved first response or an ask above the spoken cap", async () => {
-  const proposal=await prepareTrade({...request,limit_price:.25},async (terms:Record<string, unknown>)=>terms);
+it("reports an unresolved response without submitting again", async () => {
+  const proposal = await prepareTrade(request, async (terms: Record<string, unknown>) => terms);
   vi.mocked(gPrivate).mockResolvedValueOnce({ok:false,status:503,data:null,text:""});
-  expect(await(await executeTrade(proposal,"test",hooks)).json()).toMatchObject({outcome_summary:"PENDING_UNKNOWN",filled_quantity:null});
-  vi.mocked(getEvent).mockResolvedValue(quote(.26));
-  expect(await(await executeTrade(proposal,"test",hooks)).json()).toMatchObject({outcome_summary:"NOT_FILLED",filled_quantity:0});
+  const result = await (await executeTrade(proposal,"test",hooks)).json();
+  expect(result).toMatchObject({outcome_summary:"PENDING_UNKNOWN",filled_quantity:null,voice_say:"Final fill unconfirmed."});
   expect(gPrivate).toHaveBeenCalledTimes(1);
 });
-it("retries a confirmed zero fill once at the next ask for a count order", async () => {
-  const proposal=await prepareTrade({...request,budget_usd:undefined,quantity:4},async (terms:Record<string, unknown>)=>terms);
-  vi.mocked(getEvent).mockResolvedValueOnce(quote(.20)).mockResolvedValueOnce(quote(.21));
-  vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",0,0,"cancelled")).mockResolvedValueOnce(fill("B",4,.21,"filled"));
-  const result=await(await executeTrade(proposal,"test",hooks)).json();
-  expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:4,order_ids:["A","B"],avg_price:.21,voice_say:"Filled 4 at 21 cents."});
-  expect(vi.mocked(gPrivate).mock.calls[1]?.[1]?.["price"]).toBe("0.21");
+it("keeps the quoted ask even when a higher ceiling was suggested, and stops on zero fill", async () => {
+  const proposal = await prepareTrade({...request,limit_price:.25}, async (terms: Record<string, unknown>) => terms);
+  expect(proposal.limit_price).toBe(.20);
+  vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",0,0,"cancelled"));
+  const result = await (await executeTrade(proposal,"test",hooks)).json();
+  expect(result).toMatchObject({outcome_summary:"NOT_FILLED",voice_say:"Nothing filled at your price.",order_ids:["A"]});
+  expect(gPrivate).toHaveBeenCalledTimes(1);
 });
 it("sells at the best bid, retries only remaining held contracts, and reports combined proceeds", async () => {
   const bid = (price:number) => ({event:{ticker:"E",contracts:[{instrumentSymbol:"S",status:"active",marketState:"open",prices:{sell:{yes:String(price)}}}]}});

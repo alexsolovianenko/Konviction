@@ -18,7 +18,7 @@
           "query": {
             "type": "string",
             "maxLength": 200,
-            "description": "Topic keywords and optional filters: 'highest volume', 'minimum volume 1000', 'ending soon' or 'ending within 15 minutes'. Empty query lists active events."
+            "description": "Topic and any requested asset, date, expiry time with time zone, price threshold, or interval. Preserve exact constraints. Empty query lists active events."
           },
           "sort": {
             "type": "string",
@@ -92,7 +92,7 @@
     {
       "type": "client",
       "name": "prepare_sandbox_buy",
-      "description": "Prepare a sandbox buy or held-position exit. Set side=sell for cash out, sell or close. Market mode needs no price. Speak the returned say and wait for confirmation.",
+      "description": "Prepare the exact prediction using the caller’s dollars or explicit share count. For a buy without a custom price, prepare market mode before offering buy now or set a price. Speak say exactly, then wait.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 20,
@@ -175,7 +175,7 @@
     {
       "type": "client",
       "name": "confirm_sandbox_buy",
-      "description": "Use only when prepare names confirm_sandbox_buy as its confirmation_tool. Submit after the caller explicitly answers the exact, fully spoken proposal readback with confirm or yes. The browser and service verify the saved proposal and transcript. Speak only the returned say field.",
+      "description": "Only when named by preparation. After its complete spoken readback, submit the current proposal on explicit approval. Buy now approves an immediate buy only. Speak the returned say once.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 35,
