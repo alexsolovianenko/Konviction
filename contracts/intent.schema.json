@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://call-to-predict.local/contracts/intent.schema.json",
+  "title": "CapturedIntent",
+  "description": "Phase 1 capture record for the Gemini-only browser voice assistant. An intent is a record of what the user asked for. It is never an order: Phase 1 performs zero execution, nothing is sent to Gemini, and `status` is always `captured`. The backend mints `id` and `created_at`; every other field comes from a validated tool call (see contracts/tools.json and contracts/api.yaml).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "session_id",
+    "created_at",
+    "intent",
+    "venue",
+    "instrument",
+    "side",
+    "quantity",
+    "limit_price",
+    "order_id",
+    "confirmed_by_user",
+    "utterance",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Backend-minted UUID v4 of this intent. Also usable as the `order_id` of a later cancel_order or order_status intent that refers to this capture."
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Voice session that produced the intent. Minted by POST /voice/signed-url. The full timestamped transcript of the session is stored under the same session_id."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Backend clock, ISO 8601 / RFC 3339 in UTC with a trailing Z, for example 2026-11-18T23:59:01.123Z."
+    },
+    "intent": {
+      "type": "string",
+      "enum": ["place_order", "cancel_order", "order_status", "market_query"],
+      "description": "place_order and cancel_order are written only by the capture handlers after confirmation enforcement. order_status and market_query are written as an audit record by the simulated query handlers."
+    },
+    "venue": {
+      "type": "string",
+      "enum": ["gemini_prediction", "gemini_spot"],
+      "description": "Always one of the two Gemini venues. Never null: the agent asks when the venue is unclear."
+    },
+    "instrument": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "place_order: an instrument from the simulated catalog, upper case (spot symbol such as BTCUSD, or prediction contract ticker such as FED-CUT-DEC26). market_query: the resolved instrument for get_orderbook, or the raw search text for search_markets. cancel_order and order_status: the instrument when known, otherwise the empty string (order identified by reference only)."
+    },
+    "side": {
+      "type": ["string", "null"],
+      "enum": ["buy", "sell", "yes", "no", null],
+      "description": "gemini_spot orders use buy or sell. gemini_prediction orders use yes or no, meaning buy contracts of that outcome. Null when the intent has no side."
+    },
+    "quantity": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "gemini_spot: base-asset units, at most 8 decimal places. gemini_prediction: whole number of contracts. Null unless intent is place_order."
+    },
+    "limit_price": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "Normalized limit price in US dollars as a decimal number. gemini_spot: dollars per base unit, at most 2 decimal places. gemini_prediction: dollars per contract from 0.01 to 0.99 in 0.01 steps (62 cents is stored as 0.62). Null unless intent is place_order. Phase 1 captures limit orders only."
+    },
+    "order_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Reference to the order a cancel or status request is about. Either the `id` of a place_order intent captured in the same session, or a reference the user spoke aloud, stored in normalized form (upper case, alphanumerics only). Never invented by the agent. Null for place_order and market_query."
+    },
+    "confirmed_by_user": {
+      "type": "boolean",
+      "description": "True only when the backend verified, against the stored session transcript, an agent readback of these exact terms immediately followed by an explicit spoken yes. Always true for place_order and cancel_order, always false for order_status and market_query."
+    },
+    "utterance": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Raw transcript of the user's own words that stated the request, verbatim from speech recognition, without paraphrase or correction."
+    },
+    "status": {
+      "type": "string",
+      "const": "captured",
+      "description": "Phase 1 has a single status. Captured means recorded and prepared for later approval. It never means submitted, open, filled or cancelled on Gemini."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "intent": { "const": "place_order" } },
+        "required": ["intent"]
+      },
+      "then": {
+        "properties": {
+          "instrument": { "minLength": 1, "pattern": "^[A-Z0-9][A-Z0-9-]*$" },
+          "side": { "type": "string", "enum": ["buy", "sell", "yes", "no"] },
+          "quantity": { "type": "number", "exclusiveMinimum": 0 },
+          "limit_price": { "type": "number", "exclusiveMinimum": 0 },
+          "order_id": { "type": "null" },
+          "confirmed_by_user": { "const": true }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "intent": { "const": "place_order" },
+          "venue": { "const": "gemini_spot" }
+        },
+        "required": ["intent", "venue"]
+      },
+      "then": {
+        "properties": {
+          "side": { "enum": ["buy", "sell"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "intent": { "const": "place_order" },
+          "venue": { "const": "gemini_prediction" }
+        },
+        "required": ["intent", "venue"]
+      },
+      "then": {
+        "properties": {
+          "side": { "enum": ["yes", "no"] },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "limit_price": { "type": "number", "minimum": 0.01, "maximum": 0.99 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "intent": { "const": "cancel_order" } },
+        "required": ["intent"]
+      },
+      "then": {
+        "properties": {
+          "order_id": { "type": "string", "minLength": 1 },
+          "side": { "type": "null" },
+          "quantity": { "type": "null" },
+          "limit_price": { "type": "null" },
+          "confirmed_by_user": { "const": true }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "intent": { "const": "order_status" } },
+        "required": ["intent"]
+      },
+      "then": {
+        "properties": {
+          "quantity": { "type": "null" },
+          "limit_price": { "type": "null" },
+          "confirmed_by_user": { "const": false }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "intent": { "const": "market_query" } },
+        "required": ["intent"]
+      },
+      "then": {
+        "properties": {
+          "instrument": { "minLength": 1 },
+          "side": { "type": "null" },
+          "quantity": { "type": "null" },
+          "limit_price": { "type": "null" },
+          "order_id": { "type": "null" },
+          "confirmed_by_user": { "const": false }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "id": "7b0f0a52-6f0c-4d0e-9a53-0c1f8f1f6a11",
+      "session_id": "2f6a1c0e-93b4-4c57-8a0d-5f1f3f0c9b7e",
+      "created_at": "2026-11-18T23:59:01.123Z",
+      "intent": "place_order",
+      "venue": "gemini_spot",
+      "instrument": "BTCUSD",
+      "side": "buy",
+      "quantity": 0.5,
+      "limit_price": 97000,
+      "order_id": null,
+      "confirmed_by_user": true,
+      "utterance": "buy half a bitcoin at ninety seven thousand",
+      "status": "captured"
+    },
+    {
+      "id": "c2a9d8e4-1b7f-4e1a-8f44-3d5b6a7c8d90",
+      "session_id": "2f6a1c0e-93b4-4c57-8a0d-5f1f3f0c9b7e",
+      "created_at": "2026-11-18T23:59:40.004Z",
+      "intent": "place_order",
+      "venue": "gemini_prediction",
+      "instrument": "FED-CUT-DEC26",
+      "side": "yes",
+      "quantity": 10,
+      "limit_price": 0.62,
+      "order_id": null,
+      "confirmed_by_user": true,
+      "utterance": "ten yes contracts on the fed cut at sixty two cents",
+      "status": "captured"
+    },
+    {
+      "id": "0d4e2f7a-5c3b-4a19-b1e2-9f8a7b6c5d4e",
+      "session_id": "2f6a1c0e-93b4-4c57-8a0d-5f1f3f0c9b7e",
+      "created_at": "2026-11-19T00:01:12.500Z",
+      "intent": "cancel_order",
+      "venue": "gemini_spot",
+      "instrument": "BTCUSD",
+      "side": null,
+      "quantity": null,
+      "limit_price": null,
+      "order_id": "7b0f0a52-6f0c-4d0e-9a53-0c1f8f1f6a11",
+      "confirmed_by_user": true,
+      "utterance": "cancel my bitcoin order",
+      "status": "captured"
+    },
+    {
+      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+      "session_id": "2f6a1c0e-93b4-4c57-8a0d-5f1f3f0c9b7e",
+      "created_at": "2026-11-19T00:02:03.000Z",
+      "intent": "order_status",
+      "venue": "gemini_spot",
+      "instrument": "",
+      "side": null,
+      "quantity": null,
+      "limit_price": null,
+      "order_id": "AB12345",
+      "confirmed_by_user": false,
+      "utterance": "what's the status of order a b one two three four five",
+      "status": "captured"
+    },
+    {
+      "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+      "session_id": "2f6a1c0e-93b4-4c57-8a0d-5f1f3f0c9b7e",
+      "created_at": "2026-11-18T23:58:10.250Z",
+      "intent": "market_query",
+      "venue": "gemini_prediction",
+      "instrument": "fed rate cut",
+      "side": null,
+      "quantity": null,
+      "limit_price": null,
+      "order_id": null,
+      "confirmed_by_user": false,
+      "utterance": "are there any markets on a fed rate cut",
+      "status": "captured"
+    }
+  ]
+}

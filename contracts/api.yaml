@@ -1,0 +1,1143 @@
+openapi: 3.1.0
+info:
+  title: Call-to-Predict Phase 1 capture API
+  version: 1.0.0
+  summary: Gemini-only browser voice assistant. Capture only, zero execution.
+  description: |
+    Backend contract for Phase 1 of the browser voice assistant.
+
+    Hard rules of this phase:
+
+    - Nothing is ever sent to Gemini. No order is placed, routed or cancelled. The backend holds no
+      Gemini credentials in this phase.
+    - Every query (order status, market search, order book) is SIMULATED from the fixed catalog in
+      `x-simulated-catalog`. Every tool response carries `simulated: true`.
+    - The only writes are captured intents (contracts/intent.schema.json, `status: captured`) and the
+      timestamped session transcript.
+    - This document lists every endpoint. There are exactly nine operations: one signed-URL endpoint,
+      GET and POST /intents, POST /transcripts, and five tool handlers
+      (capture_order_intent, capture_cancel_intent, get_order_status, search_markets, get_orderbook).
+
+    Cross-cutting behavior is specified in the `x-` sections at the end of this file:
+    `x-session-lifecycle`, `x-confirmation-enforcement`, `x-idempotency`, `x-normalization`,
+    `x-utterance-check`, `x-validation-order`, `x-error-codes`, `x-capture-status-queries`,
+    `x-cancel-resolution` and `x-simulated-catalog`.
+    Tool parameters and responses are also listed, per tool, in contracts/tools.json; the two files
+    must agree and this file wins on HTTP details.
+servers:
+  - url: /api
+    description: Same-origin application backend.
+tags:
+  - name: voice
+  - name: intents
+  - name: transcripts
+  - name: tools
+
+paths:
+  /voice/signed-url:
+    post:
+      tags: [voice]
+      operationId: createVoiceSession
+      summary: Start a voice session and get a signed URL for the private ElevenLabs agent WebSocket.
+      description: |
+        Mints a new `session_id` and an opaque `session_token`, then asks ElevenLabs for a signed
+        WebSocket URL for the private agent. The ElevenLabs API key and agent ID stay in server-side
+        configuration and are never returned. The browser passes `signed_url` to the ElevenLabs
+        client to open the conversation and uses `session_token` as the bearer token for every other
+        endpoint. Each call creates a new session; a signed URL is single-conversation and
+        short-lived, so request it immediately before connecting.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties: {}
+      responses:
+        "201":
+          description: Session created.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session_id, session_token, signed_url, signed_url_expires_at, session_expires_at]
+                properties:
+                  session_id: { type: string, format: uuid }
+                  session_token:
+                    type: string
+                    minLength: 32
+                    description: Opaque random secret bound to session_id. Keep in memory only.
+                  signed_url:
+                    type: string
+                    format: uri
+                    pattern: "^wss://"
+                    description: Signed ElevenLabs conversation WebSocket URL for the private agent.
+                  signed_url_expires_at:
+                    type: string
+                    format: date-time
+                    description: Connect before this time. After it, request a new session.
+                  session_expires_at:
+                    type: string
+                    format: date-time
+                    description: Hard end of the session, 60 minutes after creation.
+        "502":
+          description: ElevenLabs did not return a signed URL. No session is created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Voice is not configured on the server. No session is created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /transcripts:
+    post:
+      tags: [transcripts]
+      operationId: appendTranscript
+      summary: Append timestamped entries to the session transcript.
+      description: |
+        The browser posts every user and agent turn, and one entry per finished tool call, in the
+        order they happened. The stored transcript is the full timestamped record of the session and
+        the evidence the capture handlers check for readback and spoken yes.
+
+        Rules:
+
+        - `seq` is assigned by the browser, starts at 1 and increases by exactly 1 per entry.
+        - Append only. Re-posting an entry with the same seq and identical content is accepted and
+          ignored. The same seq with different content is `409 seq_conflict`. A gap is
+          `409 seq_gap` with `expected_seq`.
+        - `role: user` entries are final speech-recognition text of what the user said aloud,
+          unedited. Phase 1 has no typed input; a user entry is always spoken.
+        - `role: agent` entries are the text the agent actually spoke. If the user interrupted the
+          agent, post the truncated text that was spoken and set `interrupted: true`.
+        - `role: tool` entries are posted after the tool returns, with `tool_name` and the result
+          body serialized in `text`.
+        - `final: true` ends the session (End Session button, or the conversation closed).
+      security:
+        - sessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [session_id, entries]
+              properties:
+                session_id: { type: string, format: uuid }
+                conversation_id:
+                  type: string
+                  maxLength: 128
+                  description: ElevenLabs conversation ID, when the client knows it. Stored for audit.
+                entries:
+                  type: array
+                  minItems: 0
+                  maxItems: 50
+                  items: { $ref: "#/components/schemas/TranscriptEntry" }
+                final:
+                  type: boolean
+                  default: false
+                  description: True on the last batch. An empty `entries` array is allowed with final true.
+      responses:
+        "200":
+          description: Entries stored (or already stored).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session_id, accepted, last_seq, session_state]
+                properties:
+                  session_id: { type: string, format: uuid }
+                  accepted: { type: integer, minimum: 0, description: Newly stored entries. }
+                  last_seq: { type: integer, minimum: 0, description: Highest stored seq. }
+                  session_state: { enum: [active, ended] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409":
+          description: seq_conflict, seq_gap or session_ended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /intents:
+    get:
+      tags: [intents]
+      operationId: listIntents
+      summary: List the captured intents of a session, newest first.
+      description: Used by the dashboard to show what has been prepared for approval. Read only.
+      security:
+        - sessionToken: []
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Must be the session the bearer token belongs to.
+        - name: intent
+          in: query
+          required: false
+          schema: { enum: [place_order, cancel_order, order_status, market_query] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Return intents created strictly before this time (pagination).
+      responses:
+        "200":
+          description: Intents of the session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session_id, simulated, count, intents]
+                properties:
+                  session_id: { type: string, format: uuid }
+                  simulated: { const: true }
+                  count: { type: integer, minimum: 0 }
+                  intents:
+                    type: array
+                    items: { $ref: "#/components/schemas/Intent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+    post:
+      tags: [intents]
+      operationId: createIntent
+      summary: Capture a place_order or cancel_order intent.
+      description: |
+        The canonical capture operation. The two capture tool handlers are thin aliases of it:
+        `POST /tools/capture_order_intent` equals this operation with `intent: place_order`, and
+        `POST /tools/capture_cancel_intent` equals it with `intent: cancel_order`. All three run the
+        same validation, the same transcript confirmation enforcement and the same idempotency
+        rules. order_status and market_query intents cannot be created here; the query handlers
+        write them.
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/CreatePlaceOrderIntent"
+                - $ref: "#/components/schemas/CreateCancelOrderIntent"
+              discriminator:
+                propertyName: intent
+                mapping:
+                  place_order: "#/components/schemas/CreatePlaceOrderIntent"
+                  cancel_order: "#/components/schemas/CreateCancelOrderIntent"
+      responses:
+        "201": { $ref: "#/components/responses/Captured" }
+        "200": { $ref: "#/components/responses/CapturedDuplicate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /tools/capture_order_intent:
+    post:
+      tags: [tools]
+      operationId: toolCaptureOrderIntent
+      summary: Handler for client tool capture_order_intent. Captures a place_order intent.
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ToolEnvelope"
+                - type: object
+                  required: [parameters]
+                  properties:
+                    parameters: { $ref: "#/components/schemas/CaptureOrderParameters" }
+      responses:
+        "201": { $ref: "#/components/responses/Captured" }
+        "200": { $ref: "#/components/responses/CapturedDuplicate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /tools/capture_cancel_intent:
+    post:
+      tags: [tools]
+      operationId: toolCaptureCancelIntent
+      summary: Handler for client tool capture_cancel_intent. Captures a cancel_order intent.
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ToolEnvelope"
+                - type: object
+                  required: [parameters]
+                  properties:
+                    parameters: { $ref: "#/components/schemas/CaptureCancelParameters" }
+      responses:
+        "201": { $ref: "#/components/responses/Captured" }
+        "200": { $ref: "#/components/responses/CapturedDuplicate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /tools/get_order_status:
+    post:
+      tags: [tools]
+      operationId: toolGetOrderStatus
+      summary: SIMULATED. Handler for client tool get_order_status. Reports capture status only.
+      description: |
+        Searches the place_order intents captured in the calling session for the given venue and
+        returns them with `capture_status: captured` and whether a cancel has also been captured.
+        It never reports exchange status: `execution` is always `none`. A reference the user
+        supplied that is not the id of a captured intent returns `count: 0`. Writes one
+        order_status intent as an audit record (`confirmed_by_user: false`).
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ToolEnvelope"
+                - type: object
+                  required: [parameters]
+                  properties:
+                    parameters: { $ref: "#/components/schemas/GetOrderStatusParameters" }
+      responses:
+        "200":
+          description: Simulated capture-status answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderStatusResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /tools/search_markets:
+    post:
+      tags: [tools]
+      operationId: toolSearchMarkets
+      summary: SIMULATED. Handler for client tool search_markets.
+      description: |
+        Case-insensitive search of `x-simulated-catalog` for the given venue over instrument, title
+        and aliases. A query matches an item when every query word of three or more letters is a
+        substring of the item's instrument, title or one of its aliases. Results keep catalog order.
+        Writes one market_query intent whose `instrument` is the raw `query` text.
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ToolEnvelope"
+                - type: object
+                  required: [parameters]
+                  properties:
+                    parameters: { $ref: "#/components/schemas/SearchMarketsParameters" }
+      responses:
+        "200":
+          description: Simulated search results (possibly empty).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchMarketsResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /tools/get_orderbook:
+    post:
+      tags: [tools]
+      operationId: toolGetOrderbook
+      summary: SIMULATED. Handler for client tool get_orderbook.
+      description: |
+        Returns the catalog book of one exact instrument, cut to `depth` levels per side. For
+        gemini_prediction the book is the YES contract in dollars per contract. `spread` is
+        best_ask minus best_bid and is null unless both sides have a quote. Writes one market_query
+        intent whose `instrument` is the resolved instrument.
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ToolEnvelope"
+                - type: object
+                  required: [parameters]
+                  properties:
+                    parameters: { $ref: "#/components/schemas/GetOrderbookParameters" }
+      responses:
+        "200":
+          description: Simulated order book.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderbookResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+components:
+  securitySchemes:
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer <session_token>` from POST /voice/signed-url. The token authorizes
+        exactly one session. A request whose body or query names a different session_id is 401.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+      description: |
+        UUID v4 generated by the caller once per logical request and reused on every retry of that
+        request. See x-idempotency.
+
+  responses:
+    Captured:
+      description: Intent captured. Nothing was sent to Gemini.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CaptureResult" }
+    CapturedDuplicate:
+      description: This confirmation or Idempotency-Key was already captured; the original intent is returned with duplicate true.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CaptureResult" }
+    BadRequest:
+      description: invalid_parameters. The body, query or header failed schema validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: unauthorized. Missing or wrong session token, or token and session_id do not match.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    SessionNotFound:
+      description: session_not_found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: |
+        One of transcript_not_synced, session_ended, confirmation_already_used,
+        cancel_already_captured, idempotency_key_reused.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: |
+        Well-formed request that fails a domain or confirmation rule. One of unknown_instrument,
+        invalid_side_for_venue, invalid_quantity, invalid_price, venue_mismatch,
+        instrument_mismatch, order_not_cancellable, order_id_not_user_supplied,
+        confirmation_required, confirmation_missing, readback_missing, readback_interrupted,
+        readback_mismatch, utterance_mismatch.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Intent:
+      $ref: "./intent.schema.json"
+
+    Venue:
+      type: string
+      enum: [gemini_prediction, gemini_spot]
+
+    TranscriptEntry:
+      type: object
+      additionalProperties: false
+      required: [seq, role, text, timestamp]
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+          description: Position in the session, contiguous from 1.
+        role:
+          type: string
+          enum: [user, agent, tool]
+        text:
+          type: string
+          maxLength: 8000
+          description: |
+            user: final speech-recognition text, unedited. agent: text actually spoken.
+            tool: the tool result body serialized as JSON.
+        timestamp:
+          type: string
+          format: date-time
+          description: Browser clock when the turn finished, ISO 8601 UTC.
+        interrupted:
+          type: boolean
+          default: false
+          description: Agent entries only. True when the user cut the agent off before it finished.
+        tool_name:
+          type: string
+          enum: [capture_order_intent, capture_cancel_intent, get_order_status, search_markets, get_orderbook]
+          description: Required when role is tool, absent otherwise.
+
+    ToolEnvelope:
+      type: object
+      description: |
+        What the browser wrapper adds around the model-supplied tool parameters. The model never
+        sees or sets these fields.
+      required: [session_id, last_transcript_seq]
+      properties:
+        session_id: { type: string, format: uuid }
+        last_transcript_seq:
+          type: integer
+          minimum: 0
+          description: |
+            Highest transcript seq the browser has produced and flushed before this call. If the
+            backend has stored less, it answers 409 transcript_not_synced and the wrapper flushes
+            and retries with the same Idempotency-Key.
+
+    CaptureOrderParameters:
+      type: object
+      additionalProperties: false
+      required: [venue, instrument, side, quantity, limit_price, confirmed_by_user, utterance]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        instrument: { type: string, pattern: "^[A-Z0-9][A-Z0-9-]{0,63}$" }
+        side: { type: string, enum: [buy, sell, "yes", "no"] }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        limit_price: { type: number, exclusiveMinimum: 0 }
+        confirmed_by_user: { type: boolean }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    CaptureCancelParameters:
+      type: object
+      additionalProperties: false
+      required: [venue, order_id, confirmed_by_user, utterance]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        order_id: { type: string, minLength: 1, maxLength: 64 }
+        instrument:
+          type: [string, "null"]
+          maxLength: 64
+        confirmed_by_user: { type: boolean }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    GetOrderStatusParameters:
+      type: object
+      additionalProperties: false
+      required: [venue, utterance]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        order_id: { type: [string, "null"], minLength: 1, maxLength: 64 }
+        instrument: { type: [string, "null"], maxLength: 64 }
+        side: { type: [string, "null"], enum: [buy, sell, "yes", "no", null] }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    SearchMarketsParameters:
+      type: object
+      additionalProperties: false
+      required: [venue, query, utterance]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        query: { type: string, minLength: 1, maxLength: 120 }
+        limit: { type: [integer, "null"], minimum: 1, maximum: 5, default: 3 }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    GetOrderbookParameters:
+      type: object
+      additionalProperties: false
+      required: [venue, instrument, utterance]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        instrument: { type: string, pattern: "^[A-Z0-9][A-Z0-9-]{0,63}$" }
+        depth: { type: [integer, "null"], minimum: 1, maximum: 5, default: 3 }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    CreatePlaceOrderIntent:
+      description: Body of POST /intents for a place_order. Same fields as the capture_order_intent tool plus the envelope.
+      type: object
+      additionalProperties: false
+      required: [session_id, last_transcript_seq, intent, venue, instrument, side, quantity, limit_price, confirmed_by_user, utterance]
+      properties:
+        session_id: { type: string, format: uuid }
+        last_transcript_seq: { type: integer, minimum: 0 }
+        intent: { const: place_order }
+        venue: { $ref: "#/components/schemas/Venue" }
+        instrument: { type: string, pattern: "^[A-Z0-9][A-Z0-9-]{0,63}$" }
+        side: { type: string, enum: [buy, sell, "yes", "no"] }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        limit_price: { type: number, exclusiveMinimum: 0 }
+        confirmed_by_user: { type: boolean }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    CreateCancelOrderIntent:
+      description: Body of POST /intents for a cancel_order. Same fields as the capture_cancel_intent tool plus the envelope.
+      type: object
+      additionalProperties: false
+      required: [session_id, last_transcript_seq, intent, venue, order_id, confirmed_by_user, utterance]
+      properties:
+        session_id: { type: string, format: uuid }
+        last_transcript_seq: { type: integer, minimum: 0 }
+        intent: { const: cancel_order }
+        venue: { $ref: "#/components/schemas/Venue" }
+        order_id: { type: string, minLength: 1, maxLength: 64 }
+        instrument: { type: [string, "null"], maxLength: 64 }
+        confirmed_by_user: { type: boolean }
+        utterance: { type: string, minLength: 1, maxLength: 2000 }
+
+    CaptureResult:
+      type: object
+      additionalProperties: false
+      required: [ok, simulated, duplicate, intent, say]
+      properties:
+        ok: { const: true }
+        simulated: { const: true }
+        duplicate:
+          type: boolean
+          description: False with 201. True with 200, when the original intent is returned unchanged.
+        intent: { $ref: "#/components/schemas/Intent" }
+        say:
+          const: "I've prepared that for approval."
+          description: The exact sentence the agent speaks after a capture.
+
+    OrderStatusMatch:
+      type: object
+      additionalProperties: false
+      required: [intent_id, venue, instrument, side, quantity, limit_price, capture_status, cancel_captured, created_at]
+      properties:
+        intent_id: { type: string, format: uuid }
+        venue: { $ref: "#/components/schemas/Venue" }
+        instrument: { type: string }
+        side: { type: string, enum: [buy, sell, "yes", "no"] }
+        quantity: { type: number }
+        limit_price: { type: number }
+        capture_status: { const: captured }
+        cancel_captured: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    OrderStatusResult:
+      type: object
+      additionalProperties: false
+      required: [ok, simulated, execution, count, matches, query_intent_id]
+      properties:
+        ok: { const: true }
+        simulated: { const: true }
+        execution: { const: none }
+        count: { type: integer, minimum: 0 }
+        matches:
+          type: array
+          maxItems: 5
+          description: Newest first.
+          items: { $ref: "#/components/schemas/OrderStatusMatch" }
+        query_intent_id: { type: string, format: uuid }
+
+    SpotResult:
+      type: object
+      additionalProperties: false
+      required: [venue, instrument, title, market_status, best_bid, best_ask, last_price]
+      properties:
+        venue: { const: gemini_spot }
+        instrument: { type: string }
+        title: { type: string }
+        market_status: { enum: [open, closed] }
+        best_bid: { type: number }
+        best_ask: { type: number }
+        last_price: { type: number }
+
+    PredictionResult:
+      type: object
+      additionalProperties: false
+      required: [venue, instrument, title, market_status, closes_at, yes_bid, yes_ask, no_bid, no_ask]
+      properties:
+        venue: { const: gemini_prediction }
+        instrument: { type: string }
+        title: { type: string }
+        market_status: { enum: [open, closed] }
+        closes_at: { type: string, format: date-time }
+        yes_bid: { type: number }
+        yes_ask: { type: number }
+        no_bid: { type: number }
+        no_ask: { type: number }
+
+    SearchMarketsResult:
+      type: object
+      additionalProperties: false
+      required: [ok, simulated, venue, as_of, count, results, query_intent_id]
+      properties:
+        ok: { const: true }
+        simulated: { const: true }
+        venue: { $ref: "#/components/schemas/Venue" }
+        as_of: { type: string, format: date-time, description: Backend clock at response time. }
+        count: { type: integer, minimum: 0 }
+        results:
+          type: array
+          maxItems: 5
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/SpotResult"
+              - $ref: "#/components/schemas/PredictionResult"
+        query_intent_id: { type: string, format: uuid }
+
+    BookLevel:
+      type: object
+      additionalProperties: false
+      required: [price, size]
+      properties:
+        price: { type: number }
+        size: { type: number }
+
+    OrderbookResult:
+      type: object
+      additionalProperties: false
+      required: [ok, simulated, venue, instrument, as_of, bids, asks, best_bid, best_ask, spread, query_intent_id]
+      properties:
+        ok: { const: true }
+        simulated: { const: true }
+        venue: { $ref: "#/components/schemas/Venue" }
+        instrument: { type: string }
+        as_of: { type: string, format: date-time }
+        bids:
+          type: array
+          description: Highest price first.
+          items: { $ref: "#/components/schemas/BookLevel" }
+        asks:
+          type: array
+          description: Lowest price first.
+          items: { $ref: "#/components/schemas/BookLevel" }
+        best_bid: { type: [number, "null"] }
+        best_ask: { type: [number, "null"] }
+        spread: { type: [number, "null"] }
+        query_intent_id: { type: string, format: uuid }
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [ok, simulated, error]
+      properties:
+        ok: { const: false }
+        simulated: { const: true }
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, agent_hint]
+          properties:
+            code:
+              type: string
+              description: One of x-error-codes.
+            message: { type: string }
+            agent_hint:
+              type: string
+              description: The fixed hint for this code from x-error-codes. Tells the agent what to do next.
+            expected_seq:
+              type: integer
+              description: Only with seq_gap and transcript_not_synced. The next seq the backend expects.
+            existing_intent_id:
+              type: string
+              format: uuid
+              description: Only with confirmation_already_used and cancel_already_captured.
+
+# ---------------------------------------------------------------------------------------------
+# Cross-cutting behavior. Normative.
+# ---------------------------------------------------------------------------------------------
+
+x-session-lifecycle:
+  summary: One session is one ElevenLabs conversation. session_id ties intents and transcript together.
+  states: [created, active, ended]
+  steps:
+    - "Start Voice: the browser calls POST /voice/signed-url. The backend mints session_id (UUID v4) and session_token, stores the session in state created, and returns the signed URL."
+    - "The browser opens the ElevenLabs conversation with signed_url and keeps session_id and session_token in memory only (not localStorage, not the URL). The model is never given either value."
+    - "The first accepted POST /transcripts moves the session to active."
+    - "During the session the browser posts transcript entries as turns finish, and each client tool wrapper flushes pending entries before it calls its handler."
+    - "End Session, or the conversation closing for any reason, makes the browser post its remaining entries with final true. The session moves to ended."
+    - "The backend also ends a session 10 minutes after its last accepted request and at session_expires_at (60 minutes after creation), whichever comes first."
+    - "An ended session accepts no transcript entries and no tool or intent writes (409 session_ended). GET /intents keeps working until session_expires_at so the dashboard can still show what was prepared."
+    - "A dropped connection is not resumed. The browser starts over with POST /voice/signed-url and gets a new session_id. Confirmations never carry across sessions; get_order_status sees only the calling session."
+  rules:
+    - "session_id is always minted by the backend. A client-chosen session_id is never accepted."
+    - "Every intent and every transcript entry belongs to exactly one session_id."
+    - "A session that was created but never connected ends at signed_url_expires_at."
+
+x-confirmation-enforcement:
+  summary: >
+    A place_order or cancel_order intent is stored only when the stored transcript shows the agent
+    reading back these exact terms and the user answering with an explicit spoken yes, as the turn
+    directly before the capture call. confirmed_by_user true in the request is necessary and never
+    sufficient.
+  definitions:
+    C: "The latest role user entry of the session at the time of the call."
+    R: "The entry directly before C when tool entries are ignored. It must be a role agent entry."
+  checks_in_order:
+    - code: confirmation_required
+      rule: "confirmed_by_user in the request is true."
+    - code: confirmation_missing
+      rule: "C exists, its timestamp is at most 120 seconds before the backend receives the call, and C is an explicit yes (see explicit_yes)."
+    - code: readback_missing
+      rule: "R exists, is a role agent entry, and its normalized text contains 'say yes to confirm'. A user entry between the readback and C breaks this rule, so a change request followed by a separate yes never confirms the old terms."
+    - code: readback_interrupted
+      rule: "R.interrupted is not true. A readback the user cut off was not heard in full and confirms nothing."
+    - code: readback_mismatch
+      rule: "R states exactly the terms in the request (see readback_match). Any change after the readback, to instrument, side, quantity, price, venue or order reference, therefore needs a new readback and a new yes."
+    - code: confirmation_already_used
+      rule: "C has not already confirmed a different intent (see x-idempotency)."
+  explicit_yes:
+    normalization: "Lower case, strip punctuation, collapse whitespace."
+    rule: >
+      The entry must contain at least one yes word and every other word must be an allowed filler.
+      Anything else is not a confirmation, including a yes combined with a change ('yes but make it
+      ten'), a negation, a number, or a vague assent on its own ('okay', 'sure', 'sounds good').
+    yes_words: ["yes", "yeah", "yep", "yup"]
+    allowed_fillers: ["please", "confirm", "confirmed", "i", "correct", "thats", "that", "is", "right", "go", "ahead", "do", "it", "thanks", "thank", "you", "sure", "absolutely", "definitely", "ok", "okay"]
+    examples_accept: ["Yes.", "yes please", "Yeah, that's right.", "Yes, confirm.", "yep go ahead"]
+    examples_reject: ["okay", "sure", "sounds good", "yes but make it ten", "yes, no wait", "I guess", "do it", "confirm"]
+  readback_templates:
+    note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence."
+    spot_order: "Confirming: {side} {quantity} {instrument} on Gemini spot at a limit of {limit_price} dollars. Say yes to confirm."
+    prediction_order: "Confirming: buy {quantity} {side} contracts of {instrument} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
+    cancel_by_user_reference: "Confirming: cancel order {order_id} on Gemini {spot|prediction}. Say yes to confirm."
+    cancel_of_prepared_spot_order: "Confirming: cancel your prepared order to {side} {quantity} {instrument} on Gemini spot at a limit of {limit_price} dollars. Say yes to confirm."
+    cancel_of_prepared_prediction_order: "Confirming: cancel your prepared order to buy {quantity} {side} contracts of {instrument} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
+  readback_match:
+    normalization: "Lower case; remove thousands separators inside numbers and currency symbols; keep decimal points and hyphens inside words; strip other punctuation; collapse whitespace. Numbers are compared by numeric value, so 0.5 equals 0.50 and 97,000 equals 97000."
+    place_order_spot:
+      - "contains the phrase 'gemini spot'"
+      - "contains the instrument as a whole word, case-insensitive"
+      - "contains the side word (buy or sell) as a whole word"
+      - "contains a number equal to quantity"
+      - "contains a number equal to limit_price directly followed by 'dollars'"
+      - "does not contain the word 'cancel'"
+    place_order_prediction:
+      - "contains the phrase 'gemini prediction'"
+      - "contains the instrument as a whole word, case-insensitive"
+      - "contains the phrase '{side} contracts' (yes contracts or no contracts)"
+      - "contains a number equal to quantity"
+      - "contains a number equal to limit_price times 100 directly followed by 'cents', or a number equal to limit_price directly followed by 'dollars'"
+      - "does not contain the word 'cancel'"
+    cancel_order_by_user_reference:
+      - "contains the word 'cancel'"
+      - "contains the phrase 'gemini spot' or 'gemini prediction' matching venue"
+      - "after removing every non-alphanumeric character from the readback, contains the normalized order_id"
+    cancel_order_of_prepared_order:
+      - "contains the word 'cancel'"
+      - "passes every place_order check for the target intent's venue, instrument, side, quantity and limit_price, except the 'does not contain cancel' check"
+
+x-idempotency:
+  summary: A retry never creates a second intent, and one spoken yes never confirms two different things.
+  rules:
+    - "Idempotency-Key: the first completed response for a (session_id, Idempotency-Key) pair is stored for the life of the session and replayed byte for byte on any later request with the same key and the same body. The same key with a different body is 409 idempotency_key_reused. Errors with code transcript_not_synced are not stored, so the wrapper can flush and retry with the same key."
+    - "Confirmation binding: each capture consumes its confirmation entry C, identified by (session_id, C.seq). A later capture call that resolves to the same C with identical normalized terms (intent, venue, instrument, side, quantity, limit_price, order_id) returns 200 with duplicate true and the original intent, whatever its Idempotency-Key. This covers the model calling the tool twice for one yes."
+    - "The same C with different terms is 409 confirmation_already_used with existing_intent_id. A second, identical order needs its own readback and its own yes."
+    - "cancel_order: at most one cancel intent per prepared order per session. A further cancel for the same target with a new confirmation is 409 cancel_already_captured with existing_intent_id."
+    - "Query handlers honor Idempotency-Key replay as well, so a retried query writes one audit intent, not two."
+    - "POST /transcripts is idempotent on (session_id, seq) as described on the endpoint."
+
+x-normalization:
+  summary: How spoken values become stored values. The agent normalizes before the readback; the backend validates the result and normalizes again when comparing with the transcript.
+  limit_price:
+    - "Always stored as a decimal number of US dollars. Never a string, never cents."
+    - "gemini_spot: dollars per base unit, at most 2 decimals. 'ninety seven thousand' is 97000; '97k' is 97000; 'thirty four ten fifty' must be clarified; 'three thousand four hundred ten dollars and fifty cents' is 3410.5."
+    - "gemini_prediction: dollars per contract, 0.01 to 0.99, 0.01 steps. '62 cents' is 0.62; 'point six two' and '0.62 dollars' are 0.62; a bare '62' or '62 percent' said about a prediction contract is read as 62 cents and stored as 0.62, and the readback says '62 cents' so the user confirms the unit."
+    - "A prediction price outside 1 to 99 cents, or with a fraction of a cent, is not normalized. The agent asks again."
+    - "Not a limit price, so the agent asks for an exact number: 'market', 'market price', 'at the ask', 'at the bid', 'best price', 'current price', 'whatever it is', 'around', 'about', 'a bit under', ranges, and percentages off a quote. The agent may offer the simulated quote from a tool but the number must come from the user's mouth."
+    - "Phase 1 captures limit orders only. There is no market order."
+  quantity:
+    - "gemini_spot: base-asset units as a decimal, at most 8 decimals. 'half a bitcoin' is 0.5; 'a quarter of an ether' is 0.25; 'two' is 2."
+    - "gemini_prediction: whole contracts. 'ten contracts' is 10. A fractional contract count is asked again."
+    - "Not a quantity, so the agent asks for one: a dollar amount to spend ('five hundred dollars of bitcoin'), 'some', 'a few', 'a couple', 'all of it', 'max'. The agent does not convert dollars into units."
+  side:
+    - "gemini_spot: buy or sell. 'pick up' and 'get me' mean buy; 'offload' and 'get rid of' mean sell. Anything less clear, including 'short' and 'long', is asked again with 'Buy or sell?'."
+    - "gemini_prediction: yes or no, meaning buy contracts of that outcome. 'I think it happens' is not a side; the agent asks 'Yes or no contracts?'. Selling or closing prediction contracts cannot be captured in Phase 1."
+  instrument:
+    - "Stored upper case exactly as returned by search_markets or get_orderbook. The agent resolves every instrument through search_markets and never builds a symbol or ticker from a name."
+    - "If search_markets returns more than one plausible match the agent asks which one. If it returns none the agent says it found no such Gemini market."
+  order_reference:
+    - "Reference normalization: upper case, spelled digits to digits ('one two three' to 123, 'oh' and 'zero' to 0), remove every character that is not a letter or digit. 'a b dash one two three four five' is AB12345."
+    - "A user-supplied reference is stored in this normalized form and is accepted only if the same normalized string occurs in the normalized concatenation of the session's user entries."
+    - "The id of a captured intent is a UUID; it is compared exactly and stored in canonical lower-case hyphenated form."
+  text_comparison:
+    - "For utterance and yes checks: lower case, strip punctuation, collapse whitespace."
+  quote_characters:
+    - "Before any text comparison (explicit yes, readback match, utterance check, reference check) the backend applies Unicode NFKC and folds typographic quotes to ASCII: U+2018, U+2019, U+02BC and U+0060 become U+0027; U+201C and U+201D become U+0022. Speech recognition and the model emit either form, so \"that\u2019s right\" and \"that's right\" are the same text."
+    - "After folding, apostrophes and quotation marks are punctuation and are stripped, so \"that's\" compares as \"thats\"."
+    - "Stored text is never rewritten: transcript entries and intent.utterance keep the characters they arrived with."
+    - "The fixed capture sentence in `say` uses the ASCII apostrophe U+0027: I've prepared that for approval."
+
+x-utterance-check:
+  summary: utterance must be the user's own recorded words.
+  rule: >
+    Normalize the utterance and the concatenation, in seq order joined by single spaces, of all role
+    user entries of the session up to and including C. The utterance must be a contiguous substring
+    of that concatenation.
+  on_failure:
+    capture_handlers: "422 utterance_mismatch. Nothing is stored. The agent calls again with the verbatim words; the same confirmation is still valid within its 120 seconds."
+    query_handlers: "No error. The stored audit intent uses the latest user entry text instead."
+
+x-validation-order:
+  summary: Handlers return the first failing check, in this order, so error behavior is deterministic.
+  capture_handlers:
+    - "401 unauthorized"
+    - "404 session_not_found"
+    - "Idempotency-Key replay (return stored response) or 409 idempotency_key_reused"
+    - "409 session_ended"
+    - "400 invalid_parameters"
+    - "409 transcript_not_synced"
+    - "422 domain rules: unknown_instrument, invalid_side_for_venue, invalid_quantity, invalid_price (place_order); order_not_cancellable, venue_mismatch, instrument_mismatch, order_id_not_user_supplied (cancel_order)"
+    - "422 confirmation_required, confirmation_missing, readback_missing, readback_interrupted, readback_mismatch"
+    - "422 utterance_mismatch"
+    - "200 duplicate, 409 confirmation_already_used or 409 cancel_already_captured"
+    - "201 captured"
+  query_handlers:
+    - "401 unauthorized"
+    - "404 session_not_found"
+    - "Idempotency-Key replay or 409 idempotency_key_reused"
+    - "409 session_ended"
+    - "400 invalid_parameters"
+    - "409 transcript_not_synced"
+    - "422 unknown_instrument (get_orderbook only)"
+    - "200 result"
+
+x-error-codes:
+  unauthorized: { http: 401, agent_hint: "Say the session has a problem and ask the user to restart voice." }
+  session_not_found: { http: 404, agent_hint: "Say the session has a problem and ask the user to restart voice." }
+  session_ended: { http: 409, agent_hint: "Say the session has ended and ask the user to start a new one. Do not say anything was prepared." }
+  invalid_parameters: { http: 400, agent_hint: "A value is missing or malformed. Ask the user for the missing value; do not guess it." }
+  transcript_not_synced: { http: 409, agent_hint: "Handled by the wrapper. If it reaches you, say there was a hiccup and ask the user to say yes again after a new readback." }
+  idempotency_key_reused: { http: 409, agent_hint: "Handled by the wrapper. If it reaches you, read the terms back again and ask for yes." }
+  seq_conflict: { http: 409, agent_hint: "Not returned to the agent." }
+  seq_gap: { http: 409, agent_hint: "Not returned to the agent." }
+  unknown_instrument: { http: 422, agent_hint: "Use search_markets to find the exact instrument, then continue. Do not invent a symbol." }
+  invalid_side_for_venue: { http: 422, agent_hint: "Spot uses buy or sell; prediction uses yes or no. Ask the user which." }
+  invalid_quantity: { http: 422, agent_hint: "Ask the user for the quantity again: units for spot, whole contracts for prediction." }
+  invalid_price: { http: 422, agent_hint: "Ask the user for the limit price again: dollars for spot, 1 to 99 cents for prediction." }
+  venue_mismatch: { http: 422, agent_hint: "The prepared order is on the other venue. Read the cancel back with the correct venue and ask for yes." }
+  instrument_mismatch: { http: 422, agent_hint: "The prepared order is for a different instrument. Use get_order_status to find the right order." }
+  order_not_cancellable: { http: 422, agent_hint: "That reference is not a prepared order. Use get_order_status or ask the user for the order ID." }
+  order_id_not_user_supplied: { http: 422, agent_hint: "The user has not said that order ID. Ask the user for the order ID; never guess it." }
+  confirmation_required: { http: 422, agent_hint: "Read the exact terms back and ask the user to say yes before capturing." }
+  confirmation_missing: { http: 422, agent_hint: "The user has not said an explicit yes. Read the exact terms back again and ask them to say yes." }
+  readback_missing: { http: 422, agent_hint: "Read the exact terms back, ending with 'Say yes to confirm.', and wait for yes." }
+  readback_interrupted: { http: 422, agent_hint: "The readback was cut off. Read the exact terms back again in full and wait for yes." }
+  readback_mismatch: { http: 422, agent_hint: "The terms changed since the readback. Read the current terms back and wait for a new yes." }
+  confirmation_already_used: { http: 409, agent_hint: "That yes already confirmed another capture. Read the new terms back and wait for a new yes." }
+  cancel_already_captured: { http: 409, agent_hint: "A cancel for that order is already prepared. Tell the user so." }
+  utterance_mismatch: { http: 422, agent_hint: "Call again with the user's exact words in utterance." }
+  backend_unavailable: { http: null, agent_hint: "Produced by the wrapper. Say you could not reach the service and ask the user to try again. Do not say anything was prepared." }
+  elevenlabs_unavailable: { http: 502, agent_hint: "Not returned to the agent." }
+  voice_not_configured: { http: 503, agent_hint: "Not returned to the agent." }
+
+x-capture-status-queries:
+  summary: What a status question can and cannot be answered with in Phase 1.
+  rules:
+    - "get_order_status is the only source of status. It is SIMULATED in the sense that it never asks Gemini: it reads the capture store of the calling session and reports capture status only."
+    - "Every match has capture_status captured and the response has execution none. The agent says the order is prepared for approval and has not been sent to Gemini. It never says open, working, live, filled, partially filled, executed, cancelled or rejected."
+    - "cancel_captured true means a cancel for that prepared order has also been prepared for approval. It does not mean the order was cancelled."
+    - "A status question about a reference the user supplied (an order ID that is not the id of a captured intent) returns count 0. The agent may repeat the reference and says it has no prepared order with that reference in this session and cannot see exchange status."
+    - "Orders prepared in an earlier session are not visible. The answer is count 0."
+    - "venue is required. When the user names no venue and no instrument the agent calls the tool once per venue, or asks which venue."
+    - "Each call writes one order_status audit intent with confirmed_by_user false, order_id set to the queried reference or null, instrument set to the filter or the empty string, and side set to the filter or null."
+
+x-cancel-resolution:
+  summary: How a cancel request becomes exactly one order_id. The agent never chooses between candidates and never invents or completes an ID.
+  by_user_reference:
+    - "The user speaks a complete order ID. The agent normalizes it (x-normalization order_reference), asks for the venue if it was not said, reads the cancel back with the reference, and captures after an explicit yes. The reference is recorded as stated and is not checked against Gemini."
+    - "A partial reference ('the one ending in 45') is not a reference. The agent asks for the full order ID."
+  by_description:
+    - "The user describes the order in words ('my bitcoin order', 'the fed one', 'the last one'). The agent calls get_order_status with the venue and every filter the user gave (instrument, side)."
+    - "count 0: the agent says it has no matching prepared order in this session and asks for the order ID. Nothing is captured."
+    - "count 1: the agent reads the cancel back with the full terms of that prepared order (cancel_of_prepared_* template) and captures with order_id set to its intent_id after an explicit yes."
+    - "count 2 or more: the description is ambiguous. The agent names the candidates by their distinguishing terms and asks which one. It does not pick the newest, the largest or the first. 'The last one' or 'the most recent one' is a description that selects matches[0] (newest first); the readback still states its full terms."
+    - "A match with cancel_captured true already has a prepared cancel. The agent says so and does not capture again (the backend would answer cancel_already_captured)."
+  bulk:
+    - "There is no bulk cancel. 'Cancel everything' is handled one order at a time, each with its own readback and its own yes."
+  backend_guarantees:
+    - "order_id must be the id of a place_order intent of this session, or occur in the user's own transcript entries after reference normalization (order_id_not_user_supplied otherwise)."
+    - "The readback must state the target's terms or the spoken reference (readback_mismatch otherwise), so a yes to one candidate can never cancel another."
+
+x-simulated-catalog:
+  note: >
+    SIMULATED. Invented fixture data for Phase 1. These are not Gemini markets, prices or books and
+    must never be presented as live. Query handlers answer only from this catalog. Prices do not
+    move; as_of is the backend clock at response time.
+  gemini_spot:
+    - instrument: BTCUSD
+      title: Bitcoin / US Dollar
+      aliases: [bitcoin, btc, xbt]
+      market_status: open
+      last_price: 97455.00
+      bids:
+        - { price: 97450.00, size: 0.80 }
+        - { price: 97440.00, size: 1.20 }
+        - { price: 97425.00, size: 2.00 }
+        - { price: 97400.00, size: 3.50 }
+        - { price: 97350.00, size: 5.00 }
+      asks:
+        - { price: 97460.00, size: 0.50 }
+        - { price: 97475.00, size: 1.10 }
+        - { price: 97490.00, size: 2.40 }
+        - { price: 97520.00, size: 3.00 }
+        - { price: 97600.00, size: 6.00 }
+    - instrument: ETHUSD
+      title: Ether / US Dollar
+      aliases: [ethereum, ether, eth]
+      market_status: open
+      last_price: 3410.75
+      bids:
+        - { price: 3410.50, size: 12.00 }
+        - { price: 3410.00, size: 20.00 }
+        - { price: 3409.25, size: 35.00 }
+        - { price: 3408.00, size: 50.00 }
+        - { price: 3405.00, size: 80.00 }
+      asks:
+        - { price: 3411.00, size: 10.00 }
+        - { price: 3411.50, size: 18.00 }
+        - { price: 3412.25, size: 30.00 }
+        - { price: 3414.00, size: 45.00 }
+        - { price: 3417.00, size: 75.00 }
+    - instrument: SOLUSD
+      title: Solana / US Dollar
+      aliases: [solana, sol]
+      market_status: open
+      last_price: 182.44
+      bids:
+        - { price: 182.40, size: 150.00 }
+        - { price: 182.35, size: 300.00 }
+        - { price: 182.20, size: 500.00 }
+        - { price: 182.00, size: 800.00 }
+        - { price: 181.50, size: 1200.00 }
+      asks:
+        - { price: 182.48, size: 120.00 }
+        - { price: 182.55, size: 280.00 }
+        - { price: 182.70, size: 450.00 }
+        - { price: 183.00, size: 700.00 }
+        - { price: 183.50, size: 1100.00 }
+  gemini_prediction:
+    - instrument: FED-CUT-DEC26
+      title: Will the Federal Reserve cut rates at its December 2026 meeting?
+      aliases: [fed, fed cut, rate cut, interest rates, fomc, federal reserve]
+      market_status: open
+      closes_at: "2026-12-16T19:00:00Z"
+      yes_bid: 0.61
+      yes_ask: 0.62
+      no_bid: 0.38
+      no_ask: 0.39
+      yes_book:
+        bids:
+          - { price: 0.61, size: 400 }
+          - { price: 0.60, size: 900 }
+          - { price: 0.59, size: 1500 }
+        asks:
+          - { price: 0.62, size: 350 }
+          - { price: 0.63, size: 800 }
+          - { price: 0.64, size: 1400 }
+    - instrument: BTC-150K-2026
+      title: Will Bitcoin trade above 150,000 dollars before January 1, 2027?
+      aliases: [bitcoin 150k, btc 150k, bitcoin price, bitcoin above 150000]
+      market_status: open
+      closes_at: "2026-12-31T23:59:00Z"
+      yes_bid: 0.17
+      yes_ask: 0.18
+      no_bid: 0.82
+      no_ask: 0.83
+      yes_book:
+        bids:
+          - { price: 0.17, size: 600 }
+          - { price: 0.16, size: 1000 }
+          - { price: 0.15, size: 2000 }
+        asks:
+          - { price: 0.18, size: 500 }
+          - { price: 0.19, size: 950 }
+          - { price: 0.20, size: 1800 }
+    - instrument: BTC-120K-2026
+      title: Will Bitcoin trade above 120,000 dollars before January 1, 2027?
+      aliases: [bitcoin 120k, btc 120k, bitcoin price, bitcoin above 120000]
+      market_status: open
+      closes_at: "2026-12-31T23:59:00Z"
+      yes_bid: 0.41
+      yes_ask: 0.43
+      no_bid: 0.57
+      no_ask: 0.59
+      yes_book:
+        bids:
+          - { price: 0.41, size: 300 }
+          - { price: 0.40, size: 700 }
+          - { price: 0.39, size: 1200 }
+        asks:
+          - { price: 0.43, size: 250 }
+          - { price: 0.44, size: 650 }
+          - { price: 0.45, size: 1100 }
+    - instrument: ETH-5K-2026
+      title: Will Ether trade above 5,000 dollars before January 1, 2027?
+      aliases: [ethereum 5k, eth 5k, ether price, ethereum above 5000]
+      market_status: open
+      closes_at: "2026-12-31T23:59:00Z"
+      yes_bid: 0.26
+      yes_ask: 0.27
+      no_bid: 0.73
+      no_ask: 0.74
+      yes_book:
+        bids:
+          - { price: 0.26, size: 500 }
+          - { price: 0.25, size: 900 }
+          - { price: 0.24, size: 1600 }
+        asks:
+          - { price: 0.27, size: 450 }
+          - { price: 0.28, size: 850 }
+          - { price: 0.29, size: 1500 }
+    - instrument: US-RECESSION-2027
+      title: Will the United States enter a recession in 2027?
+      aliases: [recession, us recession, economy]
+      market_status: open
+      closes_at: "2027-12-31T23:59:00Z"
+      yes_bid: 0.30
+      yes_ask: 0.32
+      no_bid: 0.68
+      no_ask: 0.70
+      yes_book:
+        bids:
+          - { price: 0.30, size: 200 }
+          - { price: 0.29, size: 500 }
+          - { price: 0.28, size: 900 }
+        asks:
+          - { price: 0.32, size: 180 }
+          - { price: 0.33, size: 450 }
+          - { price: 0.34, size: 850 }

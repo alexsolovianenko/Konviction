@@ -1,0 +1,475 @@
+{
+  "contract_version": "1.0.0",
+  "phase": 1,
+  "description": "Exact client tools of the Gemini-only browser voice assistant. Phase 1 is capture only: no tool executes, routes or cancels anything on Gemini, and every query answer is SIMULATED. Exactly five tools exist. Each is registered on the ElevenLabs agent as a client tool and implemented in the browser as a thin wrapper that forwards to the backend handler POST /tools/{name} (contracts/api.yaml).",
+  "conventions": {
+    "llm_parameters": "The `parameters` object of each tool is everything the model supplies. Types are plain (no null unions). An optional parameter that is unknown is omitted; the wrapper sends it to the backend as null.",
+    "wrapper_envelope": "The browser wrapper, never the model, adds session_id, last_transcript_seq and the Idempotency-Key header. Before forwarding, the wrapper flushes every pending transcript entry with POST /transcripts so the backend can check the readback and the spoken yes.",
+    "wrapper_return": "The wrapper returns the backend JSON body to the model unchanged, serialized as a string, for success and for errors alike. On a network failure or timeout it retries once with the same Idempotency-Key, then returns {\"ok\":false,\"simulated\":true,\"error\":{\"code\":\"backend_unavailable\",\"message\":\"The capture service did not respond.\",\"agent_hint\":\"Say you could not reach the service and ask the user to try again. Do not say anything was prepared.\"}}.",
+    "utterance": "Every tool takes `utterance`: the user's own words that stated this request, copied verbatim from the conversation in spoken order, joined with single spaces when the request spanned several user turns. No paraphrase, no corrections, no agent words.",
+    "simulated": "Every response carries simulated: true. Market and status data come from the fixed simulated catalog in contracts/api.yaml (x-simulated-catalog), never from Gemini.",
+    "error_shape": {
+      "ok": false,
+      "simulated": true,
+      "error": {
+        "code": "string, one of the tool's error codes",
+        "message": "string, human readable",
+        "agent_hint": "string, what the agent should do next"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "capture_order_intent",
+      "type": "client",
+      "expects_response": true,
+      "response_timeout_secs": 10,
+      "handler": "POST /tools/capture_order_intent",
+      "writes_intent": "place_order",
+      "description": "Record a fully specified Gemini limit order for later approval. Captures only; nothing is sent to Gemini. Call this only when the previous agent turn was the exact readback of these terms ending with 'Say yes to confirm.' and the user's latest turn was an explicit spoken yes. Never call it with a guessed instrument, quantity or price.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["venue", "instrument", "side", "quantity", "limit_price", "confirmed_by_user", "utterance"],
+        "properties": {
+          "venue": {
+            "type": "string",
+            "enum": ["gemini_prediction", "gemini_spot"],
+            "description": "gemini_spot for crypto pairs, gemini_prediction for event contracts."
+          },
+          "instrument": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$",
+            "description": "Exact instrument string returned by search_markets or get_orderbook earlier in this conversation, for example BTCUSD or FED-CUT-DEC26."
+          },
+          "side": {
+            "type": "string",
+            "enum": ["buy", "sell", "yes", "no"],
+            "description": "gemini_spot: buy or sell. gemini_prediction: yes or no, meaning buy contracts of that outcome."
+          },
+          "quantity": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "The quantity the user stated. gemini_spot: base-asset units, up to 8 decimals. gemini_prediction: whole contracts."
+          },
+          "limit_price": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "The limit price the user stated, normalized to US dollars. gemini_spot: dollars per unit, up to 2 decimals. gemini_prediction: dollars per contract, 0.01 to 0.99 (62 cents is 0.62)."
+          },
+          "confirmed_by_user": {
+            "type": "boolean",
+            "description": "True only when the user just said yes to the readback of exactly these terms. The backend verifies this against the transcript."
+          },
+          "utterance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The user's verbatim words that stated the order."
+          }
+        }
+      },
+      "validation": [
+        "Parameters match the schema above, else invalid_parameters.",
+        "instrument exists in the simulated catalog for the given venue, else unknown_instrument.",
+        "gemini_spot requires side buy or sell; gemini_prediction requires side yes or no, else invalid_side_for_venue.",
+        "gemini_spot quantity has at most 8 decimals; gemini_prediction quantity is an integer of at least 1, else invalid_quantity.",
+        "gemini_spot limit_price has at most 2 decimals; gemini_prediction limit_price is 0.01 to 0.99 in 0.01 steps, else invalid_price.",
+        "confirmed_by_user is true, else confirmation_required.",
+        "Transcript confirmation enforcement passes (api.yaml x-confirmation-enforcement): confirmation_missing, readback_missing, readback_interrupted, readback_mismatch, confirmation_already_used.",
+        "utterance is found in the user's transcript (api.yaml x-utterance-check), else utterance_mismatch."
+      ],
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "simulated", "duplicate", "intent", "say"],
+        "properties": {
+          "ok": { "const": true },
+          "simulated": { "const": true },
+          "duplicate": {
+            "type": "boolean",
+            "description": "True when this call repeated an already captured confirmation and the original intent is returned unchanged."
+          },
+          "intent": { "$ref": "intent.schema.json" },
+          "say": { "const": "I've prepared that for approval." }
+        }
+      },
+      "errors": [
+        "invalid_parameters",
+        "unknown_instrument",
+        "invalid_side_for_venue",
+        "invalid_quantity",
+        "invalid_price",
+        "confirmation_required",
+        "confirmation_missing",
+        "readback_missing",
+        "readback_interrupted",
+        "readback_mismatch",
+        "confirmation_already_used",
+        "utterance_mismatch",
+        "transcript_not_synced",
+        "session_ended",
+        "backend_unavailable"
+      ]
+    },
+    {
+      "name": "capture_cancel_intent",
+      "type": "client",
+      "expects_response": true,
+      "response_timeout_secs": 10,
+      "handler": "POST /tools/capture_cancel_intent",
+      "writes_intent": "cancel_order",
+      "description": "Record a request to cancel one specific order for later approval. Captures only; nothing is cancelled on Gemini. Call this only when the previous agent turn was the exact cancel readback ending with 'Say yes to confirm.' and the user's latest turn was an explicit spoken yes. order_id must be an intent_id returned by get_order_status or a capture tool in this conversation, or a reference the user spoke aloud. Never invent or complete an order ID.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["venue", "order_id", "confirmed_by_user", "utterance"],
+        "properties": {
+          "venue": {
+            "type": "string",
+            "enum": ["gemini_prediction", "gemini_spot"],
+            "description": "Venue of the order being cancelled."
+          },
+          "order_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Either the intent_id of a prepared order from this session, or the order reference exactly as the user spoke it (letters and digits joined, for example AB12345)."
+          },
+          "instrument": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Instrument of the order when known. Omit when the user identified the order by reference only."
+          },
+          "confirmed_by_user": {
+            "type": "boolean",
+            "description": "True only when the user just said yes to the readback of exactly this cancel."
+          },
+          "utterance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The user's verbatim words that asked for the cancel."
+          }
+        }
+      },
+      "validation": [
+        "Parameters match the schema above, else invalid_parameters.",
+        "order_id is normalized (upper case, alphanumerics only) unless it is the id of an intent in this session.",
+        "If order_id is the id of a place_order intent of this session: venue must equal that intent's venue (venue_mismatch); instrument, when given, must equal that intent's instrument (instrument_mismatch) and is filled from it when omitted; a second cancel for the same target is rejected with cancel_already_captured.",
+        "If order_id is the id of an intent that is not a place_order, the error is order_not_cancellable.",
+        "Otherwise order_id must appear, after reference normalization, in the user's own transcript entries of this session, else order_id_not_user_supplied. The reference is recorded as stated and is not checked against Gemini.",
+        "confirmed_by_user is true, else confirmation_required.",
+        "Transcript confirmation enforcement passes (api.yaml x-confirmation-enforcement).",
+        "utterance is found in the user's transcript, else utterance_mismatch."
+      ],
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "simulated", "duplicate", "intent", "say"],
+        "properties": {
+          "ok": { "const": true },
+          "simulated": { "const": true },
+          "duplicate": { "type": "boolean" },
+          "intent": { "$ref": "intent.schema.json" },
+          "say": { "const": "I've prepared that for approval." }
+        }
+      },
+      "errors": [
+        "invalid_parameters",
+        "venue_mismatch",
+        "instrument_mismatch",
+        "order_not_cancellable",
+        "cancel_already_captured",
+        "order_id_not_user_supplied",
+        "confirmation_required",
+        "confirmation_missing",
+        "readback_missing",
+        "readback_interrupted",
+        "readback_mismatch",
+        "confirmation_already_used",
+        "utterance_mismatch",
+        "transcript_not_synced",
+        "session_ended",
+        "backend_unavailable"
+      ]
+    },
+    {
+      "name": "get_order_status",
+      "type": "client",
+      "expects_response": true,
+      "response_timeout_secs": 10,
+      "handler": "POST /tools/get_order_status",
+      "writes_intent": "order_status",
+      "description": "SIMULATED. Look up what has been captured in this session for one venue: prepared orders and prepared cancels. It reports capture status only, never exchange status, because nothing is sent to Gemini. Use it for status questions and to find the target of a cancel described in words. Needs no confirmation.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["venue", "utterance"],
+        "properties": {
+          "venue": {
+            "type": "string",
+            "enum": ["gemini_prediction", "gemini_spot"],
+            "description": "Venue to look in."
+          },
+          "order_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "An intent_id from this conversation or a reference the user spoke. Omit to list by description."
+          },
+          "instrument": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Filter by exact instrument, for example BTCUSD. Omit for any."
+          },
+          "side": {
+            "type": "string",
+            "enum": ["buy", "sell", "yes", "no"],
+            "description": "Filter by side. Omit for any."
+          },
+          "utterance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The user's verbatim words that asked the question."
+          }
+        }
+      },
+      "validation": [
+        "Parameters match the schema above, else invalid_parameters.",
+        "Only place_order intents of the calling session and the given venue are searched. Filters combine with AND. order_id matches an intent id exactly, or, after reference normalization, never matches a prepared order (user references are not known to the capture store).",
+        "utterance that is not found in the user's transcript is replaced by the latest user transcript entry; the call does not fail."
+      ],
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "simulated", "execution", "count", "matches", "query_intent_id"],
+        "properties": {
+          "ok": { "const": true },
+          "simulated": { "const": true },
+          "execution": {
+            "const": "none",
+            "description": "Nothing has been sent to Gemini. Every match is a capture awaiting approval."
+          },
+          "count": { "type": "integer", "minimum": 0 },
+          "matches": {
+            "type": "array",
+            "description": "Newest first, at most 5.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["intent_id", "venue", "instrument", "side", "quantity", "limit_price", "capture_status", "cancel_captured", "created_at"],
+              "properties": {
+                "intent_id": { "type": "string", "format": "uuid" },
+                "venue": { "enum": ["gemini_prediction", "gemini_spot"] },
+                "instrument": { "type": "string" },
+                "side": { "enum": ["buy", "sell", "yes", "no"] },
+                "quantity": { "type": "number" },
+                "limit_price": { "type": "number" },
+                "capture_status": { "const": "captured" },
+                "cancel_captured": {
+                  "type": "boolean",
+                  "description": "True when a cancel_order intent for this prepared order has also been captured."
+                },
+                "created_at": { "type": "string", "format": "date-time" }
+              }
+            }
+          },
+          "query_intent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "id of the order_status intent written for this query."
+          }
+        }
+      },
+      "errors": ["invalid_parameters", "transcript_not_synced", "session_ended", "backend_unavailable"]
+    },
+    {
+      "name": "search_markets",
+      "type": "client",
+      "expects_response": true,
+      "response_timeout_secs": 10,
+      "handler": "POST /tools/search_markets",
+      "writes_intent": "market_query",
+      "description": "SIMULATED. Find Gemini prediction contracts or spot pairs by words the user said and return their exact instrument strings with simulated top-of-book prices. Use it to resolve any instrument before reading back an order, and to answer what markets exist or what a price is.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["venue", "query", "utterance"],
+        "properties": {
+          "venue": {
+            "type": "string",
+            "enum": ["gemini_prediction", "gemini_spot"],
+            "description": "Venue to search."
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Search words taken from what the user said, for example 'bitcoin' or 'fed rate cut'."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Maximum results. Defaults to 3."
+          },
+          "utterance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The user's verbatim words that asked the question."
+          }
+        }
+      },
+      "validation": [
+        "Parameters match the schema above, else invalid_parameters.",
+        "Matching is case-insensitive over instrument, title and aliases of the simulated catalog for the given venue. No match returns ok true with count 0.",
+        "utterance that is not found in the user's transcript is replaced by the latest user transcript entry; the call does not fail."
+      ],
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "simulated", "venue", "as_of", "count", "results", "query_intent_id"],
+        "properties": {
+          "ok": { "const": true },
+          "simulated": { "const": true },
+          "venue": { "enum": ["gemini_prediction", "gemini_spot"] },
+          "as_of": { "type": "string", "format": "date-time" },
+          "count": { "type": "integer", "minimum": 0 },
+          "results": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "title": "SpotResult",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["venue", "instrument", "title", "market_status", "best_bid", "best_ask", "last_price"],
+                  "properties": {
+                    "venue": { "const": "gemini_spot" },
+                    "instrument": { "type": "string" },
+                    "title": { "type": "string" },
+                    "market_status": { "enum": ["open", "closed"] },
+                    "best_bid": { "type": "number", "description": "US dollars per unit." },
+                    "best_ask": { "type": "number", "description": "US dollars per unit." },
+                    "last_price": { "type": "number", "description": "US dollars per unit." }
+                  }
+                },
+                {
+                  "title": "PredictionResult",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["venue", "instrument", "title", "market_status", "closes_at", "yes_bid", "yes_ask", "no_bid", "no_ask"],
+                  "properties": {
+                    "venue": { "const": "gemini_prediction" },
+                    "instrument": { "type": "string" },
+                    "title": { "type": "string" },
+                    "market_status": { "enum": ["open", "closed"] },
+                    "closes_at": { "type": "string", "format": "date-time" },
+                    "yes_bid": { "type": "number", "description": "US dollars per contract, 0.01 to 0.99." },
+                    "yes_ask": { "type": "number" },
+                    "no_bid": { "type": "number" },
+                    "no_ask": { "type": "number" }
+                  }
+                }
+              ]
+            }
+          },
+          "query_intent_id": { "type": "string", "format": "uuid" }
+        }
+      },
+      "errors": ["invalid_parameters", "transcript_not_synced", "session_ended", "backend_unavailable"]
+    },
+    {
+      "name": "get_orderbook",
+      "type": "client",
+      "expects_response": true,
+      "response_timeout_secs": 10,
+      "handler": "POST /tools/get_orderbook",
+      "writes_intent": "market_query",
+      "description": "SIMULATED. Return the simulated order book for one exact instrument: bids, asks, best bid, best ask and spread. For gemini_prediction the book is for the YES contract in dollars per contract. Use it when the user asks for the book, depth, bid, ask or spread of a specific market.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["venue", "instrument", "utterance"],
+        "properties": {
+          "venue": {
+            "type": "string",
+            "enum": ["gemini_prediction", "gemini_spot"],
+            "description": "Venue of the instrument."
+          },
+          "instrument": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$",
+            "description": "Exact instrument string, for example ETHUSD or FED-CUT-DEC26. Resolve it with search_markets first when the user gave only a name."
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Price levels per side. Defaults to 3."
+          },
+          "utterance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The user's verbatim words that asked the question."
+          }
+        }
+      },
+      "validation": [
+        "Parameters match the schema above, else invalid_parameters.",
+        "instrument exists in the simulated catalog for the given venue, else unknown_instrument.",
+        "utterance that is not found in the user's transcript is replaced by the latest user transcript entry; the call does not fail."
+      ],
+      "response": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "simulated", "venue", "instrument", "as_of", "bids", "asks", "best_bid", "best_ask", "spread", "query_intent_id"],
+        "properties": {
+          "ok": { "const": true },
+          "simulated": { "const": true },
+          "venue": { "enum": ["gemini_prediction", "gemini_spot"] },
+          "instrument": { "type": "string" },
+          "as_of": { "type": "string", "format": "date-time" },
+          "bids": {
+            "type": "array",
+            "description": "Highest price first.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["price", "size"],
+              "properties": {
+                "price": { "type": "number" },
+                "size": { "type": "number" }
+              }
+            }
+          },
+          "asks": {
+            "type": "array",
+            "description": "Lowest price first.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["price", "size"],
+              "properties": {
+                "price": { "type": "number" },
+                "size": { "type": "number" }
+              }
+            }
+          },
+          "best_bid": { "type": ["number", "null"] },
+          "best_ask": { "type": ["number", "null"] },
+          "spread": {
+            "type": ["number", "null"],
+            "description": "best_ask minus best_bid; null unless both sides have a quote."
+          },
+          "query_intent_id": { "type": "string", "format": "uuid" }
+        }
+      },
+      "errors": ["invalid_parameters", "unknown_instrument", "transcript_not_synced", "session_ended", "backend_unavailable"]
+    }
+  ]
+}
