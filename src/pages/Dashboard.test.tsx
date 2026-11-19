@@ -486,6 +486,20 @@ it('shows a voice proposal and accepts its private approval only from the dashbo
   expect(spoken).not.toContain('6739');
 });
 
+it('prepares at the current ask without an extra quote and speaks the actual order constraint', async () => {
+  const f = fixture(), sdk = await f.begin();
+  let body: unknown;
+  f.fetchMock.mockImplementation(async (_path, init) => {
+    body = JSON.parse(String(init.body));
+    return Response.json({ok:false, error:'CAP_EXCEEDED', message:'That amount is too small to buy even one contract at this price.'});
+  });
+  const terms = {event_ticker:'E', contract_symbol:'C', outcome:'no', budget_usd:0.10};
+  let result = '';
+  await act(async () => { result = await sdk.clientTools['prepare_sandbox_buy']!(terms); });
+  expect(body).toEqual(terms);
+  expect(JSON.parse(result).say).toBe('Budget is below one contract.');
+});
+
 it('ends the connection on a spoken goodbye and keeps order-status questions active', async () => {
   const f = fixture();
   const opts = await f.begin();

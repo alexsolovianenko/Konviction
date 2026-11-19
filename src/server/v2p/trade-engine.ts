@@ -235,16 +235,6 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   }
   const callerHash = await hashPhone(caller);
-  await receipt(it.id, code, "approval", {
-    caller_hash: callerHash,
-    side: it.side,
-    instrument_symbol: it.instrument_symbol,
-    outcome: it.outcome,
-    quantity: it.quantity,
-    limit_price: limit,
-    approved_at: new Date().toISOString(),
-    quote_at_execution: it.side === "buy" ? q.buy : q.sell,
-  });
 
   // Place ONE immediate-or-cancel limit order. Never retried on timeout.
   const orderFields = {
@@ -257,12 +247,19 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     timeInForce: "immediate-or-cancel",
     makerOrCancel: false,
   };
-  await log(
-    "ORDER_SENT",
-    caller,
-    `${code}: sending IOC ${it.side} ${it.quantity} ${it.outcome} @ ${limit.toFixed(2)}`,
-    orderFields,
-  );
+  await Promise.all([
+    receipt(it.id, code, "approval", {
+      caller_hash: callerHash,
+      side: it.side,
+      instrument_symbol: it.instrument_symbol,
+      outcome: it.outcome,
+      quantity: it.quantity,
+      limit_price: limit,
+      approved_at: new Date().toISOString(),
+      quote_at_execution: it.side === "buy" ? q.buy : q.sell,
+    }),
+    log("ORDER_SENT", caller, `${code}: sending IOC ${it.side} ${it.quantity} ${it.outcome} @ ${limit.toFixed(2)}`, orderFields),
+  ]);
   const placed = await gPrivate("/v1/prediction-markets/order", orderFields, { submitBefore });
   if (placed.missedDeadline) {
     await finish("REJECTED");

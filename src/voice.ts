@@ -49,6 +49,8 @@ const shortTradeIssue: Record<string, string> = {
   EXECUTION_DISABLED: 'Sandbox trading is disabled.',
   SERVICE_UNAVAILABLE: 'Trading service unavailable.',
   UNAUTHORIZED: 'Restart voice to trade.',
+  NO_SESSION: 'Start voice to trade.',
+  SESSION_ENDED: 'Session ended.',
   LOCKED: 'Approval is locked.',
   SUPERSEDED: 'The proposal changed.',
   UNKNOWN_PROPOSAL: 'Request a fresh proposal.',
@@ -345,7 +347,7 @@ export class Voice {
                 else if (/contracts per order/i.test(result.message)) say = 'Too many contracts.';
                 else if (/per order/i.test(result.message)) say = 'Over the per-order limit.';
               }
-              return JSON.stringify({ok:false, error, say:result.say ?? say});
+              return JSON.stringify({ok:false, error, say});
             }
             const { quantity, outcome } = result.proposal;
             const paired = result.availability.voice_authorized && result.availability.voice_confirmation_supported;
@@ -387,14 +389,14 @@ export class Voice {
 
   async prepareBuy(params: Record<string, unknown>) {
     const session = this.session;
-    if (!this.active || !session) return {ok:false, message:'Start voice to prepare a proposal.', say:'Start voice to trade.'};
+    if (!this.active || !session) return {ok:false, message:'Start voice to prepare a proposal.', error:'NO_SESSION'};
     if (!session.credentials.session_token) {
       const message = 'This session opened with quotes only. Restart voice to request trading access.';
       this.update({tradeMessage:message});
-      return {ok:false, message, say:'Restart voice to trade.'};
+      return {ok:false, message, error:'UNAUTHORIZED'};
     }
     const result = await tradingRequest('proposals', params, session.credentials.session_token, {idempotencyKey:crypto.randomUUID()});
-    if (session !== this.session) return {ok:false, message:'Session ended.', say:'Session ended.'};
+    if (session !== this.session) return {ok:false, message:'Session ended.', error:'SESSION_ENDED'};
     this.currentProposal = result.proposal ?? null;
     this.proposalRequest = result.proposal ? {...params} : null;
     this.update({proposal:this.currentProposal, availability:result.availability ?? null, tradeMessage:result.message ?? ''});
