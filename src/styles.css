@@ -1,0 +1,102 @@
+:root {
+  color-scheme: dark;
+  font:
+    16px/1.5 Inter,
+    system-ui,
+    sans-serif;
+  background: #10191e;
+  color: #edf3ef;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 72rem;
+  margin: auto;
+  padding: clamp(1rem, 5vw, 4rem);
+}
+h1,
+h2,
+p {
+  margin: 0 0 0.6rem;
+}
+h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  letter-spacing: -0.045em;
+}
+h2 {
+  font-size: 1.3rem;
+}
+header p,
+time,
+em,
+q {
+  color: #bfcec9;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 2rem 0;
+}
+.controls p {
+  width: 100%;
+  color: #ffcb9f;
+}
+button {
+  font: inherit;
+  font-weight: 600;
+  background: #a8ebc9;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  padding: 0.6rem 1rem;
+  color: #132821;
+  cursor: pointer;
+}
+.secondary {
+  background: transparent;
+  color: inherit;
+  border-color: #779389;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.panels {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 1rem;
+}
+.panels section {
+  min-width: 0;
+  background: #18262c;
+  padding: 1.3rem;
+  border-radius: 0.75rem;
+}
+ol {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+li {
+  border-top: 1px solid #394c52;
+  padding: 0.8rem 0;
+  overflow-wrap: anywhere;
+}
+li div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+time {
+  font-size: 0.8rem;
+}
+pre {
+  white-space: pre-wrap;
+}
+@media (max-width: 700px) {
+  .panels {
+    grid-template-columns: 1fr;
+  }
+}
