@@ -291,7 +291,7 @@ function BuyPrice({ side, value }: { side: "Yes" | "No"; value: number | null })
   );
 }
 
-function ContractRows({ event, sort, pick, onQuote }: { event: MarketEvent; sort: ContractSort; pick: (key: ContractSort["key"]) => void; onQuote?: (eventTicker: string, contractSymbol: string) => void }) {
+function ContractRows({ event, sort, pick, onQuote }: { event: MarketEvent; sort: ContractSort; pick: (key: ContractSort["key"]) => void; onQuote: ((eventTicker: string, contractSymbol: string) => void) | undefined }) {
   const [details, setDetails] = useState<string | null>(null);
   const contracts = useMemo(() => {
     const value = (c: MarketContract) => (sort.key === "yes" ? c.buy.yes : sort.key === "no" ? c.buy.no : null);
@@ -307,7 +307,7 @@ function ContractRows({ event, sort, pick, onQuote }: { event: MarketEvent; sort
   }, [event, sort]);
   const head = (key: ContractSort["key"], label: string, align = "") => (
     <th scope="col" className={cn("h-8 px-2 text-xs font-medium text-muted-foreground", align)} aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
-      <button type="button" className={cn("inline-flex items-center gap-1 hover:text-foreground", sort.key === key && "text-foreground")} onClick={() => pick(key)}>
+      <button type="button" className={cn("inline-flex items-center gap-1 whitespace-nowrap hover:text-foreground", sort.key === key && "text-foreground")} onClick={() => pick(key)}>
         {label}
         {sort.key === key && (sort.dir === 1 ? <ArrowUp className="size-3" aria-hidden /> : <ArrowDown className="size-3" aria-hidden />)}
       </button>
@@ -417,7 +417,7 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
   return (
     <section aria-label="Gemini Sandbox market listings" className="min-w-0">
       <div className="flex flex-wrap items-center gap-2 pb-3">
-        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+        <div className="relative min-w-0 basis-full sm:max-w-xs sm:flex-1 sm:basis-auto">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <input className="field pl-8" aria-label="Filter events and outcomes" placeholder="Filter events and outcomes" value={filter} onChange={(e) => { setFilter(e.target.value); setLimit(40); setSelected(undefined); }} />
         </div>
@@ -441,6 +441,7 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
               const open = current === event.ticker;
               const live = event.contracts.filter(tradable).length;
               const priced = event.contracts.filter(quoted).length;
+              const only = event.contracts.length === 1 ? event.contracts[0] : undefined;
               return (
                 <li key={event.ticker} className="border-b border-border">
                   <button
@@ -451,14 +452,20 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
                   >
                     <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} aria-hidden />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{event.title}</span>
+                      <span className="block text-sm font-medium sm:truncate">{event.title}</span>
                       <span className="tnum block truncate text-xs text-muted-foreground">
-                        {[event.category, `${event.contracts.length} ${event.contracts.length === 1 ? "outcome" : "outcomes"}`, priced < event.contracts.length ? `${event.contracts.length - priced} without a quote` : null].filter(Boolean).join(" · ")}
+                        {[event.category, event.ticker, `${event.contracts.length} ${event.contracts.length === 1 ? "outcome" : "outcomes"}`, priced < event.contracts.length ? `${event.contracts.length - priced} without a quote` : null].filter(Boolean).join(" · ")}
                       </span>
                     </span>
-                    <span className="tnum shrink-0 text-right text-xs text-muted-foreground">
+                    {!open && only && quoted(only) && (
+                      <span className="hidden shrink-0 items-center gap-1 sm:flex" aria-label={`Buy Yes ${cents(only.buy.yes)}, buy No ${cents(only.buy.no)}`}>
+                        <BuyPrice side="Yes" value={only.buy.yes} />
+                        <BuyPrice side="No" value={only.buy.no} />
+                      </span>
+                    )}
+                    <span className="tnum shrink-0 text-right text-xs text-muted-foreground sm:w-36">
                       <span className="block">{expiryText(eventExpiry(event))}</span>
-                      <span className={cn("block", live === event.contracts.length ? "text-success" : "")}>{live === event.contracts.length ? "Open" : live === 0 ? (event.status ?? "Not open") : `${live} of ${event.contracts.length} open`}</span>
+                      <span className={cn("block", live === event.contracts.length ? "text-success" : "")}>{live === event.contracts.length ? "Open" : live === 0 ? "Not open" : `${live} of ${event.contracts.length} open`}</span>
                     </span>
                   </button>
                   {open && (
