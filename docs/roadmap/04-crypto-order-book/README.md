@@ -1,6 +1,6 @@
 # 4. Crypto Order Book
 
-Explore Gemini spot order books for demo pairs such as BTC/USD and ETH/USD.
+Use read-only prices to explain the market underlying a prediction contract. The current demo displays a simulated five-minute BTC/USD chart. Any order preview is for a YES or NO event contract.
 
 - [ ] Fetch the selected pair’s Gemini order book through the shared backend.
 - [ ] Display bids, asks, sizes, spread (best ask minus best bid), and last-updated time.

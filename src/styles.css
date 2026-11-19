@@ -181,7 +181,7 @@ pre {
 .preview-detail button {
   font-size: 0.9rem;
 }
-.chart-actions .sell {
+.chart-actions .outcome-no {
   background: #f5c3ae;
 }
 .chart-feedback:not(:empty) {
@@ -198,4 +198,19 @@ pre {
     grid-column: 1;
     grid-row: auto;
   }
+}
+
+.contract-preview {
+  margin-top: 1.2rem;
+  border-top: 1px solid #394c52;
+  padding-top: 1rem;
+}
+.contract-preview h3 {
+  margin: 0 0 0.3rem;
+}
+.contract-preview p {
+  color: #bfcec9;
+}
+.contract-preview .chart-actions {
+  margin: 0.8rem 0 0.4rem;
 }

@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { ApiError, api, requests, validList, uuid4, requireRule } from './contracts.mjs';
 import { SQLiteRepository } from './repository.mjs';
-import { runTool, validateQueryParameters } from './tools.mjs';
+import { runTool, validateQueryParameters, visibleIntent } from './tools.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 async function readBody(request) {
@@ -86,6 +86,22 @@ function append(repo, session, body, now) {
   ];
 }
 
+const orderPaths = new Set([
+  '/intents',
+  '/tools/capture_order_intent',
+  '/tools/capture_cancel_intent',
+  '/tools/get_order_status',
+]);
+
+function enforcePredictionScope(path, body) {
+  if (!orderPaths.has(path)) return;
+  const params = path === '/intents' ? body : body?.parameters;
+  requireRule(
+    params?.venue !== 'gemini_spot' && !['buy', 'sell'].includes(params?.side),
+    'invalid_parameters',
+  );
+}
+
 function handle(repo, session, path, method, body, key, now) {
   requireRule(body?.session_id == null || body.session_id === session.id, 'unauthorized');
   requireRule(now < session.expires, 'session_not_found');
@@ -100,6 +116,7 @@ function handle(repo, session, path, method, body, key, now) {
     const intents = repo
       .intents(session.id)
       .map((row) => row.intent)
+      .filter(visibleIntent)
       .filter(
         (i) =>
           (!body.intent || i.intent === body.intent) &&
@@ -123,6 +140,8 @@ function handle(repo, session, path, method, body, key, now) {
       isDeepStrictEqual(JSON.parse(replay.fingerprint), [path, body]),
       'idempotency_key_reused',
     );
+    // A matching cache entry can predate the prediction-only contract.
+    enforcePredictionScope(path, body);
     if (!ended) repo.touch(session.id, now, session.state);
     return JSON.parse(replay.response);
   }
@@ -130,6 +149,7 @@ function handle(repo, session, path, method, body, key, now) {
   try {
     requireRule(!ended, 'session_ended');
     requireRule(cacheable && requests[path](body), 'invalid_parameters');
+    enforcePredictionScope(path, body);
     validateQueryParameters(path, body.parameters);
     const transcript = repo.transcript(session.id);
     requireRule(transcript.length >= body.last_transcript_seq, 'transcript_not_synced', {

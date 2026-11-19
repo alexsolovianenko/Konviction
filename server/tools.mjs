@@ -50,17 +50,8 @@ function decimalPlaces(value) {
   return (mantissa.split('.')[1]?.length ?? 0) - Number(exponent);
 }
 function validateOrder(p, market) {
-  const spot = p.venue === 'gemini_spot';
   requireRule(market, 'unknown_instrument');
-  requireRule((spot ? ['buy', 'sell'] : ['yes', 'no']).includes(p.side), 'invalid_side_for_venue');
-  requireRule(
-    spot ? decimalPlaces(p.quantity) <= 8 : Number.isInteger(p.quantity),
-    'invalid_quantity',
-  );
-  requireRule(
-    decimalPlaces(p.limit_price) <= 2 && (spot || p.limit_price <= 0.99),
-    'invalid_price',
-  );
+  requireRule(decimalPlaces(p.limit_price) <= 2, 'invalid_price');
 }
 function readbackMatches(readback, p, target, cancel) {
   const words =
@@ -72,17 +63,16 @@ function readbackMatches(readback, p, target, cancel) {
   if (!phrase(p.venue.replace('_', ' ')) || words.includes('cancel') !== cancel) return false;
   if (cancel && !target) return reference(readback).includes(p.order_id);
   const terms = target ?? p;
-  const spot = p.venue === 'gemini_spot';
   const numeric = (word) => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(word);
   const priceAt = words.findIndex(
     (word, i) =>
       numeric(word) &&
       ((Number(word) === terms.limit_price && words[i + 1] === 'dollars') ||
-        (!spot && Number(word) / 100 === terms.limit_price && words[i + 1] === 'cents')),
+        (Number(word) / 100 === terms.limit_price && words[i + 1] === 'cents')),
   );
   return (
     words.includes(terms.instrument.toLowerCase()) &&
-    phrase(spot ? terms.side : terms.side + ' contracts') &&
+    phrase(terms.side + ' contracts') &&
     priceAt >= 0 &&
     words.some((word, i) => i !== priceAt && numeric(word) && Number(word) === terms.quantity)
   );
@@ -96,8 +86,13 @@ const captureResult = (intent, duplicate) => ({
   say: "I've prepared that for approval.",
 });
 
+// Keep the original rows for audit. Only market-data queries may expose the spot venue.
+export function visibleIntent(intent) {
+  return intent.venue === 'gemini_prediction' || intent.intent === 'market_query';
+}
+
 export function runTool(repo, name, p, session, transcript, now) {
-  const records = repo.intents(session);
+  const records = repo.intents(session).filter(({ intent }) => visibleIntent(intent));
   const orders = records.map((row) => row.intent);
   const speech = transcript.filter((entry) => entry.role !== 'tool');
   const users = speech.filter((entry) => entry.role === 'user');
@@ -136,6 +131,7 @@ export function runTool(repo, name, p, session, transcript, now) {
         );
         intent.instrument = target.instrument;
       } else {
+        requireRule(p.instrument == null || market, 'unknown_instrument');
         requireRule(
           intent.order_id && reference(userText).includes(intent.order_id),
           'order_id_not_user_supplied',

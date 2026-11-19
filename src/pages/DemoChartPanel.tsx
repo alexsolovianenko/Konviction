@@ -19,16 +19,16 @@ export function DemoChartPanel({
       : chart.action === 'explore'
         ? 'Exploring ' + chart.selected.time_utc + ' UTC'
         : chart.preview
-          ? (chart.preview.side === 'buy' ? 'Buy' : 'Sell') + ' preview'
+          ? chart.preview.side.toUpperCase() + ' preview'
           : '';
   return (
     <section className="chart-panel" aria-labelledby="chart-title">
       <div className="chart-heading">
         <h2 id="chart-title">BTC/USD</h2>
-        <span>Simulated · 5 min</span>
+        <span>Read-only · Simulated · 5 min</span>
       </div>
       <div className="chart-price">
-        {dollars(chart.last_usd)} <span>USD</span>
+        {dollars(chart.last_usd)} <span>{chart.underlying_unit}</span>
       </div>
       <p className="chart-trend">
         ↗ Up {dollars(chart.change_usd)} ({chart.change_percent}%) over five minutes
@@ -88,10 +88,19 @@ export function DemoChartPanel({
         <button className="secondary" onClick={() => act('explore')}>
           Explore chart
         </button>
-        <button onClick={() => act('buy')}>Preview buy</button>
-        <button className="sell" onClick={() => act('sell')}>
-          Preview sell
-        </button>
+      </div>
+      <div className="contract-preview">
+        <h3>{chart.contract.title}</h3>
+        <p>{chart.contract.instrument} · Simulated event contract</p>
+        <div className="chart-actions">
+          <button onClick={() => act('yes')}>
+            Preview YES · {Math.round(chart.contract.yes_ask * 100)}¢
+          </button>
+          <button className="outcome-no" onClick={() => act('no')}>
+            Preview NO · {Math.round(chart.contract.no_ask * 100)}¢
+          </button>
+        </div>
+        <p>Ask prices per contract</p>
       </div>
       <div aria-live="polite" className="chart-feedback">
         {chart.update > 0 && (
@@ -103,8 +112,10 @@ export function DemoChartPanel({
         {chart.preview && (
           <div className="preview-detail">
             <p>
-              <strong>{chart.preview.side === 'buy' ? 'Buy' : 'Sell'} BTC/USD</strong> at{' '}
-              {dollars(chart.preview.price_usd)} · Preview only
+              <strong>
+                {chart.preview.side.toUpperCase()} · {chart.preview.instrument}
+              </strong>{' '}
+              at {chart.preview.contract_price_cents}¢ per contract · Preview only
             </p>
             <button className="secondary" onClick={() => act('cancel')}>
               Cancel preview
