@@ -238,9 +238,28 @@ describe("approval: the only order-submission path", () => {
   it("replaying an approval returns the recorded result and never places a second order", async () => {
     const { s, id } = await proposed();
     await callConfirm(id, s.session_token);
-    const again = (await callConfirm(id, s.session_token)) as any;
+    const again = (await callConfirm(id, s.session_token, {history:JSON.stringify({entries:[...conversationEntries(id), {role:"agent",message:"Filled."}]})})) as any;
     expect(again).toMatchObject({ replayed: true, order_id: "73797746498585286" });
     expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
+  it("accepts Confirmed on a second purchase in the same call and submits each proposal once", async () => {
+    const {s,id} = await proposed();
+    const first = conversationEntries(id);
+    await callConfirm(id,s.session_token);
+    const second = await run("proposals",order,s.session_token) as any;
+    const nextId = second.proposal.proposal_id;
+    const history = JSON.stringify({entries:[...first,{role:"agent",message:"Filled."},{role:"user",message:"Buy another."},...conversationEntries(nextId,"Confirmed.")]});
+    expect(await callConfirm(nextId,s.session_token,{history})).toMatchObject({outcome_summary:"FILLED"});
+    expect(await callConfirm(nextId,s.session_token,{history})).toMatchObject({replayed:true});
+    expect(geminiOrderCalls()).toHaveLength(2);
+  });
+
+  it("silences an automatic webhook retry following a refusal in the same turn", async () => {
+    const {s,id} = await proposed();
+    const entries = [...conversationEntries(id,"yes but change the size"),{role:"tool",tool_results:[{tool_name:"confirm_hosted_sandbox_buy",result_value:"Confirmation missed."}]},{role:"user",message:"..."}];
+    expect(await callConfirm(id,s.session_token,{history:JSON.stringify({entries})})).toMatchObject({say:"",next_action:"wait_for_user"});
+    expect(geminiOrderCalls()).toHaveLength(0);
   });
 
   it("another session cannot approve someone else's proposal", async () => {

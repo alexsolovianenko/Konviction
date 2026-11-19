@@ -1,3 +1,4 @@
+import { isSpokenConfirmation } from "../src/spoken-confirmation.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { TradeError } from "./trading-repository.mjs";
 
@@ -63,7 +64,7 @@ export class TrustedDevices {
     const normalize = s => s.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
     const received = this.repo.receivedAt(owner, seq);
     if (row.confirmation_seq !== null || !received || Date.now() - received > 30000 || received > Date.now() ||
-        answer?.role !== "user" || answer.seq !== seq || !/^(?:confirm|yes|yes[, ]+confirm)[.!]?$/i.test(answer.text.trim()) ||
+        answer?.role !== "user" || answer.seq !== seq || !isSpokenConfirmation(answer.text) ||
         readback?.role !== "agent" || readback.seq <= row.min_seq || readback.interrupted ||
         normalize(readback.text.replace(/^\[(?:neutral|slow)\]\s*/i, "")) !== normalize(terms.voice_readback))
       throw new TradeError("CONFIRMATION_REQUIRED", "Listen to the complete order and say confirm.", 409);

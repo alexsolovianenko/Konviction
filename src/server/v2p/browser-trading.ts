@@ -11,6 +11,7 @@
 //   POST portfolio               sanitized shared sandbox Gemini open orders, positions, order history
 //
 // The ElevenLabs system injects the conversation history and call ID into its server webhook.
+import { isSpokenConfirmation } from "../../spoken-confirmation";
 import { spokenFill } from "../../spoken-fill";
 import { validOrderKeys } from "./browser-order-input";
 import { spokenProposal } from "../../../server/spoken-proposal.mjs";
@@ -280,7 +281,7 @@ function confirmedInCall(history: unknown, row): boolean {
       if (typeof turn.message !== "string" || !turn.message.trim()) continue;
       if (turn.role === "tool") continue;
       if (turn.role === "agent" && bound && !turn.interrupted && normalize(turn.message.replace(/^\[(?:neutral|slow)\]\s*/i, "")) === normalize(expected)) steps = 2;
-      else if (turn.role === "user" && steps === 2 && /^(?:confirm|yes|yes[, ]+confirm)[.!]?$/i.test(turn.message.trim())) steps = 3;
+      else if (turn.role === "user" && steps === 2 && isSpokenConfirmation(turn.message)) steps = 3;
       else {
         steps = 0;
         // A status question or hesitation can be followed by a fresh, exact readback.
@@ -292,6 +293,22 @@ function confirmedInCall(history: unknown, row): boolean {
   } catch { return false; }
 }
 
+// The provider includes completed tool calls in history when the agent retries
+// without another caller turn. That turn already received its decision.
+function alreadyAnsweredTurn(history: unknown) {
+  if (typeof history !== "string") return false;
+  try {
+    const { entries } = JSON.parse(history);
+    if (!Array.isArray(entries)) return false;
+    for (const entry of [...entries].reverse()) {
+      if (entry.role === "user" && /[\p{L}\p{N}]/u.test(entry.message ?? "")) return false;
+      if ((entry.role === "tool" || entry.role === "agent") && Array.isArray(entry.tool_results) &&
+          entry.tool_results.some(result => result.tool_name === "confirm_hosted_sandbox_buy")) return true;
+    }
+  } catch { /* Invalid evidence is rejected by the confirmation check. */ }
+  return false;
+}
+
 async function callConfirm(store: Store, token: string | undefined, body) {
   const s = await requireSession(store, token);
   if (!keysAre(body, ["proposal_id", "conversation_id", "is_text_only", "history"])) bad();
@@ -299,8 +316,10 @@ async function callConfirm(store: Store, token: string | undefined, body) {
   if (!s.cid || s.cid !== body.conversation_id || body.is_text_only !== false)
     throw new TradeError("CALL_REQUIRED", "Confirm in the active voice call.", 403);
   const row = await ownedIntent(store, body.proposal_id, s);
+  if (alreadyAnsweredTurn(body.history)) return { ok: true, say: "", next_action: "wait_for_user" };
+  if (row.status !== "PROPOSED") return { ...await recordedResult(store, row), replayed: true };
   if (!confirmedInCall(body.history, row))
-    throw new TradeError("CONFIRMATION_REQUIRED", "Repeat the confirmation question and wait for yes.");
+    throw new TradeError("CONFIRMATION_REQUIRED", "Confirmation missed. Order not sent.");
   const config = await availability();
   if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
   const it = await store.claim(row.id, s.caller);
@@ -405,14 +424,14 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
     }
     const token = action === "call-confirm" ? req.headers.get("x-trade-session-token") ?? undefined : /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
     const result = await runBrowserTrading({ action, method: req.method, token, body, callSecret });
-    if (action === "call-confirm" && result.voice_say) return reply(200, { ...result, say: result.voice_say });
+    if (action === "call-confirm") return reply(200, { ...result, next_action: "wait_for_user", say: result.voice_say ?? result.say ?? (result.status === "EXECUTING" ? "Order pending." : result.message) });
     return reply(200, result);
   } catch (e) {
     if (e instanceof TradeError) {
       // ElevenLabs treats non-2xx as a failed webhook and may improvise a reason.
       // An authenticated order decision is a successful tool result, including a refusal.
       const decision = action === "call-confirm" && ["CONFIRMATION_REQUIRED", "CAP_EXCEEDED", "EXECUTION_DISABLED"].includes(e.code);
-      return reply(decision ? 200 : e.status, { ok: false, error: e.code, message: e.message, ...(decision && { say: e.message }) });
+      return reply(decision ? 200 : e.status, { ok: false, error: e.code, message: e.message, ...(decision && { say: e.message, next_action: "wait_for_user" }) });
     }
     console.error(JSON.stringify({ event: "browser_trading_error", action, error_name: (e as Error)?.name ?? null }));
     return reply(503, {

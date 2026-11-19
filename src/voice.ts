@@ -1,3 +1,4 @@
+import { isSpokenConfirmation } from "./spoken-confirmation";
 import { spokenFill } from './spoken-fill';
 import { tradingRequest, type Proposal, type Availability } from './browserTrading';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
@@ -162,6 +163,10 @@ export class Voice {
         return;
       }
       this.session = session;
+      // A confirmation belongs to the existing proposal. It cannot start another one.
+      let preparedThisTurn = false;
+      let confirmedThisTurn = false;
+      const waitForUser = JSON.stringify({ ok: false, next_action: 'wait_for_user', say: '' });
       let draft: string | undefined;
       let draftEvent: number | undefined;
       let interrupted = false;
@@ -316,6 +321,10 @@ export class Voice {
             draftEvent = event_id;
             update({ draft });
           } else {
+            if (/[a-z0-9]/i.test(message)) {
+              confirmedThisTurn = false;
+              preparedThisTurn = isSpokenConfirmation(message);
+            }
             if (endsConversation(message)) {
               finishTurn();
               session.append({ role, text: message });
@@ -358,14 +367,22 @@ export class Voice {
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,say:'Session ended.'});
             if (params['order_mode'] !== 'market' && params['limit_price'] == null) return JSON.stringify({ok:false, error:'ENTRY_REQUIRED', say:'Your limit?'});
+            if (preparedThisTurn) return waitForUser;
+            preparedThisTurn = true;
             const result = await this.prepareBuy(params);
             return this.proposalReply(result);
           },
-          prepare_sandbox_remainder: async () => current()
-            ? this.proposalReply(await this.prepareRemainder())
-            : JSON.stringify({ok:false, say:'Session ended.'}),
-          confirm_sandbox_buy: async () => JSON.stringify(current()
-            ? await this.confirmByVoice() : {ok:false, say:'Session ended.'}),
+          prepare_sandbox_remainder: async () => {
+            if (!current() || preparedThisTurn) return waitForUser;
+            preparedThisTurn = true;
+            return this.proposalReply(await this.prepareRemainder());
+          },
+          confirm_sandbox_buy: async () => {
+            if (!current() || confirmedThisTurn) return waitForUser;
+            confirmedThisTurn = true;
+            preparedThisTurn = true;
+            return JSON.stringify(await this.confirmByVoice());
+          },
           get_sandbox_positions: async () => JSON.stringify(current()
             ? await this.readPositions() : {ok:false, say:'Session ended.'}),
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
@@ -405,7 +422,7 @@ export class Voice {
         else if (/contracts per order/i.test(result.message)) say = 'Too many contracts.';
         else if (/per order/i.test(result.message)) say = 'Over the per-order limit.';
       }
-      return JSON.stringify({ok:false, error, say});
+      return JSON.stringify({ok:false, error, say, next_action:'wait_for_user'});
     }
     const { quantity, outcome } = result.proposal;
     const canConfirm = result.availability.call_confirmation_supported || (result.availability.voice_authorized && result.availability.voice_confirmation_supported);
@@ -498,7 +515,7 @@ export class Voice {
     try {
       const sequence = await session.confirmationSequence().catch(() => null);
       if (this.session !== session || this.currentProposal !== proposal) return {ok:false, say:'The proposal changed.'};
-      if (!sequence) return {ok:false, say:proposal.voice_readback};
+      if (!sequence) return {ok:false, say:'Confirmation missed. Order not sent.'};
       const result = await tradingRequest('voice-confirm', {
         proposal_id: proposal.proposal_id, confirmation_seq: sequence,
       }, session.credentials.session_token);
@@ -518,7 +535,7 @@ export class Voice {
       if (terminal) this.currentProposal = null;
       this.update({tradeMessage:result.message ?? 'Check your proposal.', ...(terminal && {proposal:null})});
       if (!code) return {ok:false, say:'Check order history before retrying.'};
-      if (code === 'CONFIRMATION_REQUIRED') return {ok:false, say:proposal.voice_readback};
+      if (code === 'CONFIRMATION_REQUIRED') return {ok:false, say:'Confirmation missed. Order not sent.'};
       return {ok:false, say:shortTradeIssue[code] ?? 'Order status is unconfirmed.'};
     } catch {
       return {ok:false, say:'Check order history before retrying.'};

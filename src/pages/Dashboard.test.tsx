@@ -524,6 +524,9 @@ it.each([false, true])('requests one fresh remainder proposal after spoken appro
   const retryButton = await screen.findByRole('button',{name:'Prepare remaining 2 contracts'});
   expect(requests).toHaveLength(1);
   if (retryByVoice) {
+    expect(JSON.parse(await sdk.clientTools['prepare_sandbox_remainder']!({}))).toMatchObject({next_action:'wait_for_user'});
+    expect(JSON.parse(await sdk.clientTools['prepare_sandbox_buy']!(remainder))).toMatchObject({next_action:'wait_for_user'});
+    act(() => sdk.onMessage?.({source:'user',role:'user',event_id:3,message:'Buy the remaining two.'}));
     await act(async () => {
       const reply = JSON.parse(await sdk.clientTools['prepare_sandbox_remainder']!({quantity:99,limit_price:.99}));
       expect(reply.say).toBe(freshReadback);
