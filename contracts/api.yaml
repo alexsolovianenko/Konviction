@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Call-to-Predict Phase 1 capture API
-  version: 1.2.0
-  summary: Gemini browser voice demo. Simulated data, capture only, zero execution.
+  version: 2.0.0
+  summary: Gemini browser voice demo. Prediction contracts only for orders; simulated data, capture only, zero execution.
   description: |
     Backend contract for Phase 1 of the browser voice assistant.
 
@@ -19,21 +19,27 @@ info:
       (capture_order_intent, capture_cancel_intent, get_order_status, search_markets, get_orderbook).
     - A sixth agent tool, explore_demo_chart, runs entirely in the browser. It has no endpoint here,
       makes no request to this backend or to anyone else, and writes nothing. See `x-browser-tools`.
-    - Reading simulated data and opening a buy or sell preview can never execute an order. Nothing
+    - Orders are prediction contracts only. Capturing an order, capturing a cancel, order status
+      and chart previews all concern Gemini prediction contracts (yes or no contracts). Gemini
+      spot data, including the BTC chart and the spot books, is read-only analytical context: it
+      can be looked at and never ordered. See `x-order-scope`.
+    - Reading simulated data and opening a yes or no preview can never execute an order. Nothing
       in this system can. See `x-execution-boundary`, which also fixes where any future Gemini
       access must live: on the server, never in the browser and never in a tool the model calls.
 
     Cross-cutting behavior is specified in the `x-` sections at the end of this file:
     `x-session-lifecycle`, `x-confirmation-enforcement`, `x-idempotency`, `x-normalization`,
     `x-utterance-check`, `x-audit-records`, `x-query-matching`, `x-validation-order`,
-    `x-error-codes`, `x-capture-status-queries`, `x-cancel-resolution`, `x-browser-tools`,
+    `x-error-codes`, `x-order-scope`, `x-capture-status-queries`, `x-cancel-resolution`, `x-browser-tools`,
     `x-execution-boundary`, `x-simulated-catalog` and `x-revision`.
     Tool parameters and responses are also listed, per tool, in contracts/tools.json; the two files
     must agree and this file wins on HTTP details.
 
     Revision 1.1.0 clarified 1.0.0 without adding or removing an operation, a tool, a parameter or
     an intent field. Revision 1.2.0 documents the browser-only chart tool and the execution
-    boundary; it changes no operation, no backend tool, no parameter and no intent field. Every
+    boundary; it changes no operation, no backend tool, no parameter and no intent field.
+    Revision 2.0.0 is a breaking change: order capture, cancel, status and previews are restricted
+    to prediction contracts, and the chart tool's actions become explore, yes and no. Every
     change is listed in `x-revision`.
 servers:
   - url: /api
@@ -516,6 +522,14 @@ components:
     Venue:
       type: string
       enum: [gemini_prediction, gemini_spot]
+      description: Venue of a read-only market query. gemini_spot is analytical context only.
+
+    OrderVenue:
+      type: string
+      enum: [gemini_prediction]
+      description: >
+        Venue of anything that concerns an order: capture, cancel and order status. Orders are
+        prediction contracts only, so gemini_spot is not accepted (400 invalid_parameters).
 
     TranscriptEntry:
       type: object
@@ -569,11 +583,11 @@ components:
       additionalProperties: false
       required: [venue, instrument, side, quantity, limit_price, confirmed_by_user, utterance]
       properties:
-        venue: { $ref: "#/components/schemas/Venue" }
+        venue: { $ref: "#/components/schemas/OrderVenue" }
         instrument: { type: string, pattern: "^[A-Z0-9][A-Z0-9-]{0,63}$" }
-        side: { type: string, enum: [buy, sell, "yes", "no"] }
-        quantity: { type: number, exclusiveMinimum: 0 }
-        limit_price: { type: number, exclusiveMinimum: 0 }
+        side: { type: string, enum: ["yes", "no"] }
+        quantity: { type: integer, minimum: 1 }
+        limit_price: { type: number, minimum: 0.01, maximum: 0.99 }
         confirmed_by_user: { type: boolean }
         utterance: { type: string, minLength: 1, maxLength: 2000 }
 
@@ -582,7 +596,7 @@ components:
       additionalProperties: false
       required: [venue, order_id, confirmed_by_user, utterance]
       properties:
-        venue: { $ref: "#/components/schemas/Venue" }
+        venue: { $ref: "#/components/schemas/OrderVenue" }
         order_id: { type: string, minLength: 1, maxLength: 64 }
         instrument:
           type: [string, "null"]
@@ -595,10 +609,10 @@ components:
       additionalProperties: false
       required: [venue, utterance]
       properties:
-        venue: { $ref: "#/components/schemas/Venue" }
+        venue: { $ref: "#/components/schemas/OrderVenue" }
         order_id: { type: [string, "null"], minLength: 1, maxLength: 64 }
         instrument: { type: [string, "null"], maxLength: 64 }
-        side: { type: [string, "null"], enum: [buy, sell, "yes", "no", null] }
+        side: { type: [string, "null"], enum: ["yes", "no", null] }
         utterance: { type: string, minLength: 1, maxLength: 2000 }
 
     SearchMarketsParameters:
@@ -630,11 +644,11 @@ components:
         session_id: { type: string, format: uuid }
         last_transcript_seq: { type: integer, minimum: 0 }
         intent: { const: place_order }
-        venue: { $ref: "#/components/schemas/Venue" }
+        venue: { $ref: "#/components/schemas/OrderVenue" }
         instrument: { type: string, pattern: "^[A-Z0-9][A-Z0-9-]{0,63}$" }
-        side: { type: string, enum: [buy, sell, "yes", "no"] }
-        quantity: { type: number, exclusiveMinimum: 0 }
-        limit_price: { type: number, exclusiveMinimum: 0 }
+        side: { type: string, enum: ["yes", "no"] }
+        quantity: { type: integer, minimum: 1 }
+        limit_price: { type: number, minimum: 0.01, maximum: 0.99 }
         confirmed_by_user: { type: boolean }
         utterance: { type: string, minLength: 1, maxLength: 2000 }
 
@@ -647,7 +661,7 @@ components:
         session_id: { type: string, format: uuid }
         last_transcript_seq: { type: integer, minimum: 0 }
         intent: { const: cancel_order }
-        venue: { $ref: "#/components/schemas/Venue" }
+        venue: { $ref: "#/components/schemas/OrderVenue" }
         order_id: { type: string, minLength: 1, maxLength: 64 }
         instrument: { type: [string, "null"], maxLength: 64 }
         confirmed_by_user: { type: boolean }
@@ -674,9 +688,9 @@ components:
       required: [intent_id, venue, instrument, side, quantity, limit_price, capture_status, cancel_captured, created_at]
       properties:
         intent_id: { type: string, format: uuid }
-        venue: { $ref: "#/components/schemas/Venue" }
+        venue: { $ref: "#/components/schemas/OrderVenue" }
         instrument: { type: string }
-        side: { type: string, enum: [buy, sell, "yes", "no"] }
+        side: { type: string, enum: ["yes", "no"] }
         quantity: { type: number }
         limit_price: { type: number }
         capture_status: { const: captured }
@@ -871,21 +885,12 @@ x-confirmation-enforcement:
     examples_accept: ["Yes.", "yes please", "Yeah, that's right.", "Yes, confirm.", "yep go ahead", "um, yes", "Yes, go ahead and do it.", "entries ['um', 'yes']", "entries ['yes', 'yes please']"]
     examples_reject: ["okay", "sure", "sounds good", "yes but make it ten", "yes, no wait", "I guess", "do it", "confirm", "Yes?", "yes, right?", "no yes", "entries ['yes', 'but make it two']", "entries ['no', 'yes']", "entries ['yes', 'actually no']", "entries ['yes', 'wait what was the price?']"]
   readback_templates:
-    note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence."
-    spot_order: "Confirming: {side} {quantity} {instrument} on Gemini spot at a limit of {limit_price} dollars. Say yes to confirm."
+    note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence. Orders are prediction contracts only, so there is no spot template."
     prediction_order: "Confirming: buy {quantity} {side} contracts of {instrument} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
-    cancel_by_user_reference: "Confirming: cancel order {order_id} on Gemini {spot|prediction}. Say yes to confirm."
-    cancel_of_prepared_spot_order: "Confirming: cancel your prepared order to {side} {quantity} {instrument} on Gemini spot at a limit of {limit_price} dollars. Say yes to confirm."
+    cancel_by_user_reference: "Confirming: cancel order {order_id} on Gemini prediction. Say yes to confirm."
     cancel_of_prepared_prediction_order: "Confirming: cancel your prepared order to buy {quantity} {side} contracts of {instrument} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
   readback_match:
-    normalization: "Lower case; remove thousands separators inside numbers and currency symbols; keep decimal points and hyphens inside words; strip other punctuation; collapse whitespace. Numbers are compared by numeric value, so 0.5 equals 0.50 and 97,000 equals 97000."
-    place_order_spot:
-      - "contains the phrase 'gemini spot'"
-      - "contains the instrument as a whole word, case-insensitive"
-      - "contains the side word (buy or sell) as a whole word"
-      - "contains a number equal to quantity"
-      - "contains a number equal to limit_price directly followed by 'dollars'"
-      - "does not contain the word 'cancel'"
+    normalization: "Lower case; remove thousands separators inside numbers and currency symbols; keep decimal points and hyphens inside words; strip other punctuation; collapse whitespace. Numbers are compared by numeric value, so 62 equals 62.0."
     place_order_prediction:
       - "contains the phrase 'gemini prediction'"
       - "contains the instrument as a whole word, case-insensitive"
@@ -895,7 +900,7 @@ x-confirmation-enforcement:
       - "does not contain the word 'cancel'"
     cancel_order_by_user_reference:
       - "contains the word 'cancel'"
-      - "contains the phrase 'gemini spot' or 'gemini prediction' matching venue"
+      - "contains the phrase 'gemini prediction'"
       - "after removing every non-alphanumeric character from the readback, contains the normalized order_id"
     cancel_order_of_prepared_order:
       - "contains the word 'cancel'"
@@ -909,24 +914,23 @@ x-idempotency:
     - "The same C with different terms is 409 confirmation_already_used with existing_intent_id. A second, identical order needs its own readback and its own yes."
     - "cancel_order: at most one cancel intent per prepared order per session. A further cancel for the same target with a new confirmation is 409 cancel_already_captured with existing_intent_id."
     - "Query handlers honor Idempotency-Key replay as well, so a retried query writes one audit intent, not two."
+    - "Exception since 2.0.0: a stored response for a request that is no longer allowed (an order, cancel or status request on gemini_spot, or with side buy or sell) is not replayed; the answer is 400 invalid_parameters (x-order-scope)."
     - "POST /transcripts is idempotent on (session_id, seq) as described on the endpoint."
 
 x-normalization:
   summary: How spoken values become stored values. The agent normalizes before the readback; the backend validates the result and normalizes again when comparing with the transcript.
   limit_price:
-    - "Always stored as a decimal number of US dollars. Never a string, never cents."
-    - "gemini_spot: dollars per base unit, at most 2 decimals. 'ninety seven thousand' is 97000; '97k' is 97000; 'thirty four ten fifty' must be clarified; 'three thousand four hundred ten dollars and fifty cents' is 3410.5."
-    - "gemini_prediction: dollars per contract, 0.01 to 0.99, 0.01 steps. '62 cents' is 0.62; 'point six two' and '0.62 dollars' are 0.62; a bare '62' or '62 percent' said about a prediction contract is read as 62 cents and stored as 0.62, and the readback says '62 cents' so the user confirms the unit."
-    - "A prediction price outside 1 to 99 cents, or with a fraction of a cent, is not normalized. The agent asks again."
+    - "Always stored as a decimal number of US dollars per contract. Never a string, never cents."
+    - "0.01 to 0.99 in 0.01 steps. '62 cents' is 0.62; 'point six two' and '0.62 dollars' are 0.62; a bare '62' or '62 percent' said about a prediction contract is read as 62 cents and stored as 0.62, and the readback says '62 cents' so the user confirms the unit."
+    - "A price outside 1 to 99 cents, or with a fraction of a cent, is not normalized. The agent asks again."
+    - "A contract price is never taken from the underlying asset's price. 'At ninety seven thousand' is a bitcoin price, not a contract price; the agent explains the difference and asks for a price in cents."
     - "Not a limit price, so the agent asks for an exact number: 'market', 'market price', 'at the ask', 'at the bid', 'best price', 'current price', 'whatever it is', 'around', 'about', 'a bit under', ranges, and percentages off a quote. The agent may offer the simulated quote from a tool but the number must come from the user's mouth."
-    - "Phase 1 captures limit orders only. There is no market order."
+    - "Only limit orders are captured. There is no market order."
   quantity:
-    - "gemini_spot: base-asset units as a decimal, at most 8 decimals. 'half a bitcoin' is 0.5; 'a quarter of an ether' is 0.25; 'two' is 2."
-    - "gemini_prediction: whole contracts. 'ten contracts' is 10. A fractional contract count is asked again."
-    - "Not a quantity, so the agent asks for one: a dollar amount to spend ('five hundred dollars of bitcoin'), 'some', 'a few', 'a couple', 'all of it', 'max'. The agent does not convert dollars into units."
+    - "Whole contracts, at least 1. 'ten contracts' is 10. A fractional contract count is asked again."
+    - "Not a quantity, so the agent asks for one: a dollar amount to spend ('fifty dollars on yes'), an amount of the underlying asset ('half a bitcoin'), 'some', 'a few', 'a couple', 'all of it', 'max'. The agent does not convert dollars or coins into contracts."
   side:
-    - "gemini_spot: buy or sell. 'pick up' and 'get me' mean buy; 'offload' and 'get rid of' mean sell. Anything less clear, including 'short' and 'long', is asked again with 'Buy or sell?'."
-    - "gemini_prediction: yes or no, meaning buy contracts of that outcome. 'I think it happens' is not a side; the agent asks 'Yes or no contracts?'. Selling or closing prediction contracts cannot be captured in Phase 1."
+    - "yes or no, meaning buy contracts of that outcome. 'I think it happens' is not a side; the agent asks 'Yes or no contracts?'. buy and sell are not sides: 'buy' with no outcome is asked 'Yes or no contracts?'. Selling or closing prediction contracts cannot be captured."
   instrument:
     - "Stored upper case exactly as returned by search_markets or get_orderbook. The agent resolves every instrument through search_markets and never builds a symbol or ticker from a name."
     - "If search_markets returns more than one plausible match the agent asks which one. If it returns none the agent says it found no such Gemini market."
@@ -1024,15 +1028,15 @@ x-error-codes:
   unauthorized: { http: 401, agent_hint: "Say the session has a problem and ask the user to restart voice." }
   session_not_found: { http: 404, agent_hint: "Say the session has a problem and ask the user to restart voice." }
   session_ended: { http: 409, agent_hint: "Say the session has ended and ask the user to start a new one. Do not say anything was prepared." }
-  invalid_parameters: { http: 400, agent_hint: "A value is missing or malformed. Ask the user for the missing value; do not guess it." }
+  invalid_parameters: { http: 400, agent_hint: "A value is missing, malformed or not allowed. Orders, cancels and status are for Gemini prediction contracts only, with yes or no as the side. Ask the user for the missing value; do not guess it." }
   transcript_not_synced: { http: 409, agent_hint: "Handled by the wrapper. If it reaches you, say there was a hiccup and ask the user to say yes again after a new readback." }
   idempotency_key_reused: { http: 409, agent_hint: "Handled by the wrapper. If it reaches you, read the terms back again and ask for yes." }
   seq_conflict: { http: 409, agent_hint: "Not returned to the agent." }
   seq_gap: { http: 409, agent_hint: "Not returned to the agent." }
-  unknown_instrument: { http: 422, agent_hint: "Use search_markets to find the exact instrument, then continue. Do not invent a symbol." }
-  invalid_side_for_venue: { http: 422, agent_hint: "Spot uses buy or sell; prediction uses yes or no. Ask the user which." }
-  invalid_quantity: { http: 422, agent_hint: "Ask the user for the quantity again: units for spot, whole contracts for prediction." }
-  invalid_price: { http: 422, agent_hint: "Ask the user for the limit price again: dollars for spot, 1 to 99 cents for prediction." }
+  unknown_instrument: { http: 422, agent_hint: "Use search_markets on Gemini prediction to find the exact contract, then continue. Do not invent a symbol, and do not use a spot pair for an order." }
+  invalid_side_for_venue: { http: 422, agent_hint: "Orders are prediction contracts and use yes or no. Ask the user which." }
+  invalid_quantity: { http: 422, agent_hint: "Ask the user for the quantity again: a whole number of contracts." }
+  invalid_price: { http: 422, agent_hint: "Ask the user for the limit price again: 1 to 99 cents per contract." }
   venue_mismatch: { http: 422, agent_hint: "The prepared order is on the other venue. Read the cancel back with the correct venue and ask for yes." }
   instrument_mismatch: { http: 422, agent_hint: "The prepared order is for a different instrument. Use get_order_status to find the right order." }
   order_not_cancellable: { http: 422, agent_hint: "That reference is not a prepared order. Use get_order_status or ask the user for the order ID." }
@@ -1049,6 +1053,32 @@ x-error-codes:
   elevenlabs_unavailable: { http: 502, agent_hint: "Not returned to the agent." }
   voice_not_configured: { http: 503, agent_hint: "Not returned to the agent." }
 
+x-order-scope:
+  summary: >
+    Orders are prediction contracts only. Everything that concerns an order, which is capturing
+    one, capturing a cancel, asking for status and previewing, is about a Gemini prediction
+    contract. Gemini spot is read-only analytical context.
+  order_surfaces:
+    - "capture_order_intent, capture_cancel_intent, get_order_status and POST /intents accept venue gemini_prediction only. Any other venue is 400 invalid_parameters by the request schema and nothing is stored."
+    - "side is yes or no. buy and sell are not accepted (400 invalid_parameters). quantity is a whole number of contracts, at least 1. limit_price is 0.01 to 0.99 dollars per contract."
+    - "instrument must be in the gemini_prediction catalog. A spot pair is unknown_instrument."
+    - "explore_demo_chart previews (action yes or no) are for one catalog prediction contract (x-browser-tools). There is no preview of a spot trade."
+  read_only_surfaces:
+    - "search_markets and get_orderbook accept gemini_spot and gemini_prediction. On gemini_spot they are context only: the BTC, ETH and SOL pairs can be searched and their books read, and nothing about them can be captured."
+    - "The chart in explore_demo_chart shows the underlying BTC/USD price series. It is context for the previewed prediction contract, not something that can be ordered."
+    - "A market_query audit intent may carry venue gemini_spot. No other stored intent does."
+  two_kinds_of_price:
+    - "Underlying price: US dollars per bitcoin (or per ether, per SOL). Chart fields ending in _usd, spot bids, asks and last prices. Tens of thousands of dollars for bitcoin."
+    - "Outcome price: US dollars per contract, between 0.01 and 0.99, spoken in cents. yes_bid, yes_ask, no_bid, no_ask, prediction book levels, limit_price and contract_price. It is the price of a yes or no contract, not of the asset."
+    - "The two are never mixed. An underlying price is never used as a limit price, a contract price is never described as the price of bitcoin, and a spoken figure always says which it is: dollars for the underlying, cents for a contract."
+    - "The chart contract BTC-150K-2026 refers to bitcoin trading above 150,000 dollars. That 150,000 is a threshold in the contract's question, not a price of anything in the demo."
+  stored_intents:
+    - "place_order, cancel_order and order_status intents always have venue gemini_prediction. place_order side is yes or no. contracts/intent.schema.json enforces this."
+    - "Legacy replays: an Idempotency-Key replay whose stored request is an order, cancel or status request that 2.0.0 forbids (venue gemini_spot, or side buy or sell on those endpoints) answers 400 invalid_parameters instead of re-sending the stored legacy response. All other replays, the same-key different-body 409 idempotency_key_reused and the session checks keep their precedence (x-validation-order)."
+    - "Legacy rows: place_order, cancel_order and order_status intents with venue gemini_spot stored before 2.0.0 stay in storage untouched. They are never returned by GET /intents, never matched by get_order_status and never accepted as a cancel target. They are not re-validated or rewritten."
+  agent_behavior:
+    - "Asked to buy or sell a coin, the agent says orders here are prediction contracts only, offers the spot data as context, and offers a related prediction contract when a search finds one. It never captures or previews a spot trade."
+
 x-capture-status-queries:
   summary: What a status question can and cannot be answered with in Phase 1.
   rules:
@@ -1057,14 +1087,15 @@ x-capture-status-queries:
     - "cancel_captured true means a cancel for that prepared order has also been prepared for approval. It does not mean the order was cancelled."
     - "A status question about a reference the user supplied (an order ID that is not the id of a captured intent) returns count 0. The agent may repeat the reference and says it has no prepared order with that reference in this session and cannot see exchange status."
     - "Orders prepared in an earlier session are not visible. The answer is count 0."
-    - "venue is required. When the user names no venue and no instrument the agent calls the tool once per venue, or asks which venue."
+    - "venue is required and is always gemini_prediction. Only prediction captures exist, so there is nothing to look up on spot. An instrument filter that is not a prediction catalog instrument is not an error; it matches nothing."
     - "Each call writes one order_status audit intent with confirmed_by_user false, order_id set to the queried reference or null, instrument set to the filter or the empty string, and side set to the filter or null (x-audit-records)."
     - "An order_id that is not the id of a captured intent and normalizes to the empty string is 400 invalid_parameters. The agent asks the user for the order ID instead of sending punctuation or filler."
 
 x-cancel-resolution:
   summary: How a cancel request becomes exactly one order_id. The agent never chooses between candidates and never invents or completes an ID.
   by_user_reference:
-    - "The user speaks a complete order ID. The agent normalizes it (x-normalization order_reference), asks for the venue if it was not said, reads the cancel back with the reference, and captures after an explicit yes. The reference is recorded as stated and is not checked against Gemini."
+    - "The user speaks a complete order ID. The agent normalizes it (x-normalization order_reference), reads the cancel back with the reference on Gemini prediction, and captures after an explicit yes. The reference is recorded as stated and is not checked against Gemini. The venue is always gemini_prediction and is not asked for."
+    - "instrument is optional for a cancel by reference. When given it must be an instrument of the gemini_prediction catalog, else 422 unknown_instrument and nothing is stored; a spot pair such as BTCUSD is never accepted. When omitted it is stored as the empty string."
     - "A partial reference ('the one ending in 45') is not a reference. The agent asks for the full order ID."
   by_description:
     - "The user describes the order in words ('my bitcoin order', 'the fed one', 'the last one'). The agent calls get_order_status with the venue and every filter the user gave (instrument, side)."
@@ -1086,11 +1117,11 @@ x-execution-boundary:
     locally by this backend.
   what_each_action_can_do:
     - action: "search_markets, get_orderbook, get_order_status"
-      effect: "Reads the simulated catalog or the session's own captured intents. Writes one audit intent (order_status or market_query, confirmed_by_user false). Sends nothing to Gemini. Cannot create, change or remove a place_order or cancel_order intent."
+      effect: "Reads the simulated catalog (prediction contracts, and spot pairs as read-only context) or the session's own captured intents. Writes one audit intent (order_status or market_query, confirmed_by_user false). Sends nothing to Gemini. Cannot create, change or remove a place_order or cancel_order intent."
     - action: "explore_demo_chart with action explore"
-      effect: "Redraws a fabricated five-minute chart in the browser and returns its figures. No request leaves the browser. Nothing is stored."
-    - action: "explore_demo_chart with action buy or sell"
-      effect: "Shows a preview panel in the browser with execution none. It is a picture of what a trade would look like. No request leaves the browser, no intent is captured, nothing is stored, and no confirmation is asked for because there is nothing to confirm. A preview is not an order, not a prepared order and not a step toward one."
+      effect: "Redraws a fabricated five-minute BTC/USD chart in the browser and returns its figures. No request leaves the browser. Nothing is stored. The chart is context; bitcoin itself cannot be ordered here."
+    - action: "explore_demo_chart with action yes or no"
+      effect: "Shows a preview panel in the browser for a yes or no position in one prediction contract, with execution none. It is a picture of what a trade would look like. No request leaves the browser, no intent is captured, nothing is stored, and no confirmation is asked for because there is nothing to confirm. A preview is not an order, not a prepared order and not a step toward one."
     - action: "capture_order_intent, capture_cancel_intent"
       effect: "Stores one intent with status captured after the transcript shows the exact uninterrupted readback and an unambiguous spoken yes (x-confirmation-enforcement). The intent is a record for later human approval. It is not sent to Gemini and nothing in this phase acts on it."
   rules:
@@ -1116,7 +1147,7 @@ x-browser-tools:
     transcript entry. They are listed in contracts/tools.json under browser_tools, separate from
     the five backend tools.
   explore_demo_chart:
-    purpose: "Drive the dashboard's simulated five-minute BTC chart, its statistics and its sidebar preview by voice. The same actions are available as buttons; voice and buttons share one chart state."
+    purpose: "Show the dashboard's simulated five-minute BTC/USD chart as context, and preview a yes or no position in one catalog prediction contract in the sidebar, by voice. The same actions are available as buttons; voice and buttons share one chart state."
     parameters:
       type: object
       additionalProperties: false
@@ -1124,25 +1155,28 @@ x-browser-tools:
       properties:
         action:
           type: string
-          enum: [explore, buy, sell]
-          description: "explore redraws the chart and moves the highlighted point to the next minute mark. buy or sell shows a preview of that side at the last simulated price."
+          enum: [explore, "yes", "no"]
+          description: "explore redraws the chart and moves the highlighted point to the next minute mark. yes or no shows a preview of buying that outcome of the chart's prediction contract at its simulated ask."
     behavior:
-      - "Runs synchronously in the browser against a fixed fabricated series. No network request of any kind."
+      - "Runs synchronously in the browser against fixed fabricated data. No network request of any kind."
       - "explore: update increases by 1, selected moves to the next point (wrapping), an existing preview is kept."
-      - "buy or sell: update increases by 1, selected is the last point, preview becomes that side at last_usd with execution none. A later buy or sell replaces the preview."
+      - "yes or no: update increases by 1, selected is the last point, preview becomes that outcome of the contract at its ask (yes_ask for yes, no_ask for no) with execution none. A later yes or no replaces the preview."
       - "The dashboard also has a control that clears the preview. The agent has no action for that."
       - "No confirmation precedes any action. Nothing is captured, so there is nothing to confirm."
-      - "The chart symbol BTC/USD is a display label, not an instrument. An order for bitcoin still resolves its instrument through search_markets (BTCUSD)."
+      - "The chart series is the underlying BTC/USD price in US dollars per bitcoin. It is read-only context and cannot be ordered. The symbol BTC/USD is a display label, not an instrument."
+      - "The preview is for the prediction contract in `contract`, priced in US dollars per contract (cents). contract.instrument is an exact catalog instrument, so it may be used in capture_order_intent after the normal capture flow. Its prices equal the gemini_prediction catalog entry and never change."
+      - "There is no buy or sell action and no preview of a spot trade."
     result:
       type: object
-      required: [simulated, symbol, window_minutes, points, open_usd, last_usd, high_usd, low_usd, change_usd, change_percent, trend, update, action, selected, preview]
+      required: [simulated, symbol, underlying_unit, window_minutes, points, open_usd, last_usd, high_usd, low_usd, change_usd, change_percent, trend, update, action, selected, contract, preview]
       properties:
         simulated: { const: true }
-        symbol: { const: "BTC/USD" }
+        symbol: { const: "BTC/USD", description: "Underlying shown in the chart. Display label only." }
+        underlying_unit: { const: "USD per bitcoin", description: "Unit of every field ending in _usd and of points and selected." }
         window_minutes: { const: 5 }
         points:
           type: array
-          description: "Six minute marks spanning five minutes, oldest first."
+          description: "Six minute marks spanning five minutes, oldest first. Underlying BTC price."
           items:
             type: object
             required: [time_utc, price_usd]
@@ -1157,30 +1191,49 @@ x-browser-tools:
         change_percent: { type: number, description: "Two decimals." }
         trend: { enum: [up, down, flat] }
         update: { type: integer, minimum: 1, description: "Count of chart actions in this page load." }
-        action: { enum: [explore, buy, sell] }
+        action: { enum: [explore, "yes", "no"] }
         selected:
           type: object
           required: [time_utc, price_usd]
           properties:
             time_utc: { type: string }
             price_usd: { type: number }
+        contract:
+          type: object
+          description: "The prediction contract the previews are for. Always present. Outcome prices, not BTC prices."
+          additionalProperties: false
+          required: [venue, instrument, title, closes_at, yes_bid, yes_ask, no_bid, no_ask, price_unit]
+          properties:
+            venue: { const: gemini_prediction }
+            instrument: { type: string }
+            title: { type: string }
+            closes_at: { type: string, format: date-time }
+            yes_bid: { type: number, description: "US dollars per contract, 0.01 to 0.99." }
+            yes_ask: { type: number }
+            no_bid: { type: number }
+            no_ask: { type: number }
+            price_unit: { const: "USD per contract" }
         preview:
-          description: "Null until a buy or sell preview is shown."
+          description: "Null until a yes or no preview is shown."
           oneOf:
             - type: "null"
             - type: object
               additionalProperties: false
-              required: [side, price_usd, execution]
+              required: [venue, instrument, side, contract_price, contract_price_cents, execution]
               properties:
-                side: { enum: [buy, sell] }
-                price_usd: { type: number }
+                venue: { const: gemini_prediction }
+                instrument: { type: string, description: "Equals contract.instrument." }
+                side: { enum: ["yes", "no"] }
+                contract_price: { type: number, description: "US dollars per contract: yes_ask for yes, no_ask for no." }
+                contract_price_cents: { type: integer, description: "The same price in cents, for speaking." }
                 execution: { const: none, description: "Always none. A preview executes nothing and captures nothing." }
     error_result:
       description: "Returned when the action is not one of the three values or the voice session is no longer current. It is not the backend error shape."
       example: { simulated: true, ok: false, error: "Chart action unavailable" }
     fixture:
-      note: "SIMULATED. Fabricated series, not Gemini data. Values do not move."
+      note: "SIMULATED. Fabricated data, not Gemini data. Values do not move."
       symbol: "BTC/USD"
+      underlying_unit: "USD per bitcoin"
       points:
         - { time_utc: "14:00", price_usd: 97320 }
         - { time_utc: "14:01", price_usd: 97382 }
@@ -1195,12 +1248,26 @@ x-browser-tools:
       change_usd: 135
       change_percent: 0.14
       trend: up
+      contract:
+        venue: gemini_prediction
+        instrument: BTC-150K-2026
+        title: "Will Bitcoin trade above 150,000 dollars before January 1, 2027?"
+        closes_at: "2026-12-31T23:59:00Z"
+        yes_bid: 0.17
+        yes_ask: 0.18
+        no_bid: 0.82
+        no_ask: 0.83
+        price_unit: "USD per contract"
+      previews:
+        "yes": { venue: gemini_prediction, instrument: BTC-150K-2026, side: "yes", contract_price: 0.18, contract_price_cents: 18, execution: none }
+        "no": { venue: gemini_prediction, instrument: BTC-150K-2026, side: "no", contract_price: 0.83, contract_price_cents: 83, execution: none }
 
 x-simulated-catalog:
   note: >
     SIMULATED. Invented fixture data for Phase 1. These are not Gemini markets, prices or books and
     must never be presented as live. Query handlers answer only from this catalog. Prices do not
     move; as_of is the backend clock at response time.
+  # gemini_spot is read-only analytical context. No order, cancel, status or preview can refer to it.
   gemini_spot:
     - instrument: BTCUSD
       title: Bitcoin / US Dollar
@@ -1346,10 +1413,10 @@ x-simulated-catalog:
           - { price: 0.34, size: 850 }
 
 x-revision:
-  version: 1.2.0
-  supersedes: "1.1.0 (commit 6582824), which superseded 1.0.0 (commit 856a0e4)"
-  history: "Changes A to D were made in 1.1.0. Changes E to G were made in 1.2.0."
-  compatibility: "No operation, tool, parameter, response field or intent field was added or removed. A 1.0.0 client works unchanged. The backend changes behavior in the cases below. The documented responses of get_order_status and search_markets gain 422 (utterance_mismatch when the session has no user speech)."
+  version: 2.0.0
+  supersedes: "1.2.0 (commit 05cdad5), which superseded 1.1.0 (commit 6582824) and 1.0.0 (commit 856a0e4)"
+  history: "Changes A to D were made in 1.1.0, E to G in 1.2.0, H to J in 2.0.0. Where an earlier entry mentions spot orders or buy and sell previews, H to J replace it."
+  compatibility: "2.0.0 is breaking. The nine operations, the five backend tool names and the intent field list are unchanged, but the three order tools and POST /intents no longer accept venue gemini_spot or side buy and sell, and the chart tool's actions and preview fields changed. Earlier revisions added no breaking change."
   changes:
     - id: A
       title: "Confirmation is the whole trailing run of user entries"
@@ -1379,3 +1446,15 @@ x-revision:
       title: "Conversational scope"
       detail: "The agent is a friendly conversational market demo. The fixed off-topic sentence of earlier evals is retired; off-topic and injection turns are declined in natural words. Confirmation enforcement for captured intents, the readback templates and the capture sentence are unchanged. This was never an API rule, so only contracts/tools.json wording, the prompt and the evals change."
       backend_behavior_change: "None."
+    - id: H
+      title: "Orders are prediction contracts only"
+      detail: "New x-order-scope. capture_order_intent, capture_cancel_intent, get_order_status and POST /intents take venue gemini_prediction only (new OrderVenue schema), side yes or no, whole-contract quantity and a 0.01 to 0.99 limit price. Spot readback templates, spot normalization rules and the venue question for cancels are removed. contracts/intent.schema.json requires venue gemini_prediction for place_order, cancel_order and order_status."
+      backend_behavior_change: "An order, cancel or status request with venue gemini_spot, or side buy or sell, is 400 invalid_parameters. A cancel by spoken reference with an instrument outside the prediction catalog is 422 unknown_instrument. Legacy spot order intents are hidden from GET /intents and from status and cancel resolution."
+    - id: I
+      title: "Spot is read-only context"
+      detail: "search_markets and get_orderbook keep gemini_spot unchanged. The spot catalog is unchanged. x-order-scope names the two kinds of price, underlying dollars per coin and outcome dollars per contract, and forbids mixing them."
+      backend_behavior_change: "None for search_markets and get_orderbook."
+    - id: J
+      title: "Chart tool previews a prediction contract"
+      detail: "explore_demo_chart actions are explore, yes and no. The result keeps the underlying BTC/USD series, adds underlying_unit and a contract object for the catalog contract BTC-150K-2026, and the preview becomes venue, instrument, side yes or no, contract_price, contract_price_cents and execution none. preview.price_usd and the buy and sell actions are removed."
+      backend_behavior_change: "None. The tool is browser-only."

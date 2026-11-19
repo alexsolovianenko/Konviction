@@ -1,14 +1,15 @@
 {
-  "contract_version": "1.2.0",
+  "contract_version": "2.0.0",
   "phase": 1,
-  "description": "Agent tools of the Gemini browser voice demo. No tool executes, routes or cancels anything on Gemini, and every answer is SIMULATED. `tools` holds exactly the five backend tools: each is registered on the ElevenLabs agent as a client tool and implemented in the browser as a thin wrapper that forwards to the backend handler POST /tools/{name} (contracts/api.yaml). `browser_tools` holds tools that run entirely in the browser and never reach the backend. Reading simulated data or opening a buy or sell preview cannot execute an order; any future Gemini access stays on the server (api.yaml x-execution-boundary).",
+  "description": "Agent tools of the Gemini browser voice demo. Orders are prediction contracts only: capture_order_intent, capture_cancel_intent and get_order_status work on Gemini prediction contracts and nothing else. Gemini spot is read-only analytical context for search_markets, get_orderbook and the chart. No tool executes, routes or cancels anything on Gemini, and every answer is SIMULATED. `tools` holds exactly the five backend tools: each is registered on the ElevenLabs agent as a client tool and implemented in the browser as a thin wrapper that forwards to the backend handler POST /tools/{name} (contracts/api.yaml). `browser_tools` holds tools that run entirely in the browser and never reach the backend. Reading simulated data or opening a yes or no preview cannot execute an order; any future Gemini access stays on the server (api.yaml x-execution-boundary).",
   "conventions": {
     "llm_parameters": "The `parameters` object of each tool is everything the model supplies. Types are plain (no null unions). An optional parameter that is unknown is omitted; the wrapper sends it to the backend as null.",
     "wrapper_envelope": "The browser wrapper, never the model, adds session_id, last_transcript_seq and the Idempotency-Key header. Before forwarding, the wrapper flushes every pending transcript entry with POST /transcripts so the backend can check the readback and the spoken yes.",
     "wrapper_return": "The wrapper returns the backend JSON body to the model unchanged, serialized as a string, for success and for errors alike. On a network failure or timeout it retries once with the same Idempotency-Key, then returns {\"ok\":false,\"simulated\":true,\"error\":{\"code\":\"backend_unavailable\",\"message\":\"The capture service did not respond.\",\"agent_hint\":\"Say you could not reach the service and ask the user to try again. Do not say anything was prepared.\"}}.",
     "utterance": "Every tool takes `utterance`: the user's own words that stated this request, copied verbatim from the conversation as one unbroken stretch of user turns in spoken order, joined with single spaces when the request spanned several user turns. No paraphrase, no corrections, no agent words, no skipped user turn in the middle (api.yaml x-utterance-check requires a contiguous substring of the user transcript).",
+    "prices": "Two kinds of price exist and are never mixed. Underlying prices are US dollars per coin (chart fields ending in _usd, spot bids, asks and last prices). Outcome prices are US dollars per contract from 0.01 to 0.99, spoken in cents (yes_bid, yes_ask, no_bid, no_ask, prediction book levels, limit_price, contract_price). A limit price is always an outcome price.",
     "identifiers": "Tool results contain identifiers (intent.id, intent.session_id, intent_id, query_intent_id). They are not credentials. The agent passes an intent_id back as order_id when needed and never speaks any of them. The session token never appears in a tool parameter or result.",
-    "revision": "1.2.0 adds browser_tools and the execution boundary wording. The five backend tools, their parameters and their response fields are unchanged since 1.0.0. See x-revision in contracts/api.yaml.",
+    "revision": "2.0.0 is breaking: the three order tools take venue gemini_prediction only and side yes or no, and explore_demo_chart takes explore, yes or no and previews a prediction contract. Tool names and the five-tool backend set are unchanged. See x-revision and x-order-scope in contracts/api.yaml.",
     "simulated": "Every response carries simulated: true. Market and status data come from the fixed simulated catalog in contracts/api.yaml (x-simulated-catalog), never from Gemini.",
     "error_shape": {
       "ok": false,
@@ -28,7 +29,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/capture_order_intent",
       "writes_intent": "place_order",
-      "description": "Record a fully specified Gemini limit order for later approval. Captures only; nothing is sent to Gemini. Call this only when the previous agent turn was the exact readback of these terms ending with 'Say yes to confirm.' and everything the user said after it was an explicit spoken yes with no question, correction or negation. Never call it with a guessed instrument, quantity or price.",
+      "description": "Record a fully specified limit order for a Gemini prediction contract for later approval. Prediction contracts only: a spot pair such as BTCUSD cannot be ordered. Captures only; nothing is sent to Gemini. Call this only when the previous agent turn was the exact readback of these terms ending with 'Say yes to confirm.' and everything the user said after it was an explicit spoken yes with no question, correction or negation. Never call it with a guessed instrument, quantity or price.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -36,28 +37,29 @@
         "properties": {
           "venue": {
             "type": "string",
-            "enum": ["gemini_prediction", "gemini_spot"],
-            "description": "gemini_spot for crypto pairs, gemini_prediction for event contracts."
+            "enum": ["gemini_prediction"],
+            "description": "Always gemini_prediction. Orders are prediction contracts only."
           },
           "instrument": {
             "type": "string",
             "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$",
-            "description": "Exact instrument string returned by search_markets or get_orderbook earlier in this conversation, for example BTCUSD or FED-CUT-DEC26."
+            "description": "Exact prediction contract instrument returned by search_markets, get_orderbook or the chart tool's contract earlier in this conversation, for example FED-CUT-DEC26 or BTC-150K-2026. Never a spot pair."
           },
           "side": {
             "type": "string",
-            "enum": ["buy", "sell", "yes", "no"],
-            "description": "gemini_spot: buy or sell. gemini_prediction: yes or no, meaning buy contracts of that outcome."
+            "enum": ["yes", "no"],
+            "description": "yes or no, meaning buy contracts of that outcome. buy and sell are not sides."
           },
           "quantity": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "description": "The quantity the user stated. gemini_spot: base-asset units, up to 8 decimals. gemini_prediction: whole contracts."
+            "type": "integer",
+            "minimum": 1,
+            "description": "The whole number of contracts the user stated."
           },
           "limit_price": {
             "type": "number",
-            "exclusiveMinimum": 0,
-            "description": "The limit price the user stated, normalized to US dollars. gemini_spot: dollars per unit, up to 2 decimals. gemini_prediction: dollars per contract, 0.01 to 0.99 (62 cents is 0.62)."
+            "minimum": 0.01,
+            "maximum": 0.99,
+            "description": "The limit price the user stated, in US dollars per contract, 0.01 to 0.99 (62 cents is 0.62). Never a price of the underlying asset."
           },
           "confirmed_by_user": {
             "type": "boolean",
@@ -73,10 +75,10 @@
       },
       "validation": [
         "Parameters match the schema above, else invalid_parameters.",
-        "instrument exists in the simulated catalog for the given venue, else unknown_instrument.",
-        "gemini_spot requires side buy or sell; gemini_prediction requires side yes or no, else invalid_side_for_venue.",
-        "gemini_spot quantity has at most 8 decimals; gemini_prediction quantity is an integer of at least 1, else invalid_quantity.",
-        "gemini_spot limit_price has at most 2 decimals; gemini_prediction limit_price is 0.01 to 0.99 in 0.01 steps, else invalid_price.",
+        "instrument exists in the gemini_prediction catalog, else unknown_instrument. A spot pair is unknown_instrument.",
+        "venue is gemini_prediction and side is yes or no, else invalid_parameters.",
+        "quantity is an integer of at least 1, else invalid_quantity (or invalid_parameters when the schema already rejects it).",
+        "limit_price is 0.01 to 0.99 in 0.01 steps, else invalid_price (or invalid_parameters when the schema already rejects it).",
         "confirmed_by_user is true, else confirmation_required.",
         "Transcript confirmation enforcement passes (api.yaml x-confirmation-enforcement): confirmation_missing, readback_missing, readback_interrupted, readback_mismatch, confirmation_already_used.",
         "utterance is found in the user's transcript (api.yaml x-utterance-check), else utterance_mismatch."
@@ -121,7 +123,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/capture_cancel_intent",
       "writes_intent": "cancel_order",
-      "description": "Record a request to cancel one specific order for later approval. Captures only; nothing is cancelled on Gemini. Call this only when the previous agent turn was the exact cancel readback ending with 'Say yes to confirm.' and everything the user said after it was an explicit spoken yes with no question, correction or negation. order_id must be an intent_id returned by get_order_status or a capture tool in this conversation, or a reference the user spoke aloud. Never invent or complete an order ID.",
+      "description": "Record a request to cancel one specific prediction contract order for later approval. Captures only; nothing is cancelled on Gemini. Call this only when the previous agent turn was the exact cancel readback ending with 'Say yes to confirm.' and everything the user said after it was an explicit spoken yes with no question, correction or negation. order_id must be an intent_id returned by get_order_status or a capture tool in this conversation, or a reference the user spoke aloud. Never invent or complete an order ID.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -129,8 +131,8 @@
         "properties": {
           "venue": {
             "type": "string",
-            "enum": ["gemini_prediction", "gemini_spot"],
-            "description": "Venue of the order being cancelled."
+            "enum": ["gemini_prediction"],
+            "description": "Always gemini_prediction. Only prediction contract orders can be cancelled."
           },
           "order_id": {
             "type": "string",
@@ -141,7 +143,7 @@
           "instrument": {
             "type": "string",
             "maxLength": 64,
-            "description": "Instrument of the order when known. Omit when the user identified the order by reference only."
+            "description": "Prediction contract instrument of the order when known. Omit when the user identified the order by reference only. Never a spot pair."
           },
           "confirmed_by_user": {
             "type": "boolean",
@@ -158,9 +160,9 @@
       "validation": [
         "Parameters match the schema above, else invalid_parameters.",
         "order_id is normalized (upper case, alphanumerics only) unless it is the id of an intent in this session.",
-        "If order_id is the id of a place_order intent of this session: venue must equal that intent's venue (venue_mismatch); instrument, when given, must equal that intent's instrument (instrument_mismatch) and is filled from it when omitted; a second cancel for the same target is rejected with cancel_already_captured.",
+        "If order_id is the id of a place_order intent of this session: instrument, when given, must equal that intent's instrument (instrument_mismatch) and is filled from it when omitted; a second cancel for the same target is rejected with cancel_already_captured. venue is always gemini_prediction; a legacy target on another venue is venue_mismatch.",
         "If order_id is the id of an intent that is not a place_order, the error is order_not_cancellable.",
-        "Otherwise order_id must appear, after reference normalization, in the user's own transcript entries of this session, else order_id_not_user_supplied. The reference is recorded as stated and is not checked against Gemini. A reference that normalizes to the empty string is order_id_not_user_supplied.",
+        "Otherwise order_id must appear, after reference normalization, in the user's own transcript entries of this session, else order_id_not_user_supplied. The reference is recorded as stated and is not checked against Gemini. A reference that normalizes to the empty string is order_id_not_user_supplied. When instrument is given with a spoken reference it must be in the gemini_prediction catalog, else unknown_instrument.",
         "confirmed_by_user is true, else confirmation_required.",
         "Transcript confirmation enforcement passes (api.yaml x-confirmation-enforcement).",
         "utterance is found in the user's transcript, else utterance_mismatch."
@@ -203,7 +205,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/get_order_status",
       "writes_intent": "order_status",
-      "description": "SIMULATED. Look up what has been captured in this session for one venue: prepared orders and prepared cancels. It reports capture status only, never exchange status, because nothing is sent to Gemini. Use it for status questions and to find the target of a cancel described in words. Needs no confirmation.",
+      "description": "SIMULATED. Look up what has been captured in this session: prepared prediction contract orders and prepared cancels. It reports capture status only, never exchange status, because nothing is sent to Gemini. Use it for status questions and to find the target of a cancel described in words. Needs no confirmation.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -211,8 +213,8 @@
         "properties": {
           "venue": {
             "type": "string",
-            "enum": ["gemini_prediction", "gemini_spot"],
-            "description": "Venue to look in."
+            "enum": ["gemini_prediction"],
+            "description": "Always gemini_prediction. Only prediction contract orders are prepared, so there is nothing to look up on spot."
           },
           "order_id": {
             "type": "string",
@@ -223,11 +225,11 @@
           "instrument": {
             "type": "string",
             "maxLength": 64,
-            "description": "Filter by exact instrument, for example BTCUSD. Omit for any."
+            "description": "Filter by exact prediction contract instrument, for example FED-CUT-DEC26. Omit for any."
           },
           "side": {
             "type": "string",
-            "enum": ["buy", "sell", "yes", "no"],
+            "enum": ["yes", "no"],
             "description": "Filter by side. Omit for any."
           },
           "utterance": {
@@ -241,7 +243,7 @@
       "validation": [
         "Parameters match the schema above, else invalid_parameters.",
         "order_id that is not the id of an intent in this session and normalizes to the empty string (upper case, alphanumerics only) is invalid_parameters.",
-        "Only place_order intents of the calling session and the given venue are searched. Filters combine with AND. order_id matches an intent id exactly, or, after reference normalization, never matches a prepared order (user references are not known to the capture store).",
+        "Only place_order intents of the calling session on gemini_prediction are searched. Filters combine with AND. An instrument filter outside the prediction catalog matches nothing and is not an error. order_id matches an intent id exactly, or, after reference normalization, never matches a prepared order (user references are not known to the capture store).",
         "utterance that is not found in the user's transcript is replaced by the latest non-empty user transcript entry, cut to 2000 characters; the call does not fail. If the session has no user speech at all the call is refused with utterance_mismatch and nothing is stored (api.yaml x-audit-records)."
       ],
       "response": {
@@ -267,7 +269,7 @@
                 "intent_id": { "type": "string", "format": "uuid" },
                 "venue": { "enum": ["gemini_prediction", "gemini_spot"] },
                 "instrument": { "type": "string" },
-                "side": { "enum": ["buy", "sell", "yes", "no"] },
+                "side": { "enum": ["yes", "no"] },
                 "quantity": { "type": "number" },
                 "limit_price": { "type": "number" },
                 "capture_status": { "const": "captured" },
@@ -295,7 +297,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/search_markets",
       "writes_intent": "market_query",
-      "description": "SIMULATED. Find Gemini prediction contracts or spot pairs by words the user said and return their exact instrument strings with simulated top-of-book prices. Use it to resolve any instrument before reading back an order, and to answer what markets exist or what a price is.",
+      "description": "SIMULATED. Find Gemini prediction contracts or spot pairs by words the user said and return their exact instrument strings with simulated top-of-book prices. On gemini_prediction, use it to resolve the contract before reading back an order and to answer what contracts exist or what a yes or no price is. On gemini_spot it is read-only context: prices in dollars per coin that can be looked at and never ordered.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -304,7 +306,7 @@
           "venue": {
             "type": "string",
             "enum": ["gemini_prediction", "gemini_spot"],
-            "description": "Venue to search."
+            "description": "gemini_prediction for contracts (orderable). gemini_spot for read-only context on a coin's price."
           },
           "query": {
             "type": "string",
@@ -393,7 +395,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/get_orderbook",
       "writes_intent": "market_query",
-      "description": "SIMULATED. Return the simulated order book for one exact instrument: bids, asks, best bid, best ask and spread. For gemini_prediction the book is for the YES contract in dollars per contract. Use it when the user asks for the book, depth, bid, ask or spread of a specific market.",
+      "description": "SIMULATED. Return the simulated order book for one exact instrument: bids, asks, best bid, best ask and spread. For gemini_prediction the book is for the YES contract in dollars per contract. For gemini_spot it is read-only context in dollars per coin and cannot be ordered. Use it when the user asks for the book, depth, bid, ask or spread of a specific market.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -402,7 +404,7 @@
           "venue": {
             "type": "string",
             "enum": ["gemini_prediction", "gemini_spot"],
-            "description": "Venue of the instrument."
+            "description": "Venue of the instrument. gemini_spot is read-only context."
           },
           "instrument": {
             "type": "string",
@@ -485,7 +487,7 @@
       "response_timeout_secs": 10,
       "handler": null,
       "writes_intent": null,
-      "description": "SIMULATED. Show and step through the dashboard's five-minute BTC/USD demo chart, or show a buy or sell preview in the sidebar. Runs in the browser only: it sends nothing to any server, saves nothing and can never place or prepare an order. A preview needs no confirmation. Use action explore to show or refresh the chart and get its simulated statistics, and buy or sell to show a preview of that side.",
+      "description": "SIMULATED. Show and step through the dashboard's five-minute BTC/USD chart as read-only context, or show in the sidebar a preview of buying yes or no contracts of the chart's prediction contract. Runs in the browser only: it sends nothing to any server, saves nothing and can never place or prepare an order. A preview needs no confirmation. Use action explore to show or refresh the chart and get its simulated figures, and yes or no to preview that outcome. Chart prices are dollars per bitcoin; contract prices are cents per contract.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -497,17 +499,18 @@
             "type": "string",
             "enum": [
               "explore",
-              "buy",
-              "sell"
+              "yes",
+              "no"
             ],
-            "description": "explore shows or refreshes the chart and returns its simulated statistics. buy or sell shows a simulated preview of that side in the sidebar."
+            "description": "explore shows or refreshes the BTC/USD chart and returns its simulated figures and the prediction contract. yes or no shows a simulated preview of buying that outcome of the contract at its ask."
           }
         }
       },
       "validation": [
         "Runs in the browser. There is no backend handler, no session_id, no Idempotency-Key, no utterance and no transcript entry.",
-        "action must be explore, buy or sell; anything else returns the error result.",
-        "No confirmation is required or checked: nothing is captured."
+        "action must be explore, yes or no; anything else, including buy and sell, returns the error result.",
+        "No confirmation is required or checked: nothing is captured.",
+        "The preview is always for the prediction contract in the result's contract field. Spot trades cannot be previewed."
       ],
       "response": {
         "$ref": "api.yaml#/x-browser-tools/explore_demo_chart/result"
