@@ -1,16 +1,21 @@
 import { useRef, useState } from 'react';
 import type { MarketContract, MarketEvent } from '../components/console/types';
 
-type Result = { ok: boolean; error?: string; events?: MarketEvent[]; title?: string; contract?: MarketContract; as_of?: string };
+export type MarketResult = { ok: boolean; error?: string; events?: MarketEvent[]; title?: string; contract?: MarketContract; as_of?: string };
+export type Lookup = { id: number; name: string; params: Record<string, unknown>; result: MarketResult; received: string };
+export type MarketTools = ReturnType<typeof useMarketTools>;
 export function useMarketTools() {
-  const [result, setResult] = useState<Result>();
+  const [result, setResult] = useState<MarketResult>();
   const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<{ id: number; name: string; params: Record<string, unknown>; result: Result; received: string }[]>([]);
+  // The lookup currently in flight, so the status bubble can name what is actually being fetched.
+  const [pending, setPending] = useState<{ name: string; params: Record<string, unknown> } | null>(null);
+  const [history, setHistory] = useState<Lookup[]>([]);
   const sequence = useRef(0);
   async function run(name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) {
     const id = ++sequence.current;
     setBusy(true);
-    let value: Result;
+    setPending({ name, params });
+    let value: MarketResult;
     try {
       const keys = name === 'search_markets' ? ['query'] : ['event_ticker', 'contract_symbol'];
       if (Object.keys(params).length !== keys.length || keys.some(k => typeof params[k] !== 'string')) {
@@ -25,8 +30,8 @@ export function useMarketTools() {
     }
     const entry = { id, name, params, result: value, received: new Date().toISOString() };
     setHistory(previous => [entry, ...previous].sort((a, b) => b.id - a.id).slice(0, 20));
-    if (id === sequence.current) { setResult(value); setBusy(false); }
+    if (id === sequence.current) { setResult(value); setBusy(false); setPending(null); }
     return value;
   }
-  return { run, result, busy, history };
+  return { run, result, busy, pending, history };
 }
