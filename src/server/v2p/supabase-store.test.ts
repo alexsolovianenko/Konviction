@@ -25,7 +25,7 @@ vi.mock("./db", () => ({
 vi.mock("./receipts", () => ({ createReceipt: vi.fn() }));
 
 import { supabaseStore } from "./browser-trading";
-import { dailyCapError, orderCapError, supabaseLedger } from "./ledger";
+import { supabaseLedger } from "./ledger";
 
 beforeEach(() => {
   for (const k of Object.keys(queue)) delete queue[k];
@@ -69,16 +69,4 @@ it.each(["OPEN", "PENDING_UNKNOWN"])("ledger sums filled buys and reserves %s an
 it("ledger fails closed when it cannot be read", async () => {
   queue["orders"] = [{ data: null, error: { message: "down" } }];
   expect(await supabaseLedger.committedUsd()).toBeNull();
-});
-
-it("cap helpers use the configured limits", () => {
-  vi.stubEnv("MAX_DAILY_USD", "50");
-  vi.stubEnv("MAX_LIMIT_PRICE", "0.95");
-  vi.stubEnv("MAX_ORDER_USD", "25");
-  expect(dailyCapError(49.5, 0.4)).toBeNull();
-  expect(dailyCapError(49.5, 0.6)).toMatch(/Daily sandbox limit/);
-  expect(orderCapError({ quantity: 1, limit_price: 0.31, notional_usd: 0.31, est_fee_usd: 0.02 })).toBeNull();
-  expect(orderCapError({ quantity: 1, limit_price: 0.99, notional_usd: 0.99, est_fee_usd: 0.01 })).toMatch(/Limit price/);
-  expect(orderCapError({ quantity: 101, limit_price: 0.1, notional_usd: 10.1, est_fee_usd: 0.7 })).toMatch(/contracts/);
-  vi.unstubAllEnvs();
 });

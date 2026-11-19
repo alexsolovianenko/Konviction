@@ -73,7 +73,8 @@ export function spokenProposal(terms) {
   const market = marketName(terms);
   const cap = count(cents) + (cents === 1 ? ' cent' : ' cents');
   const cost = money(maximum) + ' max including about ' + money(terms.est_fee_usd) + ' in fees.';
-  const odds = terms.order_mode === 'market' ? ', about ' + count(cents) + ' percent market-implied.' : '.';
+  const odds = terms.order_mode === 'market' && terms.quote_price != null ? ', about ' + count(Number((Number(terms.quote_price) * 100).toFixed(3))) + ' percent market-implied.' : '.';
+  const payout = /^GEMI-CMB-/i.test(terms.instrument_symbol ?? '') ? ' Maximum payout if every leg wins: ' + money(terms.quantity) + '.' : '';
   const choice = terms.order_mode === 'market' ? ' Buy now or set a price?' : ' Place this limit order?';
-  return size + terms.outcome.toUpperCase() + ' on ' + market + '. Up to ' + cap + ' each' + odds + ' ' + cost + choice;
+  return size + terms.outcome.toUpperCase() + ' on ' + market + '. Up to ' + cap + ' each' + odds + ' ' + cost + payout + choice;
 }

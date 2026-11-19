@@ -28,23 +28,8 @@ export class TradingRepository {
         approval_day TEXT, result TEXT, UNIQUE(owner, request_id)
       );
       CREATE INDEX IF NOT EXISTS browser_risk ON browser_proposals(status,approval_day);
-      CREATE TABLE IF NOT EXISTS browser_pin_guard (id INTEGER PRIMARY KEY, failures INTEGER NOT NULL, locked_until INTEGER NOT NULL);
-      INSERT OR IGNORE INTO browser_pin_guard VALUES (1, 0, 0);
       CREATE TABLE IF NOT EXISTS browser_trade_audit (proposal TEXT, at TEXT, kind TEXT, detail TEXT);
     `);
-  }
-  checkPin(matches, now = Date.now()) {
-    const accepted = this.repository.transaction(() => {
-      const row = this.db.prepare("SELECT * FROM browser_pin_guard WHERE id=1").get();
-      if (now < row.locked_until)
-        throw new TradeError("LOCKED", "Too many attempts. Try again in 15 minutes.", 429);
-      const failures = matches ? 0 : row.failures + 1;
-      this.db
-        .prepare("UPDATE browser_pin_guard SET failures=?,locked_until=? WHERE id=1")
-        .run(failures >= 3 ? 0 : failures, failures >= 3 ? now + 900000 : 0);
-      return matches;
-    });
-    if (!accepted) throw new TradeError("WRONG_PIN", "Incorrect PIN.", 403);
   }
   replay(owner, key, fingerprint) {
     const row = this.db
@@ -69,26 +54,10 @@ export class TradingRepository {
     this.db.prepare(`UPDATE browser_proposals SET status='DONE', result=?, reserved_cents=?, approval_day=?
       WHERE id=? AND status='OPEN'`).run(JSON.stringify(result), spentCents, new Date().toISOString().slice(0, 10), id);
   }
-  reservedToday(day) {
-    return this.db
-      .prepare(
-        "SELECT COALESCE(SUM(reserved_cents),0) AS total FROM browser_proposals WHERE approval_day=? OR status IN ('EXECUTING','UNKNOWN','OPEN')",
-      )
-      .get(day).total;
-  }
-  propose(owner, key, fingerprint, terms, maxDaily, onInsert) {
+  propose(owner, key, fingerprint, terms, onInsert) {
     return this.repository.transaction(() => {
       const replay = this.replay(owner, key, fingerprint);
       if (replay) return replay;
-      const cost = terms.side === "sell" ? 0 : Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
-      if (terms.side !== "sell" &&
-        this.reservedToday(new Date().toISOString().slice(0, 10)) + cost >
-        Math.round(maxDaily * 100)
-      )
-        throw new TradeError(
-          "CAP_EXCEEDED",
-          "This proposal exceeds the remaining daily sandbox limit.",
-        );
       const id = randomUUID();
       this.db
         .prepare(
@@ -107,7 +76,7 @@ export class TradingRepository {
   dismiss(owner, id) {
     this.db.prepare("UPDATE browser_proposals SET status='SUPERSEDED' WHERE owner=? AND id=? AND status='PROPOSED'").run(owner, id);
   }
-  claim(owner, id, limits, authorize) {
+  claim(owner, id, authorize) {
     return this.repository.transaction(() => {
       const row = this.db
         .prepare("SELECT * FROM browser_proposals WHERE owner=? AND id=?")
@@ -129,16 +98,6 @@ export class TradingRepository {
       requirePendingProposal(row, terms);
       const day = new Date().toISOString().slice(0, 10);
       const cost = terms.side === "sell" ? 0 : Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
-      if (terms.side !== "sell" && (
-        terms.quantity > limits.maxQuantity ||
-        terms.limit_price > limits.maxLimitPrice ||
-        cost > Math.round(limits.maxOrderUsd * 100) ||
-        this.reservedToday(day) + cost > Math.round(limits.maxDailyUsd * 100))
-      )
-        throw new TradeError(
-          "CAP_EXCEEDED",
-          "The current order or daily sandbox limit would be exceeded.",
-        );
       this.db
         .prepare(
           "UPDATE browser_proposals SET status='EXECUTING', approval_day=?, reserved_cents=? WHERE id=?",

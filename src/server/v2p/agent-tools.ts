@@ -5,8 +5,7 @@
 // caller / conversation_id come from ElevenLabs dynamic variables, never from the model.
 //
 // There is deliberately NO execute tool: the language model can never submit an order.
-// Orders are submitted only by POST /api/public/browser-trading/approve, which needs a verified
-// browser voice session plus a PIN typed on screen.
+// Hosted orders use a verified voice session and a single-use spoken confirmation.
 
 import {
   contractTradable, getUsdAvailable, gPrivate, listActiveEvents, quoteFor,
@@ -15,7 +14,6 @@ import {
 import { fiveMinuteDiscovery, normalizeMarketQuery } from "./prediction-discovery";
 import { prepareTrade as prepareQuotedTrade } from "./trade-engine";
 import { db, logActivity } from "./db";
-import { dailyCapError, supabaseLedger } from "./ledger";
 import {
   BUY_CUTOFF_MS, corsHeaders, json, localHour, LIMITS, num, randomCode, speakTime, toolAuthorized,
 } from "./util";
@@ -177,14 +175,6 @@ async function prepareTrade(b: Body) {
   const caller = callerOf(b);
   return prepareQuotedTrade(b, async ({ readback: _displayReadback, budget_usd: _browserBudget, ...terms }) => {
     const { side, outcome, quantity, limit_price: limit, notional_usd: notional, est_fee_usd: fee, instrument_symbol: symbol, quote_price: quotePrice } = terms;
-    if (side === "buy") {
-      // Same account-wide ledger as browser approval (filled + in-flight + unknown reservations).
-      const committed = await supabaseLedger.committedUsd();
-      if (committed === null) return err("RISK_UNAVAILABLE", "Could not verify the daily sandbox limit.");
-      const capErr = dailyCapError(committed, notional + fee);
-      if (capErr) return err("CAP_EXCEEDED", capErr);
-    }
-
     // Supersede older proposals for this caller.
     await db.from("intents").update({ status: "SUPERSEDED", updated_at: new Date().toISOString() })
       .eq("caller", caller).eq("status", "PROPOSED");

@@ -143,22 +143,22 @@ it("releases the cancelled share of the SQLite reservation for a separately appr
   expect(gPrivate).toHaveBeenCalledTimes(1);
 });
 
-it("atomically reserves aggregate daily exposure, submits at most once and replays completed results", async () => {
+it("submits each independently confirmed order once and replays completed results", async () => {
   vi.stubEnv("MAX_DAILY_USD", "1.20");
   const t = token(),
     u = token(),
     a = (await propose(t)).proposal.proposal_id,
     b = (await propose(u)).proposal.proposal_id;
-  const [first, duplicate, overCap] = await Promise.allSettled([
+  const [first, duplicate, independent] = await Promise.allSettled([
     approve(t, a),
     approve(t, a),
     approve(u, b),
   ]);
   expect(first.status).toBe("fulfilled");
   expect(duplicate).toMatchObject({ status: "rejected", reason: { code: "IN_PROGRESS" } });
-  expect(overCap).toMatchObject({ status: "rejected", reason: { code: "CAP_EXCEEDED" } });
+  expect(independent.status).toBe("fulfilled");
   expect(await approve(t, a)).toMatchObject({ ok: true, outcome_summary: "FILLED" });
-  expect(gPrivate).toHaveBeenCalledTimes(1);
+  expect(gPrivate).toHaveBeenCalledTimes(2);
   expect(gPrivate).toHaveBeenCalledWith(
     "/v1/prediction-markets/order",
     expect.objectContaining({
@@ -193,7 +193,7 @@ it.each(["0", "1"])("rests an explicit buy limit without an ask, with %s filled 
   });
 });
 
-it("reconciles a cancelled resting order before refusing a new proposal against the daily cap", async () => {
+it("reconciles a cancelled resting order from account history while new proposals remain available", async () => {
   vi.stubEnv("MAX_DAILY_USD", "1.30");
   const t = token();
   const id = (await propose(t)).proposal.proposal_id;
@@ -201,11 +201,12 @@ it("reconciles a cancelled resting order before refusing a new proposal against 
     ok: true, status: 201, text: "", data: { orderId: "resting", status: "open", filledQuantity: "0", remainingQuantity: "2" },
   });
   expect(await approve(t, id)).toMatchObject({ outcome_summary: "OPEN" });
-  vi.mocked(gPrivate).mockResolvedValueOnce({
-    ok: true, status: 200, text: "", data: { orders: [{ orderId: "resting", symbol: input.contract_symbol,
-      status: "cancelled", filledQuantity: "1", remainingQuantity: "1", avgExecutionPrice: ".39" }] },
-  });
+  vi.mocked(gPrivate).mockImplementation(async path => ({
+    ok:true,status:200,text:"",data:path.endsWith("/history") ? {orders:[{orderId:"resting",symbol:input.contract_symbol,
+      status:"cancelled",filledQuantity:"1",remainingQuantity:"1",avgExecutionPrice:".39"}]} : {positions:[],orders:[]},
+  }));
   expect((await propose(t)).ok).toBe(true);
+  await run({path:"portfolio",method:"POST",body:{}});
   expect(repo.db.prepare("SELECT status,reserved_cents,approval_day FROM browser_proposals WHERE id=?").get(id))
     .toMatchObject({ status: "DONE", reserved_cents: 41, approval_day: new Date().toISOString().slice(0, 10) });
   expect(await approve(t, id)).toMatchObject({ outcome_summary: "PARTIAL", filled_quantity: 1 });
@@ -262,20 +263,6 @@ it("reads shared account fields without a PIN and distinguishes missing rows fro
   expect(a.history.error).toBeTruthy();
 });
 
-it("bounds a burst of independent account approvals at the configured dollar cap", async () => {
-  vi.stubEnv("MAX_DAILY_USD", "2");
-  const sessions = Array.from({ length: 30 }, token);
-  const proposals: { proposal: { proposal_id: string } }[] = await Promise.all(
-    sessions.map((t) => propose(t)),
-  );
-  const approvals = await Promise.allSettled(
-    proposals.map((p, i) => approve(sessions[i]!, p.proposal.proposal_id)),
-  );
-  expect(approvals.filter((a) => a.status === "fulfilled")).toHaveLength(2);
-  expect(approvals.filter((a) => a.status === "rejected")).toHaveLength(28);
-  expect(gPrivate).toHaveBeenCalledTimes(2);
-});
-
 it("keeps typed order submission disabled and accepts explicit speech with no configured PIN", async () => {
   const t = token(), { proposal } = await propose(t);
   await expect(run({ method:"POST", path:"approve", token:t, body:{proposal_id:proposal.proposal_id, pin} })).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -300,16 +287,8 @@ it("sizes a dollar budget in whole contracts including rounded fees and binds re
     await expect(propose(t, randomUUID(), { ...terms, budget_usd: invalid })).rejects.toMatchObject({ code: "BAD_INPUT" });
   }
   await expect(propose(t, randomUUID(), { ...input, budget_usd: 100 })).rejects.toMatchObject({ code: "BAD_INPUT" });
-  expect(await propose(t, randomUUID(), { ...terms, budget_usd: 0.4 })).toMatchObject({ ok: false, error: "CAP_EXCEEDED" });
+  expect(await propose(t, randomUUID(), { ...terms, budget_usd: 0.4 })).toMatchObject({ ok: false, error: "BUDGET_TOO_SMALL" });
 });
-
-async function paired() {
-  let cookie = "";
-  const host = "127.0.0.1:5173";
-  await run({ path: "pair", method: "POST", body: { pin }, host,
-    setDeviceCookie: (value: string) => { cookie = value; } });
-  return { host, deviceCookie: cookie };
-}
 
 it("accepts buy now after the local dollar quote, never for a waiting limit", async () => {
   const t = token();
@@ -363,6 +342,7 @@ it("opens a trusted device only with a fresh single-use local pairing code", asy
   let deviceCookie = "";
   const pair = (value:string) => run({ path:"pair", method:"POST", host, body:{pairing_token:value},
     setDeviceCookie:(value:string) => {deviceCookie=value;} });
+  await expect(run({ path:"pair", method:"POST", host, body:{pin} })).rejects.toMatchObject({code:"BAD_INPUT"});
   await expect(pair("bogus")).rejects.toMatchObject({code:"PAIRING_EXPIRED"});
   await expect(pair(code)).resolves.toMatchObject({voice_authorized:true});
   await expect(pair(code)).rejects.toMatchObject({code:"PAIRING_EXPIRED"});

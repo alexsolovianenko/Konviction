@@ -546,7 +546,7 @@ it('requires the caller’s entry and preserves their cap when preparing', async
   let body: unknown;
   f.fetchMock.mockImplementation(async (_path, init) => {
     body = JSON.parse(String(init.body));
-    return Response.json({ok:false, error:'CAP_EXCEEDED', message:'That amount is too small to buy even one contract at this price.'});
+    return Response.json({ok:false, error:'BUDGET_TOO_SMALL', message:'That amount is too small to buy even one contract at this price.'});
   });
   const terms = {event_ticker:'E', contract_symbol:'C', outcome:'no', budget_usd:0.10};
   expect(JSON.parse(await sdk.clientTools['prepare_sandbox_buy']!(terms))).toMatchObject({ok:false,error:'ENTRY_REQUIRED'});

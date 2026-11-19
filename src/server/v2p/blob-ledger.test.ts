@@ -21,7 +21,7 @@ const proposal = (caller: string) => ({
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
-it("claims at most one order across workers competing for the last available risk budget", async () => {
+it("claims independent sandbox orders across workers and prevents duplicate claims", async () => {
   vi.stubEnv("MAX_DAILY_USD", "30");
   const io = memoryBackend();
   const a = blobStore(io), b = blobStore(io);
@@ -29,11 +29,10 @@ it("claims at most one order across workers competing for the last available ris
   const ca = SESSION_PREFIX + "a", cb = SESSION_PREFIX + "b";
   const [first, second] = await Promise.all([a.insertIntent(proposal(ca)), b.insertIntent(proposal(cb))]);
   const attempts = await Promise.allSettled([a.claim(first, ca), b.claim(second, cb)]);
-  expect(attempts.filter(r => r.status === "fulfilled")).toHaveLength(1);
-  expect(attempts.filter(r => r.status === "rejected")).toHaveLength(1);
-  const winner = attempts[0]?.status === "fulfilled";
-  expect(await a.claim(winner ? first : second, winner ? ca : cb)).toBeNull();
-  expect(await b.committedUsd()).toBe(20.1);
+  expect(attempts.map(r => r.status)).toEqual(["fulfilled","fulfilled"]);
+  expect(await a.claim(first,ca)).toBeNull();
+  expect(await b.claim(second,cb)).toBeNull();
+  expect(await b.committedUsd()).toBe(40.2);
 });
 
 it.each(["OPEN", "PENDING_UNKNOWN"])("keeps %s and unsaved exchange results reserved across UTC rollover", async (summary) => {
@@ -53,12 +52,4 @@ it.each(["OPEN", "PENDING_UNKNOWN"])("keeps %s and unsaved exchange results rese
   clock.mockReturnValue(Date.now() + 3 * 86400000);
   await store.createSession("nextday");
   expect(await store.committedUsd()).toBe(40.2);
-});
-it("counts concurrent incorrect PINs and rejects approval after the lock", async () => {
-  const io = memoryBackend();
-  const store = blobStore(io);
-  await store.createSession("test");
-  const key = SESSION_PREFIX + "test";
-  await Promise.allSettled(Array.from({length:3}, () => store.verifyPinAttempt(key,false)));
-  await expect(store.verifyPinAttempt(key,true)).rejects.toMatchObject({code:"LOCKED"});
 });

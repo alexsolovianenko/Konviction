@@ -3,7 +3,7 @@
 // Committed today = filled buy notional + full reservations for orders whose outcome is not yet
 // known or final (PENDING_UNKNOWN or OPEN) + full reservations for intents currently EXECUTING.
 import { db } from "./db";
-import { LIMITS, round2, usd } from "./util";
+import { round2 } from "./util";
 
 export type Ledger = { committedUsd: (opts?: { excludeIntentId?: string }) => Promise<number | null> };
 
@@ -14,7 +14,7 @@ const startOfUtcDay = () => {
 };
 const cost = (r) => Number(r?.notional_usd ?? 0) + Number(r?.est_fee_usd ?? 0);
 
-/** Returns null when the ledger cannot be read; callers must then refuse (fail closed). */
+/** Returns null when historical exposure cannot be read. */
 export const supabaseLedger: Ledger = {
   async committedUsd({ excludeIntentId } = {}) {
     const [orders, executing] = await Promise.all([
@@ -40,18 +40,3 @@ export const supabaseLedger: Ledger = {
     return round2(total);
   },
 };
-
-/** Error message when adding `addUsd` would exceed the daily cap, null when it fits. */
-export function dailyCapError(committed: number, addUsd: number): string | null {
-  return committed + addUsd > LIMITS.maxDailyUsd + 1e-9
-    ? `Daily sandbox limit of ${usd(LIMITS.maxDailyUsd)} would be exceeded (${usd(committed)} already committed today).`
-    : null;
-}
-
-/** Per-order limits, re-checked at approval time against the stored proposal. */
-export function orderCapError(it: { quantity: number; limit_price: number; notional_usd: number; est_fee_usd: number }): string | null {
-  if (!(Number(it.quantity) >= 1) || Number(it.quantity) > LIMITS.maxQuantity) return `Limit is ${LIMITS.maxQuantity} contracts per order.`;
-  if (Number(it.limit_price) > LIMITS.maxLimitPrice + 1e-9) return `Limit price may not exceed ${LIMITS.maxLimitPrice}.`;
-  if (cost(it) > LIMITS.maxOrderUsd + 1e-9) return `Limit is ${usd(LIMITS.maxOrderUsd)} per order including fees.`;
-  return null;
-}

@@ -28,17 +28,13 @@ function envNum(name: string, fallback: number): number {
 
 // Port note: getters so env is read at request time, not module load.
 export const LIMITS = {
-  get maxOrderUsd() { return envNum("MAX_ORDER_USD", 25); },
-  get maxDailyUsd() { return envNum("MAX_DAILY_USD", 50); },
-  get maxLimitPrice() { return Math.min(0.99, envNum("MAX_LIMIT_PRICE", 0.99)); },
   minLimitPrice: 0.01,
-  get maxQuantity() { return envNum("MAX_QUANTITY", 100); },
+  maxLimitPrice: 0.99,
   get intentTtlSeconds() { return envNum("INTENT_TTL_SECONDS", 300); },
   takerRate: 0.07, // Gemini production taker schedule; sandbox fees unverified -> always labelled an estimate
   toJSON() {
     return {
-      maxOrderUsd: this.maxOrderUsd, maxDailyUsd: this.maxDailyUsd, maxLimitPrice: this.maxLimitPrice,
-      minLimitPrice: this.minLimitPrice, maxQuantity: this.maxQuantity, intentTtlSeconds: this.intentTtlSeconds,
+      minLimitPrice: this.minLimitPrice, maxLimitPrice: this.maxLimitPrice, intentTtlSeconds: this.intentTtlSeconds,
       takerRate: this.takerRate,
     };
   },

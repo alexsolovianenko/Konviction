@@ -11,7 +11,7 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); });
 it("loads exchange fills even when the journal is offline and open positions are empty", async () => {
   feed.mockReturnValue({ data: {
     account: { configured: true, usd_available: 10, terms_accepted: true, positions: [], positions_error: null },
-    limits: { maxOrderUsd: 25, maxDailyUsd: 50, maxLimitPrice: .95 },
+    limits: { minLimitPrice: .01, maxLimitPrice: .99 },
     history_available: false, activity: [], intents: [], orders: [], receipts: [],
   } });
   vi.mocked(tradingRequest).mockResolvedValueOnce({

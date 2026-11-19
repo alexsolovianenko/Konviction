@@ -23,7 +23,7 @@ import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
 import { getUsdAvailable, hasCredentials } from "./gemini";
 import { prepareTrade, executeTrade, remainderBuy } from "./trade-engine";
-import { dailyCapError, orderCapError, supabaseLedger } from "./ledger";
+import { supabaseLedger } from "./ledger";
 import {
   fetchSignedUrl, mintSessionToken, SESSION_PREFIX, SESSION_TTL_MS, sessionConfigured, verifySessionToken,
 } from "./browser-session";
@@ -40,11 +40,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SYMBOL = /^[A-Z0-9][A-Z0-9_.-]{0,99}$/i;
 const keysAre = (o, keys) => o && typeof o === "object" && !Array.isArray(o) &&
   Object.keys(o).length === keys.length && keys.every((k) => Object.hasOwn(o, k));
-
-export const PIN_LOCK_MS = 15 * 60_000;
-export const SESSION_PIN_ATTEMPTS = 3;
-export const GLOBAL_PIN_ATTEMPTS = 10;
-export const GLOBAL_GUARD = "approval-pin:global";
 
 // ------------------------------------------------------------------ storage (Supabase)
 
@@ -64,7 +59,7 @@ export function supabaseStore() {
       const { error } = await db.from("callers").insert({ phone: SESSION_PREFIX + sid, call_count: 1 });
       if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Could not start a voice session.", 503);
     },
-    /** callers row: {phone, pin_failures, locked_until} or null. Used for sessions and the global PIN guard. */
+    /** callers row: {phone, pin_failures, locked_until} or null. Used for session revocation. */
     async getGuard(key: string) {
       const { data, error } = await db.from("callers").select("phone,pin_failures,locked_until").eq("phone", key).maybeSingle();
       if (error) throw new TradeError("SERVICE_UNAVAILABLE", "Approval service unavailable.", 503);
@@ -197,16 +192,6 @@ async function propose(store: Store, token: string | undefined, body) {
       quantity: body.quantity, budget_usd: body.budget_usd, limit_price: body.limit_price, order_mode: body.order_mode },
     async ({ readback, ...terms }) => {
       if (!hasSpokenMarketName(terms)) throw new TradeError("BAD_INPUT", "Market name unavailable.", 409);
-      if (terms.side === "buy") {
-        let committed = await store.committedUsd();
-        if (committed !== null && dailyCapError(committed, terms.notional_usd + terms.est_fee_usd) && store.reconcileOpen) {
-          await store.reconcileOpen();
-          committed = await store.committedUsd();
-        }
-        if (committed === null) return json({ ok: false, error: "RISK_UNAVAILABLE", message: "Could not verify the daily sandbox limit. Nothing was prepared." });
-        const capErr = dailyCapError(committed, terms.notional_usd + terms.est_fee_usd);
-        if (capErr) return json({ ok: false, error: "CAP_EXCEEDED", message: capErr });
-      }
       await store.supersede(s.caller);
       const code = randomCode();
       const id = await store.insertIntent({ ...terms, code, caller: s.caller, conversation_id: s.cid });
@@ -332,20 +317,6 @@ async function callConfirm(store: Store, token: string | undefined, body) {
   const it = await store.claim(row.id, s.caller);
   if (!it) return { ...await recordedResult(store, await ownedIntent(store, row.id, s)), replayed: true };
 
-  // Re-check limits on the stored proposal, then the shared daily ledger (this intent is now EXECUTING
-  // and reserved; every concurrent claim that reads after ours sees our reservation).
-  if (it.side === "buy") {
-    const capErr = orderCapError(it);
-    if (capErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", capErr); }
-    const committed = await store.committedUsd({ excludeIntentId: it.id });
-    if (committed === null) {
-      await store.setIntentStatus(it.id, "REJECTED");
-      throw new TradeError("RISK_UNAVAILABLE", "Could not verify the daily sandbox limit. Nothing was placed.", 503);
-    }
-    const dayErr = dailyCapError(committed, Number(it.notional_usd) + Number(it.est_fee_usd));
-    if (dayErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", dayErr); }
-  }
-
   await store.log("INTENT_APPROVED", s.caller, `${it.code}: confirmed in the voice call`, { proposal_id: it.id });
   const response = await executeTrade(it, s.caller, {
     finish: (status: string) => store.setIntentStatus(it.id, status),
@@ -443,7 +414,7 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
     if (e instanceof TradeError) {
       // ElevenLabs treats non-2xx as a failed webhook and may improvise a reason.
       // An authenticated order decision is a successful tool result, including a refusal.
-      const decision = action === "call-confirm" && ["CONFIRMATION_REQUIRED", "CAP_EXCEEDED", "EXECUTION_DISABLED"].includes(e.code);
+      const decision = action === "call-confirm" && ["CONFIRMATION_REQUIRED", "EXECUTION_DISABLED"].includes(e.code);
       return reply(decision ? 200 : e.status, { ok: false, error: e.code, message: e.message, ...(decision && { say: e.message, next_action: "wait_for_user" }) });
     }
     console.error(JSON.stringify({ event: "browser_trading_error", action, error_name: (e as Error)?.name ?? null }));

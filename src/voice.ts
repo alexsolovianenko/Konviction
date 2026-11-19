@@ -45,11 +45,10 @@ const shortTradeIssue: Record<string, string> = {
   CONTRACT_NOT_OPEN: 'Contract unavailable. Another window?',
   MARKET_DATA_UNAVAILABLE: 'Fresh quote unavailable.',
   BELOW_CONTRACT_MINIMUM: 'Below the contract minimum.',
-  CAP_EXCEEDED: 'Outside the trading limit.',
-  LIMIT_PRICE_CAP: 'Above the allowed price.',
+  BUDGET_TOO_SMALL: 'Budget is below one contract.',
+  INVALID_PRICE: 'Choose one to ninety-nine cents.',
   BAD_INPUT: 'Please clarify the order terms.',
   COMBO_UNAVAILABLE: 'That combo is unavailable.',
-  RISK_UNAVAILABLE: 'Spending check unavailable.',
   EXECUTION_DISABLED: 'Sandbox trading is disabled.',
   SERVICE_UNAVAILABLE: 'Trading service unavailable.',
   UNAUTHORIZED: 'Restart voice to trade.',
@@ -439,13 +438,7 @@ export class Voice {
   private proposalReply(result: Awaited<ReturnType<Voice['prepareBuy']>>) {
     if (!result.ok) {
       const error = result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE');
-      let say = shortTradeIssue[error] ?? 'Couldn’t prepare the order.';
-      if (error === 'CAP_EXCEEDED') {
-        if (/too small to buy even one contract/i.test(result.message)) say = 'Budget is below one contract.';
-        else if (/daily/i.test(result.message)) say = 'Daily spending limit reached.';
-        else if (/contracts per order/i.test(result.message)) say = 'Too many contracts.';
-        else if (/per order/i.test(result.message)) say = 'Over the per-order limit.';
-      }
+      const say = shortTradeIssue[error] ?? 'Couldn’t prepare the order.';
       return JSON.stringify({ok:false, error, say, next_action:'wait_for_user'});
     }
     const { quantity, outcome } = result.proposal;
@@ -504,7 +497,7 @@ export class Voice {
     }
   }
 
-  async pairDevice(credentials: { pairing_token: string } | { pin: string }) {
+  async pairDevice(credentials: { pairing_token: string }) {
     const paired = await tradingRequest('pair', credentials);
     if (!paired.ok) {
       this.update({ tradeMessage: paired.message ?? 'Device pairing failed.' });
@@ -555,7 +548,7 @@ export class Voice {
         return {ok:result.ok, say:result.voice_say ?? spoken ?? result.say ?? fallback[result.outcome_summary] ?? 'Order status unconfirmed.'};
       }
       const code = typeof result.error === 'string' ? result.error : result.error?.code;
-      const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'CAP_EXCEEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'NO_LIQUIDITY', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);
+      const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'NO_LIQUIDITY', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);
       if (terminal) this.currentProposal = null;
       this.update({tradeMessage:result.message ?? 'Check your proposal.', ...(terminal && {proposal:null})});
       if (!code) return {ok:false, say:'Check order history before retrying.'};
@@ -624,7 +617,7 @@ export class Voice {
     const exchange = result.order_id
       ? ` Gemini Sandbox order ${result.order_id} · status ${result.exchange_status ?? 'unknown'} · ${result.outcome_summary}.`
       : result.outcome_summary ? ` Result: ${result.outcome_summary}.` : '';
-    const clear = !['WRONG_PIN','BAD_INPUT'].includes(result.error);
+    const clear = result.error !== 'BAD_INPUT';
     if (clear) this.currentProposal = null;
     this.remainder = result.remainder_buy ?? null;
     this.update({remainderQuantity:this.remainder?.quantity ?? null, tradeMessage:(result.say ?? result.message ?? '') + exchange, ...(clear && {proposal:null})});

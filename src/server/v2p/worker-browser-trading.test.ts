@@ -198,6 +198,24 @@ describe("proposals (voice-reachable) never submit orders", () => {
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 
+  it("reads a clockless hourly market with its actual expiry and exact decimal threshold", async () => {
+    const expiry = new Date();
+    expiry.setUTCDate(expiry.getUTCDate() + 1);
+    expiry.setUTCHours(22, 0, 0, 0);
+    vi.mocked(getEvent).mockResolvedValue({event:{
+      ticker:order.event_ticker,title:"XRP price tomorrow",contracts:[{
+        instrumentSymbol:order.contract_symbol,label:"$0.9721 or above",expiryDate:expiry.toISOString(),
+        status:"active",marketState:"open",prices:{buy:{yes:"0.30"}},
+      }],
+    }} as never);
+    const s = await startSession();
+    const request = {event_ticker:order.event_ticker,contract_symbol:order.contract_symbol,outcome:"yes",budget_usd:1,order_mode:"market"};
+    const {proposal} = await run("proposals",request,s.session_token) as any;
+    const clock = new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"numeric"}).format(expiry);
+    expect(proposal.voice_readback).toContain(clock + " Eastern");
+    expect(proposal.voice_readback).toContain("zero point nine seven two one dollars or above");
+  });
+
   it("binds buy now to the exact spoken immediate quote and submits once", async () => {
     const s = await startSession();
     const request = {event_ticker:order.event_ticker,contract_symbol:order.contract_symbol,outcome:"yes",budget_usd:0.35};
@@ -226,13 +244,13 @@ describe("proposals (voice-reachable) never submit orders", () => {
     }
   });
 
-  it("refuses a proposal that would exceed the daily ledger", async () => {
+  it("prepares independently of previous sandbox spending", async () => {
     vi.stubEnv("MAX_DAILY_USD", "1");
     store.orders.push({ intent_id: "old", outcome_summary: "FILLED", filled_notional_usd: 0.9 });
     const s = await startSession();
     const r = (await run("proposals", order, s.session_token)) as any;
-    expect(r).toMatchObject({ ok: false, error: "CAP_EXCEEDED" });
-    expect(store.intents.size).toBe(0);
+    expect(r).toMatchObject({ok:true});
+    expect(store.intents.size).toBe(1);
   });
 });
 
@@ -363,13 +381,12 @@ describe("approval: the only order-submission path", () => {
     expect(geminiOrderCalls()).toHaveLength(0);
   });
 
-  it("re-checks the shared daily ledger at approval time", async () => {
+  it("executes the authorized order regardless of earlier sandbox spending", async () => {
     const { s, id } = await proposed();
     vi.stubEnv("MAX_DAILY_USD", "1");
     store.orders.push({ intent_id: "phone", outcome_summary: "FILLED", filled_notional_usd: 0.95 }); // e.g. another channel filled meanwhile
-    await expect(callConfirm(id, s.session_token)).rejects.toMatchObject({ code: "CAP_EXCEEDED" });
-    expect(store.intents.get(id).status).toBe("REJECTED");
-    expect(geminiOrderCalls()).toHaveLength(0);
+    expect(await callConfirm(id, s.session_token)).toMatchObject({outcome_summary:"FILLED"});
+    expect(geminiOrderCalls()).toHaveLength(1);
   });
 
   it("an unconfirmed outcome is reported as unknown and stays reserved in the ledger", async () => {
@@ -429,16 +446,18 @@ describe("approval: the only order-submission path", () => {
   });
 });
 
-it("prepares a budget buy within per-order and quantity limits without submitting", async () => {
+it("sizes a large budget to the caller’s own price and estimated fees without application spending limits", async () => {
   vi.stubEnv("MAX_ORDER_USD", "25");
   vi.stubEnv("MAX_QUANTITY", "100");
   const s = await startSession();
   const { quantity: _count, ...terms } = order;
   const budgetBuy = { ...terms, budget_usd: 1000 };
-  const moneyCapped = await run("proposals", budgetBuy, s.session_token);
-  expect(moneyCapped).toMatchObject({ ok: true, proposal: { quantity: 76, limit_price: 0.31, notional_usd: 23.56, est_fee_usd: 1.14 } });
-  vi.stubEnv("MAX_QUANTITY", "7");
-  expect(await run("proposals", budgetBuy, s.session_token)).toMatchObject({ ok: true, proposal: { quantity: 7 } });
+  vi.stubEnv("MAX_LIMIT_PRICE","0.05");
+  const {proposal} = await run("proposals", budgetBuy, s.session_token) as any;
+  expect(proposal.quantity).toBeGreaterThan(3000);
+  expect(proposal.budget_usd).toBe(1000);
+  expect(proposal.notional_usd + proposal.est_fee_usd).toBeLessThanOrEqual(1000);
+  expect(proposal.notional_usd + proposal.est_fee_usd + proposal.limit_price).toBeGreaterThan(1000);
   await expect(run("proposals", { ...budgetBuy, quantity: 1 }, s.session_token)).rejects.toMatchObject({ code: "BAD_INPUT" });
   await expect(run("proposals", terms, s.session_token)).rejects.toMatchObject({ code: "BAD_INPUT" });
   expect(geminiOrderCalls()).toHaveLength(0);

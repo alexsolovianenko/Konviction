@@ -35,7 +35,7 @@ export type MarketsSnapshot = { as_of?: string; events: MarketEvent[]; error: st
 export type DashboardState = {
   history_available?: boolean;
   generated_at: string; environment: string; phone_number: string | null; execution_enabled: boolean;
-  limits: { maxOrderUsd: number; maxDailyUsd: number; maxLimitPrice: number; maxQuantity: number; intentTtlSeconds: number };
+  limits: { minLimitPrice: number; maxLimitPrice: number; takerRate: number; intentTtlSeconds: number };
   account: {
     configured: boolean; terms_accepted: boolean | null; usd_available: number | null; positions: Position[];
     terms_error: string | null; balance_error: string | null; positions_error: string | null;

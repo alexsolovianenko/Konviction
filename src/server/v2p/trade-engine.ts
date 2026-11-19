@@ -3,7 +3,7 @@ import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor }
 import { spokenBudgetFill, spokenFill } from "../../spoken-fill";
 import { liquiditySnapshot } from "./book-liquidity";
 import { comboEligibility } from "./native-combo";
-import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, usd } from "./util";
+import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2 } from "./util";
 type Body = Record<string, any>;
 const err = (error: string, message: string, extra = {}) =>
   json({ ok: false, error, message, ...extra });
@@ -21,9 +21,10 @@ export function isValidBuySize(body: Body): boolean {
 }
 
 function budgetQuantity(budget: number, limit: number): number {
-  const availableCents = Math.min(Math.round(budget * 100), Math.floor(LIMITS.maxOrderUsd * 100 + 1e-8));
+  const availableCents = Math.round(budget * 100);
+  if (!Number.isSafeInteger(availableCents) || availableCents <= 0) return 0;
   const priceCents = Math.round(limit * 100);
-  let high = Math.min(Math.floor(LIMITS.maxQuantity), Math.floor(availableCents / priceCents));
+  let high = Math.floor(availableCents / priceCents);
   let low = 0;
   while (low < high) {
     const qty = low + Math.ceil((high - low) / 2);
@@ -89,7 +90,7 @@ export async function prepareTrade(b: Body, saveProposal) {
     if (market && q.buy > limit)
       return err("PRICE_ABOVE_YOUR_MAX", "The ask is above your price ceiling.");
     if (limit < LIMITS.minLimitPrice || limit > LIMITS.maxLimitPrice)
-      return err("LIMIT_PRICE_CAP", `The order limit must be between 1¢ and ${cents(LIMITS.maxLimitPrice)}.`, { max_price: LIMITS.maxLimitPrice });
+      return err("INVALID_PRICE", `The order limit must be between 1¢ and ${cents(LIMITS.maxLimitPrice)}.`, { max_price: LIMITS.maxLimitPrice });
     if (Math.abs(limit * 100 - Math.round(limit * 100)) > 1e-8)
       return err("BAD_INPUT", "The quoted price cannot be submitted in whole cents.");
     if (qtyIn !== null) {
@@ -128,27 +129,19 @@ export async function prepareTrade(b: Body, saveProposal) {
       return err("NO_BID", "No bid right now.");
     limit = priceLimitIn ?? (market ? LIMITS.minLimitPrice : quotePrice);
     if (!(limit >= LIMITS.minLimitPrice && limit <= 0.99))
-      return err("LIMIT_PRICE_CAP", "Choose a sell limit from 1 to 99 cents.");
+      return err("INVALID_PRICE", "Choose a sell limit from 1 to 99 cents.");
     if (market && quotePrice < limit)
       return err("PRICE_BELOW_YOUR_MIN", "The current bid is below your minimum.", { current_bid: quotePrice });
   }
 
   if (side === "buy" && (!Number.isFinite(quantity) || quantity < 1))
-    return err("CAP_EXCEEDED", "That amount is too small to buy even one contract at this price.");
+    return err("BUDGET_TOO_SMALL", "That amount is too small to buy even one contract at this price.");
   const minimum = num(c.quantityMinimum);
   if (minimum !== null && quantity < minimum)
     return err("BELOW_CONTRACT_MINIMUM", `Gemini requires at least ${minimum} contracts for this market. Your order sizes to ${quantity}. Choose another contract or request a new size.`);
-  if (quantity > LIMITS.maxQuantity && !(side === "sell" && b.close_all === true))
-    return err("CAP_EXCEEDED", `Demo limit is ${LIMITS.maxQuantity} contracts per order.`);
   const estimatePrice = side === "sell" && market ? q.sell : limit;
   const notional = round2(quantity * estimatePrice);
   const fee = feeEstimate(quantity, estimatePrice);
-  if (side === "buy" && notional + fee > LIMITS.maxOrderUsd + 1e-9) {
-    return err(
-      "CAP_EXCEEDED",
-      `Demo limit is ${usd(LIMITS.maxOrderUsd)} per order including fees. This would be ${usd(notional + fee)}.`,
-    );
-  }
   const confirmationEnd = Date.now() + LIMITS.intentTtlSeconds * 1000;
   const marketCutoff = expiryIso ? Date.parse(expiryIso) - BUY_CUTOFF_MS : Infinity;
   const expiresAt = new Date(Math.min(confirmationEnd, Number.isFinite(marketCutoff) ? marketCutoff : Infinity)).toISOString();
@@ -159,7 +152,7 @@ export async function prepareTrade(b: Body, saveProposal) {
 
   return saveProposal({
     side,
-    ...(side === "buy" && budget !== null && {budget_usd: Math.min(budget, LIMITS.maxOrderUsd)}),
+    ...(side === "buy" && budget !== null && {budget_usd: budget}),
     ...(market && {order_mode: "market"}),
     time_in_force: market ? "immediate-or-cancel" : "good-til-cancel",
     event_ticker: eventTicker,

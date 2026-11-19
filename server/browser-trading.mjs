@@ -3,11 +3,11 @@ import { spokenBudgetFill, spokenFill } from "../src/spoken-fill.ts";
 import { validOrderKeys } from "../src/server/v2p/browser-order-input.ts";
 import { sandboxPortfolio } from "../src/server/v2p/portfolio.ts";
 import { hasSpokenMarketName, spokenProposal } from "./spoken-proposal.mjs";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { prepareTrade, executeTrade } from "../src/server/v2p/trade-engine.ts";
 import { hasCredentials } from "../src/server/v2p/gemini.ts";
 import { settledOpenOrders } from "../src/server/v2p/reconcile-open.ts";
-import { LIMITS, feeEstimate } from "../src/server/v2p/util.ts";
+import { feeEstimate } from "../src/server/v2p/util.ts";
 import { TradingRepository, TradeError } from "./trading-repository.mjs";
 
 import { TrustedDevices, deviceLifetimeSeconds } from "./trusted-device.mjs";
@@ -46,12 +46,6 @@ function sessionOwner(repo, token) {
     );
   return s.id;
 }
-function requirePin(store, pin) {
-  if (!/^\d{4,8}$/.test(process.env.DEMO_PIN ?? ""))
-    throw new TradeError("PIN_UNCONFIGURED", "Configure a 4–8 digit server DEMO_PIN.", 503);
-  if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) bad();
-  store.checkPin(timingSafeEqual(hash(pin), hash(process.env.DEMO_PIN)));
-}
 export function browserTrading(repo) {
   const store = new TradingRepository(repo);
   const devices = new TrustedDevices(repo);
@@ -79,8 +73,7 @@ export function browserTrading(repo) {
     if (method === "GET" && path === "availability") return config;
     if (method !== "POST") bad();
     if (path === "pair") {
-      if (keysAre(body, ["pin"])) requirePin(store, body.pin);
-      else if (keysAre(body, ["pairing_token"])) devices.redeem(body.pairing_token);
+      if (keysAre(body, ["pairing_token"])) devices.redeem(body.pairing_token);
       else bad();
       setDeviceCookie(devices.grant(host), deviceLifetimeSeconds);
       return availability(true);
@@ -116,12 +109,8 @@ export function browserTrading(repo) {
           if (!hasSpokenMarketName(terms))
             throw new TradeError("BAD_INPUT", "A human-readable contract name is required for spoken confirmation.", 409);
           terms.voice_readback = spokenProposal(terms);
-          const cost = Math.round((terms.notional_usd + terms.est_fee_usd) * 100);
-          const today = new Date().toISOString().slice(0, 10);
-          if (terms.side === "buy" && store.reservedToday(today) + cost > Math.round(LIMITS.maxDailyUsd * 100))
-            await reconcile();
           sessionOwner(repo, token);
-          const proposal = store.propose(owner, key, fingerprint, terms, LIMITS.maxDailyUsd,
+          const proposal = store.propose(owner, key, fingerprint, terms,
             id => devices.bind(id, owner));
           return Response.json(present(proposal));
         },
@@ -138,7 +127,7 @@ export function browserTrading(repo) {
     if (!keysAre(body, ["proposal_id", "confirmation_seq"]) || !uuid.test(body.proposal_id) ||
         !Number.isSafeInteger(body.confirmation_seq) || body.confirmation_seq <= 0) bad();
     if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
-    const claim = store.claim(owner, body.proposal_id, LIMITS,
+    const claim = store.claim(owner, body.proposal_id,
       () => devices.confirm(body.proposal_id, owner, body.confirmation_seq));
     if (claim.result) return claim.result;
     const id = body.proposal_id;

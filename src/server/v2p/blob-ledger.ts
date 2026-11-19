@@ -2,9 +2,8 @@ import { settledOpenOrders } from "./reconcile-open";
 // A single conditional write commits every reservation against the same account total.
 // An unresolved submission stays reserved until its exchange result is known.
 import { BlobPreconditionFailedError, get, put } from "@vercel/blob";
-import { GLOBAL_GUARD, GLOBAL_PIN_ATTEMPTS, SESSION_PIN_ATTEMPTS, PIN_LOCK_MS, TradeError } from "./browser-trading";
+import { TradeError } from "./browser-trading";
 import { SESSION_PREFIX, SESSION_TTL_MS } from "./browser-session";
-import { dailyCapError, orderCapError } from "./ledger";
 
 interface Guard { phone: string; pin_failures: number; locked_until: string | null; expires: number | null }
 interface Intent {
@@ -106,22 +105,6 @@ export function blobStore(io = backend) {
     async setGuard(key: string, failures: number, until: string | null) {
       await update(s => { if (s.guards[key]) Object.assign(s.guards[key], { pin_failures: failures, locked_until: until }); });
     },
-    async verifyPinAttempt(key: string | null, correct: boolean) {
-      const passed = await update(s => {
-        const session = key ? active(s, key) : null;
-        const global = s.guards[GLOBAL_GUARD] ??= guard(GLOBAL_GUARD, null);
-        if (global.locked_until && Date.parse(global.locked_until) > Date.now()) throw new TradeError("LOCKED", "Too many wrong PINs. Try again in 15 minutes.", 429);
-        for (const entry of session ? [global, session] : [global]) {
-          entry.pin_failures = correct ? 0 : entry.pin_failures + 1;
-          if (entry.pin_failures >= (entry === global ? GLOBAL_PIN_ATTEMPTS : SESSION_PIN_ATTEMPTS)) {
-            entry.locked_until = new Date(Date.now() + PIN_LOCK_MS).toISOString();
-            entry.pin_failures = 0;
-          }
-        }
-        return correct;
-      });
-      if (!passed) throw new TradeError("WRONG_PIN", "Incorrect PIN. Nothing was placed.", 403);
-    },
     async supersede(_caller: string) { /* Performed atomically in insertIntent. */ },
     async dismissProposal(id: string, caller: string) {
       await update(s => {
@@ -143,8 +126,6 @@ export function blobStore(io = backend) {
         active(s, caller);
         const it = s.intents[id];
         if (!it || it.caller !== caller || it.status !== "PROPOSED" || !["buy", "sell"].includes(it.side) || !(Date.parse(it.expires_at) > Date.now())) return null;
-        const cap = it.side === "buy" ? orderCapError(it) ?? dailyCapError(committed(s), Number(it.notional_usd) + Number(it.est_fee_usd)) : null;
-        if (cap) throw new TradeError("CAP_EXCEEDED", cap);
         it.status = "EXECUTING";
         it.updated_at = Date.now();
         return it;
