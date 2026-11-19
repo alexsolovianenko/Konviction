@@ -308,17 +308,8 @@ it("opens a trusted device only with a fresh single-use local pairing code", asy
   await expect(pair(expired)).rejects.toMatchObject({code:"PAIRING_EXPIRED"});
 });
 
-it("requires paired device identity for settlement callback preferences and private reads", async () => {
-  const callback = vi.fn(async () => ({ok:true,configured:true}));
-  run = browserTrading(repo, { settlementCallback: callback });
+it("requires paired device identity for private reads", async () => {
   const device = await paired();
-  const request = (method:string, credentials:Record<string,string>) =>
-    run({ ...credentials, path:"settlement-callback", method, body:{} });
-  for (const method of ["GET","POST"]) {
-    await expect(request(method, {})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
-    expect(await request(method, device)).toMatchObject({ok:true});
-  }
-  expect(callback).toHaveBeenCalledTimes(2);
   await expect(run({path:"portfolio",method:"POST",body:{}})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
   vi.mocked(gPrivate).mockResolvedValue({
     ok:true,status:200,text:"", data:{ orders:[], positions:[{symbol:"C",contractMetadata:{eventName:"Bitcoin today",contractName:"Up",otherPrivate:"redacted"}}] },

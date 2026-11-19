@@ -43,7 +43,7 @@ export const initial: VoiceView = {
 
 function voiceError(message: string, fallback = message) {
   return /(?:the )?ai agent you are trying to reach is not available/i.test(message)
-    ? "ElevenLabs could not start this call. The provider reported “agent unavailable” before the conversation began."
+    ? "ElevenLabs could not start this call. Check the workspace’s remaining voice credits and agent availability."
     : fallback;
 }
 
@@ -281,12 +281,10 @@ export class Voice {
           }
         },
         onDisconnect: (details) => {
-          if (!current()) return;
-          const reason = details.reason === 'user' ? '' : details.closeReason ?? details.context?.reason;
-          const fallback = details.reason === 'error'
-            ? voiceError(details.message, 'Connection lost. Start voice to reconnect.')
-            : '';
-          void this.stop(voiceError(reason ?? '', providerError || fallback));
+          if (current())
+            void this.stop(
+              providerError || (details.reason === 'error' ? voiceError(details.message, 'Connection lost. Start voice to reconnect.') : ''),
+            );
         },
         onError: (message) => { providerError = voiceError(message); update({error:providerError}); },
       };
@@ -478,7 +476,7 @@ export class Voice {
         status: 'Idle',
         ...(session && { entries: [...session.entries], intents: session.captured }),
         ...(results.some((r) => r.status === 'rejected') && {
-          error: [error, 'Session closed. Could not verify final transcript sync.'].filter(Boolean).join(' '),
+          error: 'Session closed. Could not verify final transcript sync.',
         }),
       });
     }

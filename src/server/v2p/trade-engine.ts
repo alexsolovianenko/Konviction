@@ -182,36 +182,6 @@ export async function prepareTrade(b: Body, saveProposal) {
   });
 }
 
-// Gemini order evidence: a 2xx body only counts when it names this exact order and its fill
-// figures are self-consistent. Anything else is PENDING_UNKNOWN, which keeps the full cost
-// reserved in the daily ledger until the order is checked in Gemini.
-const same = (v: unknown, want: unknown) => v === undefined || v === null || String(v).toLowerCase() === String(want).toLowerCase();
-function orderMatches(o, it): boolean {
-  const id = o?.orderId;
-  return Boolean(o) && typeof o === "object" &&
-    (typeof id === "string" ? /^\d+$/.test(id) : Number.isSafeInteger(id) && id > 0) &&
-    same(o.symbol, it.instrument_symbol) && same(o.side, it.side) && same(o.outcome, it.outcome) &&
-    (o.quantity === undefined || o.quantity === null || num(o.quantity) === Number(it.quantity));
-}
-function isTerminal(o, it): boolean {
-  const status = String(o?.status ?? "").toLowerCase();
-  return status === "filled" || status === "cancelled" ||
-    (num(o?.filledQuantity) !== null && num(o.filledQuantity) + 1e-9 >= Number(it.quantity));
-}
-export function orderSummary(o, it): "FILLED" | "PARTIAL" | "NOT_FILLED" | "PENDING_UNKNOWN" {
-  const filled = num(o?.filledQuantity);
-  const remaining = num(o?.remainingQuantity);
-  const qty = Number(it.quantity);
-  if (!orderMatches(o, it) || filled === null || filled < 0 || filled > qty + 1e-9 ||
-      (remaining !== null && (remaining < 0 || Math.abs(filled + remaining - qty) > 1e-9)) ||
-      !isTerminal(o, it)) return "PENDING_UNKNOWN";
-  // An average fill price outside the limit cannot belong to this IOC limit order.
-  const avg = num(o.avgExecutionPrice), limit = Number(it.limit_price);
-  if (filled > 0 && avg !== null && (avg <= 0 || avg >= 1 ||
-      (it.side === "buy" ? avg > limit + 1e-9 : avg < limit - 1e-9))) return "PENDING_UNKNOWN";
-  return filled <= 0 ? "NOT_FILLED" : filled + 1e-9 >= qty ? "FILLED" : "PARTIAL";
-}
-
 export async function executeTrade(it, caller, { finish, log, receipt, saveOrder }) {
   const code = it.code;
   // Re-quote at execution time.
@@ -299,37 +269,37 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   let summary: "FILLED" | "PARTIAL" | "NOT_FILLED" | "PENDING_UNKNOWN" | "EXCHANGE_REJECTED";
   // deno-lint-ignore no-explicit-any
   let o: any = placed.data;
-  if (placed.status === 0 || placed.status >= 500 || (placed.status >= 300 && placed.status < 400)) {
-    // No response, a server error, or a refused redirect: Gemini never explicitly rejected it.
+  if (placed.status === 0 || placed.status >= 500) {
     summary = "PENDING_UNKNOWN";
   } else if (!placed.ok) {
     summary = "EXCHANGE_REJECTED";
   } else {
-    // A non-terminal or incomplete acknowledgement: check order history once (by orderId) instead of guessing.
-    if (orderMatches(o, it) && (num(o.filledQuantity) === null || !isTerminal(o, it))) {
+    // If fill fields are missing, check order history once (by orderId) instead of guessing.
+    if (o?.orderId && o.filledQuantity === undefined) {
       await new Promise((r) => setTimeout(r, 1500));
       const h = await gPrivate("/v1/prediction-markets/orders/history", {
         symbol: it.instrument_symbol,
         limit: 20,
       });
       // deno-lint-ignore no-explicit-any
-      const match = (Array.isArray(h.data?.orders) ? h.data.orders : []).find(
-        (x: any) => orderMatches(x, it) && String(x.orderId) === String(o.orderId),
+      const match = (h.data?.orders ?? []).find(
+        (x: any) => String(x.orderId) === String(o.orderId),
       );
       if (match) o = match;
     }
-    summary = orderSummary(o, it);
-    if (summary === "PENDING_UNKNOWN" && o && typeof o === "object") {
-      await log("ORDER_EVIDENCE_UNVERIFIED", caller, `${code}: Gemini acknowledgement did not prove a final fill state`);
-    }
+    const filled = num(o?.filledQuantity) ?? 0;
+    summary =
+      num(o?.filledQuantity) === null
+        ? "PENDING_UNKNOWN"
+        : filled <= 0
+          ? "NOT_FILLED"
+          : filled + 1e-9 >= it.quantity
+            ? "FILLED"
+            : "PARTIAL";
   }
-  // Fill figures are reported only from evidence that identifies this exact order.
-  if (!orderMatches(o, it)) o = null;
 
-  const verified = summary === "FILLED" || summary === "PARTIAL" || summary === "NOT_FILLED";
-  const filledQty = verified ? num(o?.filledQuantity) : null;
-  const remainingQty = verified ? num(o?.remainingQuantity) : null;
-  const avg = verified ? num(o?.avgExecutionPrice) : null;
+  const filledQty = num(o?.filledQuantity);
+  const avg = num(o?.avgExecutionPrice);
   const filledNotional =
     filledQty && avg ? round2(filledQty * avg) : filledQty ? round2(filledQty * limit) : 0;
   await saveOrder({
@@ -339,7 +309,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     outcome_summary: summary,
     exchange_status: o?.status ?? null,
     filled_qty: filledQty,
-    remaining_qty: remainingQty,
+    remaining_qty: num(o?.remainingQuantity),
     avg_price: avg,
     filled_notional_usd: it.side === "buy" ? filledNotional : 0,
     error: placed.ok ? null : (placed.error ?? placed.text.slice(0, 500)),
@@ -349,7 +319,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   await log(
     `ORDER_${summary}`,
     caller,
-    `${code}: ${summary} — filled ${filledQty ?? "unknown"}/${it.quantity}${avg !== null ? ` avg ${avg}` : ""}${o?.orderId ? ` (order ${o.orderId})` : ""}`,
+    `${code}: ${summary} — filled ${filledQty ?? 0}/${it.quantity}${avg !== null ? ` avg ${avg}` : ""}${o?.orderId ? ` (order ${o.orderId})` : ""}`,
     {
       order_id: o?.orderId ? String(o.orderId) : null,
       http_status: placed.status,
@@ -384,7 +354,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     order_id: o?.orderId ? String(o.orderId) : null,
     exchange_status: o?.status ?? null,
     filled_quantity: filledQty,
-    remaining_quantity: remainingQty,
+    remaining_quantity: num(o?.remainingQuantity),
     avg_price: avg,
     est_fee_usd: fillFee,
     say: say[summary],

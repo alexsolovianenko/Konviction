@@ -34,7 +34,7 @@ it("prepares a five-minute buy with two minutes remaining, and enforces the one-
     ok: true,
     status: 200,
     text: "",
-    data: { orderId: "12345", filledQuantity: "1", avgExecutionPrice: "0.20" },
+    data: { orderId: "TEST", filledQuantity: "1", avgExecutionPrice: "0.20" },
   });
   const request = {
     event_ticker: ticker,

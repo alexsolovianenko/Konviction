@@ -67,7 +67,7 @@ export function StatusBubble() {
         <ChevronDown className={'size-4 shrink-0 text-muted-foreground transition-transform ' + (open ? 'rotate-180' : '')} aria-hidden />
       </button>
       {view.error && (
-        <p role="alert" className="mt-2 flex items-start gap-2 rounded-lg border border-destructive bg-card px-3 py-2 text-sm text-destructive shadow-lg">
+        <p role="alert" className="absolute inset-x-0 top-full z-40 mt-2 flex items-start gap-2 rounded-lg border border-destructive bg-card px-3 py-2 text-sm text-destructive shadow-lg">
           <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span>{view.error}</span>
         </p>

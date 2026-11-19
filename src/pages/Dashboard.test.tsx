@@ -564,7 +564,7 @@ it('explains the generic ElevenLabs unavailable message without claiming a balan
   const f = fixture();
   const sdk = await f.begin();
   act(() => sdk.onDisconnect?.({reason:'error',message:'The AI agent you are trying to reach is not available.',context:{type:'socket'}}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('The provider reported “agent unavailable” before the conversation began.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Check the workspace’s remaining voice credits and agent availability.');
 });
 
 it('redeems a device pairing link once and removes its secret before requesting it', async () => {
@@ -578,15 +578,4 @@ it('redeems a device pairing link once and removes its secret before requesting 
   } finally {
     window.history.replaceState(null, '', '/');
   }
-});
-
-it('keeps the provider close reason visible when final transcript sync also fails', async () => {
-  const f = fixture();
-  const sdk = await f.begin();
-  f.fetchMock.mockRejectedValue(new Error('offline'));
-  act(() => sdk.onDisconnect?.({ reason: 'agent', closeCode: 1000,
-    closeReason: 'The AI agent you are trying to reach is not available.' }));
-  await waitFor(() => expect(screen.getByText('Start Voice')).toBeEnabled());
-  expect(screen.getByRole('alert')).toHaveTextContent('agent unavailable');
-  expect(screen.getByRole('alert')).toHaveTextContent('Could not verify final transcript sync');
 });

@@ -1,3 +1,4 @@
+import { AudioLines } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../components/voice/VoiceProvider';
 import { MarketDiscoveryPanel } from '../components/prediction/MarketDiscoveryPanel';
@@ -15,22 +16,20 @@ export function Home() {
     const el = orb.current;
     if (!el || !speaking || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     let frame: number;
-    let level = 0;
-    let last = performance.now();
-    const draw = (now: number) => {
-      const target = Math.min(1, Math.max(0, voice.outputLevel()));
-      level += (target - level) * (1 - Math.exp(-(now - last) / 95));
-      last = now;
-      el.style.transform = 'scale(' + (1 + level * 0.14).toFixed(4) + ')';
+    const draw = () => {
+      el.style.setProperty('--amplitude', String(Math.min(1, Math.max(0, voice.outputLevel()))));
       frame = requestAnimationFrame(draw);
     };
-    frame = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(frame); el.style.removeProperty('transform'); };
+    draw();
+    return () => { cancelAnimationFrame(frame); el.style.removeProperty('--amplitude'); };
   }, [speaking, voice]);
 
   return (
     <section className="voice-canvas" aria-label="Voice workspace">
-      <h1 className="sr-only">Voice workspace</h1>
+      <header className="home-heading">
+        <h1><AudioLines size={17} aria-hidden="true" /> Voice-to-Predict</h1>
+        <span>Gemini Sandbox</span>
+      </header>
       <div className="home-voice-card">
         <button type="button" className="voice-trigger"
           aria-label={idle ? 'Start voice' : 'End session'}

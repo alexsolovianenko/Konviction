@@ -86,17 +86,13 @@ async function accountSection(path, kind) {
       }),
   };
 }
-export function browserTrading(repo, { settlementCallback } = {}) {
+export function browserTrading(repo) {
   const store = new TradingRepository(repo);
   const devices = new TrustedDevices(repo);
   return async ({ path, method, token, body, key, host, deviceCookie, setDeviceCookie }) => {
     const device = devices.identify(host, deviceCookie);
     const config = availability(Boolean(device));
     if (method === "GET" && path === "availability") return config;
-    if (path === "settlement-callback" && settlementCallback && ["GET", "POST"].includes(method)) {
-      if (!device) throw new TradeError("DEVICE_REQUIRED", "Pair this browser to manage settlement calls.", 403);
-      return settlementCallback(repo, method, body);
-    }
     if (method !== "POST") bad();
     if (path === "pair") {
       if (keysAre(body, ["pin"])) requirePin(store, body.pin);

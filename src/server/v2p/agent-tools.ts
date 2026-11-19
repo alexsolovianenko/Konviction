@@ -6,7 +6,7 @@
 //
 // There is deliberately NO execute tool: the language model can never submit an order.
 // Orders are submitted only by POST /api/public/browser-trading/approve, which needs a verified
-// browser voice session plus a PIN typed on screen. A phone approval path comes with Twilio.
+// browser voice session plus a PIN typed on screen.
 
 import {
   contractTradable, getUsdAvailable, gPrivate, listActiveEvents, quoteFor,

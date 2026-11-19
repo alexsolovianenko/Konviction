@@ -20,7 +20,7 @@ via x402 to buy useful research; Gemini remains the core trading venue.
 - Preserve the existing Lovable dashboard. Connect it to one shared secure backend and GitHub repository.
 - Prove Gemini market data immediately, then verify actual Predictions sandbox order access. Generic exchange sandbox
 access alone is not proof.
-- Make browser-based ElevenLabs conversations work before adding Twilio telephone calls.
+- Make browser-based ElevenLabs conversations work.
 - Treat Arc x402 as one relevant optional research purchase, not a second trading platform.
 - Do not expose private keys or place production trades. Use permissioned sandbox access and explicit order authorization.
 - Ship a public repository, documented working demo, 2–3 minute video, and Devpost submission before noon CST Friday.
@@ -37,7 +37,6 @@ Document status: Build plan and technical design. API availability and sandbox p
 | Lovable Cloud / Supabase | Secure server-side functions, API authentication, data storage, and secrets. |
 | Gemini Exchange / Predictions | Event discovery, prices, contract terms, permitted account data, sandbox orders. |
 | ElevenLabs | Conversational voice agent, tools, speech and responses. |
-| Twilio | Actual inbound/outbound phone calls to consenting participants. |
 | Arc + Circle + x402 | USDC payments for selected external research services. |
 | QuickNode (optional) | Arc Streams payment monitoring if pursuing that optional bounty. |
 
@@ -45,7 +44,7 @@ Document status: Build plan and technical design. API availability and sandbox p
 
 The dashboard and the phone agent must call the same application backend. Neither should independently sign Gemini
 requests or hold the trading secrets.
-**Entry points** User → Lovable dashboard OR phone → Twilio → ElevenLabs agent.
+**Entry points** User → Lovable dashboard → ElevenLabs agent.
 SHARED APPLICATION BACKEND  Auth, Gemini adapter, preview/approval, order execution, research purchases, audit
 events.
 
@@ -80,7 +79,6 @@ approval.
 - Gemini Sandbox exchange website
 - ElevenLabs Agents overview
 - ElevenLabs webhook tools
-- ElevenLabs native Twilio integration
 - Lovable GitHub integration
 - Lovable Cloud backend and secrets
 - Circle Arc Nanopayments reference repository

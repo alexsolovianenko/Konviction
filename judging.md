@@ -26,7 +26,7 @@ rules.
 2.  Product (30 sec): Call-to-Predict is a voice-first Gemini research-and-trading assistant.
 3.  Live demo (2.5 min): call, Gemini market lookup, optional paid research on Arc, exact trade preview, approval and sandbox
 status.
-4.  How it works (45 sec): Lovable + shared backend + Gemini API + ElevenLabs/Twilio + Circle Arc x402.
+4.  How it works (45 sec): Lovable + shared backend + Gemini API + ElevenLabs + Circle Arc x402.
 5.  Safety and impact (30 sec): user approval, test environments, bounded USDC spending and actual status readback.
 6.  Closing (15 sec): show source, proof links, limitations and next steps.
 Do not claim to be the first voice trading tool without independent evidence. Never label simulated orders as exchange fills.

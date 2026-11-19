@@ -29,10 +29,7 @@ export function PrivatePortfolio({ showPositions = true }: { showPositions?: boo
           try {
             const r = await tradingRequest("portfolio", paired ? {} : { pin });
             if (r.ok) setAccount(r);
-            else {
-              if (r.error === "DEVICE_REQUIRED") setPaired(false);
-              setMessage(r.message ?? "Could not read the Gemini Sandbox account.");
-            }
+            else setMessage(r.message);
           } finally {
             setBusy(false);
           }
