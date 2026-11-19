@@ -3,28 +3,31 @@ import { cn } from "@/lib/utils";
 
 export type Tone = "success" | "warning" | "danger" | "muted" | "violet" | "info" | "primary";
 const toneCls: Record<Tone, string> = {
-  success: "bg-success/12 text-success",
-  warning: "bg-warning/14 text-warning",
-  danger: "bg-destructive/10 text-destructive",
-  muted: "bg-muted text-muted-foreground",
-  violet: "bg-violet/10 text-violet",
-  info: "bg-info/10 text-info",
-  primary: "bg-primary-soft text-accent-foreground",
+  success: "text-success",
+  warning: "text-warning",
+  danger: "text-destructive",
+  muted: "text-muted-foreground",
+  violet: "text-violet",
+  info: "text-info",
+  primary: "text-accent-foreground",
 };
 
+// A coloured dot and a word: status without a box around it.
 export function Pill({ tone, children, className }: { tone: Tone; children: ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold", toneCls[tone], className)}>
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium", toneCls[tone], className)}>
+      <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden />
       {children}
     </span>
   );
 }
 
+// A document section: quiet heading, hairline, content. No card.
 export function Panel({ title, right, children, className }: { title: string; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("panel flex min-w-0 flex-col overflow-hidden", className)}>
-      <header className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4 pt-6 sm:px-7">
-        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+    <section className={cn("flex min-w-0 flex-col", className)}>
+      <header className="flex min-h-9 flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
+        <h2 className="text-sm font-semibold">{title}</h2>
         {right}
       </header>
       {children}
@@ -41,15 +44,15 @@ export function Btn({ children, onClick }: { children: ReactNode; onClick: () =>
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="px-4 py-10 text-center text-sm text-muted-foreground">{children}</div>;
+  return <div className="py-6 text-sm text-muted-foreground">{children}</div>;
 }
 
-export function PageHeader({ title, lead, right }: { title: string; lead: ReactNode; right?: ReactNode }) {
+export function PageHeader({ title, lead, right }: { title: string; lead?: ReactNode; right?: ReactNode }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-4 pb-2">
+    <header className="flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="display text-[2.5rem] sm:text-6xl">{title}</h1>
-        <p className="mt-3 max-w-2xl text-base text-muted-foreground sm:text-lg">{lead}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        {lead && <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{lead}</p>}
       </div>
       {right}
     </header>
@@ -71,5 +74,5 @@ export function JsonBlock({ value, className }: { value: unknown; className?: st
   );
 }
 
-export const th = "px-5 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap sm:px-7";
-export const td = "px-5 py-4 text-[0.95rem] tnum whitespace-nowrap sm:px-7";
+export const th = "";
+export const td = "tnum whitespace-nowrap";

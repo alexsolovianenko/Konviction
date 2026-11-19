@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, LockKeyhole } from "lucide-react";
 import { PIN_PATTERN, tradingRequest, type Proposal, type Availability } from "../browserTrading";
 import { cents, usd } from "../lib/format";
 
@@ -41,33 +41,31 @@ export function TradeApproval({
   return (
     <section
       aria-label="Sandbox trade approval"
-      className={"panel min-w-0 overflow-hidden " + (proposal && !expired ? "border-primary ring-4 ring-primary/10" : "")}
+      className={"min-w-0 " + (proposal ? "rounded-lg border bg-card p-4 " + (expired ? "border-border" : "border-primary") : "")}
     >
-      <header className="flex flex-wrap items-center justify-between gap-2 px-5 pt-6 sm:px-7">
-        <h2 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight">
-          <ShieldCheck className="size-6 text-primary" aria-hidden /> Sandbox trade proposal
-        </h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+        <p className="min-w-0 text-muted-foreground">
+          <span className="sr-only">Sandbox trade proposal. </span>
+          {config?.message ?? "Checking sandbox trading availability…"}
+        </p>
         <a
           href="/open-trades"
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
+          className="inline-flex shrink-0 items-center gap-1 text-accent-foreground hover:underline"
         >
-          Open trades and positions <ArrowUpRight className="size-4" aria-hidden />
+          Open trades and positions <ArrowUpRight className="size-3.5" aria-hidden />
         </a>
-      </header>
-      <p className="px-5 pb-6 pt-1.5 text-sm text-muted-foreground sm:px-7">
-        {config?.message ?? "Checking sandbox trading availability…"}
-      </p>
+      </div>
       {proposal && (
-        <div className="space-y-5 border-t border-border px-5 py-6 sm:px-7">
+        <div className="mt-4 space-y-4">
           <div>
-            <strong className="display block text-3xl leading-tight sm:text-4xl">
+            <h2 className="text-lg font-semibold tracking-tight">
               {proposal.title} · {proposal.contract_label}
-            </strong>
-            <p className="mt-2 text-base text-muted-foreground">{proposal.readback}</p>
+            </h2>
+            <p className="mt-0.5 text-sm text-subtle">{proposal.readback}</p>
           </div>
-          <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
             {(
               [
                 ["Outcome", String(proposal.outcome).toUpperCase()],
@@ -76,9 +74,9 @@ export function TradeApproval({
                 ["Est. cost + fee", `${usd(proposal.notional_usd)} + ${usd(proposal.est_fee_usd)}`],
               ] as const
             ).map(([label, value]) => (
-              <div key={label} className="rounded-2xl bg-muted px-4 py-3">
-                <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-                <dd className="tnum mt-0.5 text-lg font-semibold tracking-tight">{value}</dd>
+              <div key={label}>
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className="mt-0.5 font-mono">{value}</dd>
               </div>
             ))}
           </dl>
@@ -87,11 +85,11 @@ export function TradeApproval({
             Expires {new Date(proposal.expires_at).toLocaleTimeString()}
           </p>
           {expired ? (
-            <p className="rounded-xl bg-warning/12 px-3 py-2 text-sm font-medium text-warning">Proposal expired. Ask for a fresh quote.</p>
+            <p className="text-sm text-warning">Proposal expired. Ask for a fresh quote.</p>
           ) : (
             config?.execution_enabled && (
               <form
-                className="rounded-3xl bg-primary-soft p-5"
+                className="border-t border-border pt-4"
                 onSubmit={async (e) => {
                   e.preventDefault();
                   if (pending || !PIN_PATTERN.test(pin)) return;
@@ -104,12 +102,12 @@ export function TradeApproval({
                   }
                 }}
               >
-                <p className="flex items-start gap-2 text-sm font-medium">
+                <p className="flex items-start gap-2 text-sm text-muted-foreground">
                   <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden />
                   Type your PIN here. Keep it out of the voice conversation.
                 </p>
                 <div className="mt-3 flex flex-wrap items-end gap-2">
-                  <label className="flex min-w-40 flex-1 flex-col gap-1 text-sm font-medium">
+                  <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
                     Private approval PIN
                     <input
                       className="field tracking-[0.3em]"
@@ -122,7 +120,7 @@ export function TradeApproval({
                       onChange={(e) => setPin(e.target.value)}
                     />
                   </label>
-                  <button className="btn btn-primary h-12 px-6" disabled={pending || !PIN_PATTERN.test(pin)}>
+                  <button className="btn btn-primary" disabled={pending || !PIN_PATTERN.test(pin)}>
                     Approve sandbox buy
                   </button>
                 </div>
@@ -132,7 +130,7 @@ export function TradeApproval({
         </div>
       )}
       {message && (
-        <p role="status" className="border-t border-border bg-primary-soft px-5 py-4 text-sm font-semibold sm:px-7">
+        <p role="status" className="mt-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
           {message}
         </p>
       )}

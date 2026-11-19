@@ -1,4 +1,4 @@
-import { ChevronRight, FileSearch, LineChart, Wrench } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { JsonBlock } from '../console/ui';
 import { useVoice } from './VoiceProvider';
 
@@ -11,7 +11,7 @@ function pretty(text: string): unknown {
   }
 }
 
-// Right-hand rail: every Gemini Sandbox lookup and capture tool result of this session, newest first,
+// Every Gemini Sandbox lookup and capture tool result of this session, newest first,
 // each expandable to the exact request and response.
 export function ActivityPanel() {
   const { view, market } = useVoice();
@@ -23,38 +23,23 @@ export function ActivityPanel() {
   ].sort((a, b) => b.at.localeCompare(a.at));
 
   return (
-    <aside aria-label="Live activity" className="flex min-w-0 flex-col gap-6 xl:sticky xl:top-24">
-      <section className="panel flex min-w-0 flex-col overflow-hidden">
-        <header className="flex items-end justify-between gap-2 px-5 pb-3 pt-5">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-primary">Gemini Sandbox</p>
-            <h2 className="text-xl font-semibold tracking-tight">Live activity</h2>
-          </div>
-          {market.pending ? (
-            <span className="flex items-center gap-2 text-xs font-medium text-accent-foreground">
-              <span className="spinner spinner-ink" aria-hidden /> Fetching
-            </span>
-          ) : (
-            <span className="tnum text-xs text-muted-foreground">{items.length} {items.length === 1 ? 'event' : 'events'}</span>
-          )}
+    <aside aria-label="Activity" className="flex min-w-0 flex-col gap-8">
+      <section className="min-w-0">
+        <header className="flex items-center justify-between gap-2 border-b border-border pb-2">
+          <h2 className="text-sm font-semibold">Activity</h2>
+          {market.pending && <span className="spinner spinner-ink" aria-label="Fetching from Gemini Sandbox" />}
         </header>
         {items.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-6 pb-10 pt-6 text-center">
-            <span className="grid size-10 place-items-center rounded-full bg-primary-soft text-primary"><FileSearch className="size-5" aria-hidden /></span>
-            <p className="text-sm font-medium">Nothing looked up yet</p>
-            <p className="text-sm text-muted-foreground">Ask about a prediction market, or search below. Each Gemini Sandbox response lands here so you can open it.</p>
-          </div>
+          <p className="py-3 text-sm text-muted-foreground">Lookups and tool results appear here with their full Gemini Sandbox response.</p>
         ) : (
-          <ul className="lookup-history max-h-[30rem] overflow-y-auto px-2 pb-2">
+          <ul className="lookup-history max-h-[28rem] overflow-y-auto">
             {items.map(({ key, lookup, tool, at }) => (
-              <li key={key} className="animate-row-in">
-                <details className="group">
-                  <summary className="flex items-center gap-3 rounded-2xl px-3 py-3 hover:bg-muted">
-                    <span className={'grid size-10 shrink-0 place-items-center rounded-full ' + (lookup ? 'bg-primary-soft text-primary' : 'bg-muted text-muted-foreground')}>
-                      {lookup ? (lookup.name === 'search_markets' ? <FileSearch className="size-4" aria-hidden /> : <LineChart className="size-4" aria-hidden />) : <Wrench className="size-4" aria-hidden />}
-                    </span>
+              <li key={key} className="animate-row-in border-b border-border">
+                <details>
+                  <summary className="flex items-center gap-2 py-2 hover:bg-card">
+                    <ChevronRight className="chev size-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[0.95rem] font-semibold">
+                      <span className="block truncate text-sm">
                         {lookup
                           ? `${lookup.name === 'search_markets' ? 'Market search' : 'Contract quote'} · ${String(lookup.params['query'] || lookup.params['contract_symbol'] || 'All events')}`
                           : tool!.tool_name}
@@ -63,15 +48,14 @@ export function ActivityPanel() {
                         <time dateTime={at}>{time(at)}</time>
                         <span aria-hidden>·</span>
                         {lookup ? (
-                          <span className={lookup.result.ok ? 'font-medium text-success' : 'font-medium text-destructive'}>{lookup.result.ok ? 'Received' : 'Unavailable'}</span>
+                          <span className={lookup.result.ok ? 'text-success' : 'text-destructive'}>{lookup.result.ok ? 'Received' : 'Unavailable'}</span>
                         ) : (
                           <span>Capture tool result</span>
                         )}
                       </span>
                     </span>
-                    <ChevronRight className="chev size-4 shrink-0 text-muted-foreground" aria-hidden />
                   </summary>
-                  <div className="px-3 pb-3 pt-1">
+                  <div className="pb-3 pl-6">
                     <JsonBlock value={lookup ? { request: lookup.params, response: lookup.result } : pretty(tool!.text)} />
                   </div>
                 </details>
@@ -81,19 +65,16 @@ export function ActivityPanel() {
         )}
       </section>
 
-      <section className="min-w-0 overflow-hidden rounded-3xl bg-canvas">
-        <header className="flex items-center justify-between px-5 pb-1 pt-5">
-          <h2 className="text-base font-semibold tracking-tight">Captured intents</h2>
-          <span className="tnum text-xs text-muted-foreground">{view.intents.length}</span>
-        </header>
+      <section className="min-w-0">
+        <h2 className="border-b border-border pb-2 text-sm font-semibold">Captured intents</h2>
         {!view.intents.length ? (
-          <p className="px-5 pb-5 pt-1 text-sm text-muted-foreground">No intents captured this session.</p>
+          <p className="py-3 text-sm text-muted-foreground">No intents captured this session.</p>
         ) : (
-          <ol className="divide-y divide-border px-1 pb-2">
+          <ol>
             {view.intents.map((intent) => (
-              <li key={intent.id} className="space-y-1 px-4 py-3 text-sm">
+              <li key={intent.id} className="space-y-0.5 border-b border-border py-2 text-sm">
                 <div className="flex items-baseline justify-between gap-2">
-                  <strong className="font-semibold capitalize">{intent.intent.replace('_', ' ')}</strong>
+                  <strong className="font-medium capitalize">{intent.intent.replace('_', ' ')}</strong>
                   <time className="tnum text-xs text-muted-foreground" dateTime={intent.created_at}>
                     {time(intent.created_at)}
                   </time>

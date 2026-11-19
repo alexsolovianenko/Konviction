@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { LockKeyhole } from "lucide-react";
 import { PIN_PATTERN, tradingRequest } from "../browserTrading";
-import { Empty, PageHeader, Panel, td, th } from "../components/console/ui";
+import { Empty, PageHeader, Panel } from "../components/console/ui";
 
 export const Route = createFileRoute("/open-trades")({
   head: () => ({ meta: [{ title: "Private trades · Voice-to-Predict" }] }),
@@ -16,13 +15,13 @@ function OpenTrades() {
     [message, setMessage] = useState(""),
     [account, setAccount] = useState<Account | null>(null);
   return (
-    <div className="flex flex-col gap-6 lg:gap-8">
+    <div className="flex max-w-5xl flex-col gap-8">
       <PageHeader
-        title="Open trades and positions"
+        title="Private trades"
         lead="Enter the approval PIN to read private Gemini Sandbox orders, fills and positions. Data comes straight from Gemini."
       />
       <form
-        className="stage flex flex-wrap items-end gap-3 p-6 sm:p-9"
+        className="flex flex-wrap items-end gap-2"
         onSubmit={async (e) => {
           e.preventDefault();
           if (busy) return;
@@ -39,10 +38,7 @@ function OpenTrades() {
           }
         }}
       >
-        <span className="hidden size-12 shrink-0 place-items-center rounded-full bg-background text-primary sm:grid">
-          <LockKeyhole className="size-5" aria-hidden />
-        </span>
-        <label className="flex min-w-40 flex-1 flex-col gap-1 text-sm font-medium sm:max-w-xs">
+        <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
           Approval PIN
           <input
             className="field tracking-[0.3em]"
@@ -55,7 +51,7 @@ function OpenTrades() {
             onChange={(e) => setPin(e.target.value)}
           />
         </label>
-        <button className="btn btn-ink h-12 px-6" disabled={busy || !PIN_PATTERN.test(pin)}>
+        <button className="btn btn-primary" disabled={busy || !PIN_PATTERN.test(pin)}>
           Refresh account
         </button>
         {busy && (
@@ -64,19 +60,14 @@ function OpenTrades() {
           </p>
         )}
         {message && (
-          <p role="alert" className="w-full rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <p role="alert" className="w-full text-sm text-destructive">
             {message}
           </p>
         )}
       </form>
-      {!account && !busy && !message && (
-        <div className="panel py-6">
-          <Empty>Private account data stays hidden until you enter the PIN. It is never spoken or stored in the browser.</Empty>
-        </div>
-      )}
       {account && (
         <>
-          <p className="tnum text-sm text-muted-foreground">Updated {new Date(account.as_of).toLocaleString()}</p>
+          <p className="tnum text-xs text-muted-foreground">Updated {new Date(account.as_of).toLocaleString()}</p>
           {(
             [
               ["Open orders", account.orders],
@@ -93,21 +84,21 @@ function OpenTrades() {
                   <Empty>No records returned.</Empty>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="border-y border-border">
+                    <table className="data">
+                      <thead>
                         <tr>
                           {headers.map((k) => (
-                            <th key={k} scope="col" className={th}>
+                            <th key={k} scope="col">
                               {k}
                             </th>
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-border">
+                      <tbody>
                         {data.rows.map((r, i) => (
                           <tr key={i}>
                             {headers.map((k) => (
-                              <td key={k} className={td}>
+                              <td key={k} className="tnum whitespace-nowrap">
                                 {r[k] ?? "—"}
                               </td>
                             ))}

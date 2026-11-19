@@ -1,8 +1,8 @@
-import { ClientOnly, createFileRoute } from '@tanstack/react-router';
-import { Dashboard } from '../pages/Dashboard';
+import { createFileRoute } from "@tanstack/react-router";
+import { Home } from "@/pages/Home";
 
-// Kept for existing links: the voice workspace is now also the home view.
-export const Route = createFileRoute('/voice')({
-  head: () => ({ meta: [{ title: 'Voice workspace · Voice-to-Predict' }] }),
-  component: () => <ClientOnly><Dashboard /></ClientOnly>,
+// Kept for existing links: the voice workspace is the home view.
+export const Route = createFileRoute("/voice")({
+  head: () => ({ meta: [{ title: "Voice workspace · Voice-to-Predict" }] }),
+  component: Home,
 });

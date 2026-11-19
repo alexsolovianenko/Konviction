@@ -1,12 +1,8 @@
-import { ClientOnly, createFileRoute } from "@tanstack/react-router";
-import { MarketsView } from "@/components/console/Console";
+import { createFileRoute } from "@tanstack/react-router";
+import { MarketWorkspace } from "@/pages/Home";
 
+// Kept for existing links: the market listing is the home view.
 export const Route = createFileRoute("/markets")({
-  head: () => ({
-    meta: [
-      { title: "Markets · Voice-to-Predict" },
-      { name: "description", content: "Active prediction contracts listed on Gemini Sandbox." },
-    ],
-  }),
-  component: () => <ClientOnly><MarketsView /></ClientOnly>,
+  head: () => ({ meta: [{ title: "Prediction markets · Voice-to-Predict" }] }),
+  component: MarketWorkspace,
 });
