@@ -79,9 +79,9 @@ type Open = (title: string, body: ReactNode) => void;
 
 function Waiting({ q }: { q: ReturnType<typeof useDashboardState> }) {
   return (
-    <div className="panel flex flex-col items-center justify-center gap-3 px-4 py-20 text-center">
+    <div className="stage flex flex-col items-center justify-center gap-3 px-4 py-24 text-center">
       <span className="spinner spinner-ink" aria-hidden />
-      <p className="text-lg font-semibold">Waiting for backend…</p>
+      <p className="display text-3xl">Waiting for backend…</p>
       <p className="tnum text-sm text-muted-foreground">
         {q.isError ? `dashboard-state unavailable (${(q.error as Error).message}) · retrying every 2.5s` : "connecting"}
       </p>
@@ -115,12 +115,12 @@ export function OverviewView() {
   const d = q.data;
   const { open, sheet } = useDrawer();
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6 lg:gap-8">
       <PageHeader
         title="Dashboard"
         lead="Read-only view of the Gemini Sandbox account, voice activity, trades and receipts."
         right={d?.phone_number && (
-          <a href={`tel:${d.phone_number}`} className="tnum inline-flex items-center gap-2 rounded-full bg-primary-soft px-4 py-2 text-lg font-bold text-primary hover:underline">
+          <a href={`tel:${d.phone_number}`} className="btn btn-ink btn-lg tnum">
             <Phone className="size-4" aria-hidden /> {d.phone_number}
           </a>
         )}
@@ -129,9 +129,9 @@ export function OverviewView() {
       {!d ? <Waiting q={q} /> : (
         <>
           <AccountStrip d={d} />
-          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-            <Timeline d={d} open={open} />
+          <div className="grid items-start gap-6 lg:gap-8 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
             <Trades d={d} now={now} open={open} />
+            <Timeline d={d} open={open} />
           </div>
           <Positions d={d} open={open} />
           <Receipts d={d} open={open} />
@@ -147,7 +147,7 @@ export function MarketsView() {
   const q = useDashboardState();
   const d = q.data;
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6 lg:gap-8">
       <PageHeader title="Markets" lead="Active prediction contracts from the Gemini Sandbox feed, refreshed while this page is open." />
       {!d ? <Waiting q={q} /> : d.markets ? <Markets markets={d.markets} /> : (
         <div className="panel"><Empty>Market listings are not included in the current dashboard feed.</Empty></div>
@@ -159,51 +159,62 @@ export function MarketsView() {
 
 function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="min-w-0 bg-card px-4 py-4 sm:px-5">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="tnum mt-1 truncate text-2xl font-bold tracking-tight">{value}</div>
-      {sub && <div className="mt-0.5 truncate text-xs text-destructive">{sub}</div>}
+    <div className="flex min-w-0 items-center justify-between gap-4 py-3.5">
+      <div className="min-w-0">
+        <div className="text-[0.95rem] font-medium">{label}</div>
+        {sub && <div className="truncate text-xs text-destructive">{sub}</div>}
+      </div>
+      <div className="tnum text-right text-[0.95rem] font-semibold">{value}</div>
     </div>
   );
 }
 
+// Balance first, as the one number that matters; account facts sit beside it as a quiet list.
 function AccountStrip({ d }: { d: DashboardState }) {
   const a = d.account;
   const l = d.limits;
-  const limits = `${usd(l.maxOrderUsd).replace(".00", "")}/order · ${usd(l.maxDailyUsd).replace(".00", "")}/day · max ${cents(l.maxLimitPrice)}`;
-  if (!a.configured) {
-    return (
-      <div className="panel flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-5">
-        <span className="font-medium text-warning">Gemini keys not configured yet</span>
-        <span className="tnum text-sm text-muted-foreground">{limits}</span>
-      </div>
-    );
-  }
+  const money = (n: number) => usd(n).replace(".00", "");
   return (
-    <div className="panel grid grid-cols-2 gap-px overflow-hidden bg-border lg:grid-cols-4">
-      <Stat label="USD available" value={usd(a.usd_available)} sub={a.balance_error} />
-      <Stat label="Terms accepted" value={a.terms_accepted === null ? "—" : a.terms_accepted ? <span className="text-success">Yes</span> : <span className="text-destructive">No</span>} sub={a.terms_error} />
-      <Stat label="Open positions" value={a.positions?.length ?? 0} sub={a.positions_error} />
-      <Stat label="Limits" value={<span className="whitespace-normal text-sm font-semibold leading-snug">{limits}</span>} />
+    <div className="stage grid gap-6 p-6 sm:p-9 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-center lg:gap-10 lg:p-12">
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-muted-foreground">USD available · Gemini Sandbox</div>
+        {a.configured ? (
+          <div className="display tnum mt-2 truncate text-6xl sm:text-7xl lg:text-[5.5rem]">{usd(a.usd_available)}</div>
+        ) : (
+          <div className="display mt-2 text-4xl text-warning sm:text-5xl">Gemini keys not configured yet</div>
+        )}
+        {a.balance_error && <div className="mt-2 text-sm text-destructive">{a.balance_error}</div>}
+      </div>
+      <div className="divide-y divide-border rounded-3xl bg-background px-5 py-1.5 sm:px-6">
+        {a.configured && (
+          <>
+            <Stat label="Open positions" value={a.positions?.length ?? 0} sub={a.positions_error} />
+            <Stat label="Terms accepted" value={a.terms_accepted === null ? "—" : a.terms_accepted ? <span className="text-success">Yes</span> : <span className="text-destructive">No</span>} sub={a.terms_error} />
+          </>
+        )}
+        <Stat label="Order limit" value={`${money(l.maxOrderUsd)} per order`} />
+        <Stat label="Daily limit" value={`${money(l.maxDailyUsd)} per day`} />
+        <Stat label="Highest limit price" value={cents(l.maxLimitPrice)} />
+      </div>
     </div>
   );
 }
 
 function Timeline({ d, open }: { d: DashboardState; open: Open }) {
   return (
-    <Panel title="Live activity" right={<span className="tnum text-xs text-muted-foreground">{d.activity.length} events</span>}>
+    <Panel title="Voice activity" right={<span className="tnum text-sm text-muted-foreground">{d.activity.length} events</span>}>
       {d.activity.length === 0 ? <Empty>No activity yet. Call the number to start.</Empty> : (
-        <ul className="max-h-[40rem] divide-y divide-border overflow-y-auto">
+        <ul className="max-h-[40rem] overflow-y-auto px-2 pb-2">
           {d.activity.map((e) => (
             <li key={e.id} className="animate-row-in">
               <button
                 onClick={() => open(`${e.kind} · ${hms(e.at)}`, <JsonBlock value={{ kind: e.kind, at: e.at, summary: e.summary }} />)}
-                className="grid w-full grid-cols-[auto_auto_1fr] items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-muted/60 sm:px-5 md:grid-cols-[4.5rem_12.5rem_5rem_1fr]"
+                className="grid w-full grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1.5 rounded-2xl px-3 py-3 text-left transition-colors hover:bg-muted sm:px-5"
               >
-                <span className="tnum text-xs text-muted-foreground">{hms(e.at)}</span>
-                <Pill tone={kindTone(e.kind)}>{e.kind}</Pill>
+                <Pill tone={kindTone(e.kind)}>{e.kind.replace(/_/g, " ")}</Pill>
                 <span className="tnum truncate text-xs text-muted-foreground">{e.caller ?? "—"}</span>
-                <span className="col-span-3 text-sm md:col-span-1">{e.summary}</span>
+                <span className="tnum text-xs text-muted-foreground">{hms(e.at)}</span>
+                <span className="col-span-3 text-[0.95rem]">{e.summary}</span>
               </button>
             </li>
           ))}
@@ -232,7 +243,7 @@ function Trades({ d, now, open }: { d: DashboardState; now: number; open: Open }
   };
   return (
     <Panel title="Trades">
-      <div className="max-h-[40rem] space-y-3 overflow-y-auto p-3 sm:p-4">
+      <div className="max-h-[40rem] space-y-3 overflow-y-auto px-5 pb-6 sm:px-7">
         {pending.length === 0 && d.orders.length === 0 && <Empty>No trades yet.</Empty>}
         {pending.map((i) => <PendingCard key={i.id} i={i} now={now} />)}
         {d.orders.map((o) => <OrderCard key={o.id} o={o} i={byId.get(o.intent_id)} onRaw={() => open(`Raw Gemini response · ${o.gemini_order_id ?? o.id}`, <JsonBlock value={o} />)} onReceipts={() => showReceipts(o)} />)}
@@ -244,13 +255,13 @@ function Trades({ d, now, open }: { d: DashboardState; now: number; open: Open }
 function PendingCard({ i, now }: { i: Intent; now: number }) {
   const left = countdown(i.expires_at, now);
   return (
-    <div className="animate-row-in rounded-2xl border border-dashed border-warning/60 bg-warning/5 p-4">
+    <div className="animate-row-in rounded-3xl bg-warning/10 p-5">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <SideOutcome side={i.side} outcome={i.outcome} />
         <Pill tone="warning">Awaiting PIN · {left}</Pill>
       </div>
-      <div className="font-semibold">{i.contract_label ?? i.instrument_symbol}</div>
-      {i.title && <div className="text-xs text-muted-foreground">{i.title}</div>}
+      <div className="text-xl font-semibold tracking-tight">{i.contract_label ?? i.instrument_symbol}</div>
+      {i.title && <div className="text-sm text-muted-foreground">{i.title}</div>}
       <div className="tnum mt-2 text-sm">Asked: {i.quantity} @ ≤ {cents(i.limit_price)} <span className="text-muted-foreground">· est. fee {usd(i.est_fee_usd)} · code {i.code}</span></div>
     </div>
   );
@@ -258,13 +269,13 @@ function PendingCard({ i, now }: { i: Intent; now: number }) {
 
 function OrderCard({ o, i, onRaw, onReceipts }: { o: Order; i: Intent | undefined; onRaw: () => void; onReceipts: () => void }) {
   return (
-    <div className="animate-row-in rounded-2xl border border-border p-4">
+    <div className="animate-row-in rounded-3xl bg-muted p-5">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <SideOutcome side={o.side ?? i?.side ?? "?"} outcome={i?.outcome ?? "?"} />
         <Pill tone={summaryTone(o.outcome_summary)}>{(o.outcome_summary ?? o.exchange_status ?? "—").replace(/_/g, " ")}</Pill>
       </div>
-      <div className="font-semibold">{i?.contract_label ?? i?.instrument_symbol ?? "Unknown contract"}</div>
-      {i?.title && <div className="text-xs text-muted-foreground">{i.title}</div>}
+      <div className="text-xl font-semibold tracking-tight">{i?.contract_label ?? i?.instrument_symbol ?? "Unknown contract"}</div>
+      {i?.title && <div className="text-sm text-muted-foreground">{i.title}</div>}
       <dl className="tnum mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
         <dt className="text-muted-foreground">Asked</dt><dd>{i ? `${i.quantity} @ ≤ ${cents(i.limit_price)}` : "—"}</dd>
         <dt className="text-muted-foreground">Gemini filled</dt><dd className="font-semibold text-primary">{num(o.filled_qty)} @ {cents(o.avg_price)}</dd>
@@ -272,7 +283,7 @@ function OrderCard({ o, i, onRaw, onReceipts }: { o: Order; i: Intent | undefine
         <dt className="text-muted-foreground">Order id</dt><dd className="break-all">{o.gemini_order_id ?? "—"}</dd>
       </dl>
       {o.error && <div className="mt-2 break-words text-sm text-destructive">{o.error}</div>}
-      <div className="mt-3 flex flex-wrap gap-2"><Btn onClick={onRaw}>Raw Gemini response</Btn><Btn onClick={onReceipts}>Receipts</Btn></div>
+      <div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn btn-chip bg-background" onClick={onRaw}>Raw Gemini response</button><button type="button" className="btn btn-chip bg-background" onClick={onReceipts}>Receipts</button></div>
     </div>
   );
 }
@@ -291,9 +302,9 @@ function Markets({ markets }: { markets: NonNullable<DashboardState["markets"]> 
     <Panel
       title="Prediction markets (Gemini Sandbox)"
       right={
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full sm:w-80">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <input className="field h-10 pl-10" aria-label="Filter listed contracts" placeholder="Filter this listing" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <input className="field h-11 rounded-full border-transparent bg-muted pl-10" aria-label="Filter listed contracts" placeholder="Filter this listing" value={filter} onChange={(e) => setFilter(e.target.value)} />
         </div>
       }
     >
@@ -303,7 +314,7 @@ function Markets({ markets }: { markets: NonNullable<DashboardState["markets"]> 
         <>
           <ul className="divide-y divide-border md:hidden" aria-label="Gemini Sandbox prediction markets">
             {rows.map(({ event, contract }) => (
-              <li key={`${event.ticker}-${contract.symbol}`} className="space-y-2 px-4 py-4">
+              <li key={`${event.ticker}-${contract.symbol}`} className="space-y-2 px-5 py-4">
                 <div>
                   <div className="font-semibold leading-snug">{event.title}</div>
                   <div className="text-sm">{contract.label ?? contract.symbol}</div>
@@ -319,12 +330,12 @@ function Markets({ markets }: { markets: NonNullable<DashboardState["markets"]> 
           </ul>
           <div className="hidden max-h-[70vh] overflow-auto md:block" role="region" aria-label="Gemini Sandbox market listings" tabIndex={0}>
             <table className="w-full" aria-label="Gemini Sandbox prediction markets">
-              <thead className="sticky top-0 border-b border-border bg-muted"><tr>{["Event", "Contract", "YES ask / bid", "NO ask / bid", "Status", "Expiry (UTC)"].map((h) => <th key={h} scope="col" className={th}>{h}</th>)}</tr></thead>
+              <thead className="sticky top-0 border-y border-border bg-background"><tr>{["Event", "Contract", "YES ask / bid", "NO ask / bid", "Status", "Expiry (UTC)"].map((h) => <th key={h} scope="col" className={th}>{h}</th>)}</tr></thead>
               <tbody className="divide-y divide-border">
                 {rows.map(({ event, contract }) => (
                   <tr key={`${event.ticker}-${contract.symbol}`} className="hover:bg-muted/40">
-                    <td className="min-w-44 px-4 py-3 text-sm font-medium">{event.title}<div className="text-xs font-normal text-muted-foreground">{[event.category, event.status].filter(Boolean).join(" · ")}</div></td>
-                    <td className="min-w-44 px-4 py-3 text-sm">{contract.label ?? contract.symbol}{contract.label && <div className="break-all font-mono text-[11px] text-muted-foreground">{contract.symbol}</div>}</td>
+                    <td className="min-w-44 px-5 py-4 text-[0.95rem] font-semibold sm:px-7">{event.title}<div className="text-xs font-normal text-muted-foreground">{[event.category, event.status].filter(Boolean).join(" · ")}</div></td>
+                    <td className="min-w-44 px-5 py-4 text-[0.95rem] sm:px-7">{contract.label ?? contract.symbol}{contract.label && <div className="break-all font-mono text-[11px] text-muted-foreground">{contract.symbol}</div>}</td>
                     <td className={cn(td, "font-semibold text-success")}>{cents(contract.buy.yes)} / {cents(contract.sell.yes)}</td>
                     <td className={cn(td, "font-semibold text-destructive")}>{cents(contract.buy.no)} / {cents(contract.sell.no)}</td>
                     <td className={td}>{state(contract)}</td>
@@ -347,7 +358,7 @@ function Positions({ d, open }: { d: DashboardState; open: Open }) {
       {ps.length === 0 ? <Empty>{d.account.positions_error ?? "No open positions."}</Empty> : (
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="border-b border-border bg-muted/50"><tr>{["Contract", "Outcome", "Qty", "Avg", "Bid", "Mkt value", "Unreal. P&L", "Status"].map((h) => <th key={h} className={th}>{h}</th>)}</tr></thead>
+            <thead className="border-y border-border"><tr>{["Contract", "Outcome", "Qty", "Avg", "Bid", "Mkt value", "Unreal. P&L", "Status"].map((h) => <th key={h} className={th}>{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-border">
               {ps.map((p, idx) => (
                 <tr key={`${p.symbol}-${p.outcome}-${idx}`}>
@@ -383,7 +394,7 @@ function Receipts({ d, open }: { d: DashboardState; open: Open }) {
       {d.receipts.length === 0 ? <Empty>No receipts yet.</Empty> : (
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="border-b border-border bg-muted/50"><tr>{["Time", "Kind", "sha256", "Status", ""].map((h, i) => <th key={i} className={th}>{h}</th>)}</tr></thead>
+            <thead className="border-y border-border"><tr>{["Time", "Kind", "sha256", "Status", ""].map((h, i) => <th key={i} className={th}>{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-border">
               {d.receipts.map((r) => (
                 <tr key={r.id} className="animate-row-in">

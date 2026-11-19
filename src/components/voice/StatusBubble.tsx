@@ -44,7 +44,7 @@ export function StatusBubble() {
   }, [open, turns.length, view.draft]);
 
   return (
-    <div ref={root} className="relative mx-auto w-full max-w-xl">
+    <div ref={root} className="relative ml-auto w-full max-w-lg">
       <button
         type="button"
         className="bubble"
@@ -76,7 +76,7 @@ export function StatusBubble() {
         <section
           id="voice-transcript"
           aria-label="Live transcript"
-          className="absolute inset-x-0 top-full z-50 mt-2 overflow-hidden rounded-3xl border border-border bg-background shadow-2xl"
+          className="absolute inset-x-0 top-full z-50 mt-3 overflow-hidden rounded-3xl border border-border bg-background shadow-[0_24px_60px_-20px_oklch(0.15_0.008_262/0.35)]"
         >
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">Live transcript</h2>

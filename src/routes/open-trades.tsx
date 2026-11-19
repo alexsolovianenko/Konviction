@@ -16,13 +16,13 @@ function OpenTrades() {
     [message, setMessage] = useState(""),
     [account, setAccount] = useState<Account | null>(null);
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6 lg:gap-8">
       <PageHeader
         title="Open trades and positions"
         lead="Enter the approval PIN to read private Gemini Sandbox orders, fills and positions. Data comes straight from Gemini."
       />
       <form
-        className="panel flex flex-wrap items-end gap-3 p-4 sm:p-5"
+        className="stage flex flex-wrap items-end gap-3 p-6 sm:p-9"
         onSubmit={async (e) => {
           e.preventDefault();
           if (busy) return;
@@ -39,7 +39,7 @@ function OpenTrades() {
           }
         }}
       >
-        <span className="hidden size-11 shrink-0 place-items-center rounded-full bg-primary-soft text-primary sm:grid">
+        <span className="hidden size-12 shrink-0 place-items-center rounded-full bg-background text-primary sm:grid">
           <LockKeyhole className="size-5" aria-hidden />
         </span>
         <label className="flex min-w-40 flex-1 flex-col gap-1 text-sm font-medium sm:max-w-xs">
@@ -55,7 +55,7 @@ function OpenTrades() {
             onChange={(e) => setPin(e.target.value)}
           />
         </label>
-        <button className="btn btn-primary" disabled={busy || !PIN_PATTERN.test(pin)}>
+        <button className="btn btn-ink h-12 px-6" disabled={busy || !PIN_PATTERN.test(pin)}>
           Refresh account
         </button>
         {busy && (
@@ -70,7 +70,7 @@ function OpenTrades() {
         )}
       </form>
       {!account && !busy && !message && (
-        <div className="panel">
+        <div className="panel py-6">
           <Empty>Private account data stays hidden until you enter the PIN. It is never spoken or stored in the browser.</Empty>
         </div>
       )}
@@ -94,7 +94,7 @@ function OpenTrades() {
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full">
-                      <thead className="border-b border-border bg-muted/50">
+                      <thead className="border-y border-border">
                         <tr>
                           {headers.map((k) => (
                             <th key={k} scope="col" className={th}>

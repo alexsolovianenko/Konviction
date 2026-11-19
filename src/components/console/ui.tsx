@@ -23,8 +23,8 @@ export function Pill({ tone, children, className }: { tone: Tone; children: Reac
 export function Panel({ title, right, children, className }: { title: string; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={cn("panel flex min-w-0 flex-col overflow-hidden", className)}>
-      <header className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+      <header className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4 pt-6 sm:px-7">
+        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         {right}
       </header>
       {children}
@@ -46,10 +46,10 @@ export function Empty({ children }: { children: ReactNode }) {
 
 export function PageHeader({ title, lead, right }: { title: string; lead: ReactNode; right?: ReactNode }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-3">
+    <header className="flex flex-wrap items-end justify-between gap-4 pb-2">
       <div className="min-w-0">
-        <h1 className="text-2xl font-bold tracking-tight sm:text-[1.75rem]">{title}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{lead}</p>
+        <h1 className="display text-[2.5rem] sm:text-6xl">{title}</h1>
+        <p className="mt-3 max-w-2xl text-base text-muted-foreground sm:text-lg">{lead}</p>
       </div>
       {right}
     </header>
@@ -71,5 +71,5 @@ export function JsonBlock({ value, className }: { value: unknown; className?: st
   );
 }
 
-export const th = "px-4 py-2.5 text-left text-xs font-medium text-muted-foreground whitespace-nowrap";
-export const td = "px-4 py-3 text-sm tnum whitespace-nowrap";
+export const th = "px-5 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap sm:px-7";
+export const td = "px-5 py-4 text-[0.95rem] tnum whitespace-nowrap sm:px-7";
