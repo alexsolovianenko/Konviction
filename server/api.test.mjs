@@ -12,9 +12,9 @@ import { SQLiteRepository } from './repository.mjs';
 import { createApi } from './api.mjs';
 
 const evals = JSON.parse(readFileSync(new URL('../evals/utterances.json', import.meta.url)));
-const [first, yes] = evals.cases.find((c) => c.id === 'spot-01').turns;
+const [first, yes] = evals.cases.find((c) => c.id === 'pred-01').turns;
 const place = yes.expect.calls[0].args;
-const venue = 'gemini_spot';
+const venue = 'gemini_prediction';
 const readback = first.expect.reply_exact;
 const validators = new Map();
 function checkSchema(schema, value) {
@@ -135,12 +135,12 @@ test('complete simulated workflow, replay and aliases, status/cancel resolution 
     search = first.expect.calls[0].args;
   const query = await s.tool('search_markets', search, key);
   matches('SearchMarketsResult', query.data);
-  assert.equal(query.data.results[0].instrument, 'BTCUSD');
+  assert.equal(query.data.results[0].instrument, place.instrument);
   assert.deepEqual((await s.tool('search_markets', search, key)).data, query.data);
   code(await s.tool('search_markets', { ...search, limit: 1 }, key), 409, 'idempotency_key_reused');
   const book = await s.tool('get_orderbook', {
     venue,
-    instrument: 'BTCUSD',
+    instrument: place.instrument,
     depth: 2,
     utterance: 'invented',
   });
@@ -244,7 +244,7 @@ test('domain and transcript confirmation precedence; failed attempts never captu
     code(await s.tool('capture_order_intent', { ...place, ...params }), status, expected);
   await reject({ unexpected: true }, 'invalid_parameters', 400);
   await reject({ instrument: 'FAKE' }, 'unknown_instrument');
-  await reject({ side: 'yes' }, 'invalid_side_for_venue');
+  await reject({ side: 'sell' }, 'invalid_parameters', 400);
   await reject({ quantity: 1e-9 }, 'invalid_quantity');
   await reject({ limit_price: 1.001 }, 'invalid_price');
   await reject({ confirmed_by_user: false }, 'confirmation_required');
@@ -302,7 +302,7 @@ test('prediction book, cent readback, numeric normalization and spoken order ref
   const utterance = 'cancel a b dash one two three';
   await s.append(
     s.entry('user', utterance),
-    s.entry('agent', 'Cancel order AB123 on Gemini spot. Say yes to confirm.'),
+    s.entry('agent', 'Cancel order AB123 on Gemini prediction. Say yes to confirm.'),
     s.entry('user', 'yes'),
   );
   const cancel = { venue, order_id: 'ab-123', utterance, confirmed_by_user: true };
@@ -362,16 +362,16 @@ test('readback retains decimal points, signed numbers and thousands separators',
   const s = await app.start();
   await s.append(
     s.entry('user', first.user),
-    s.entry('agent', readback.replace('0.5', '-.5')),
+    s.entry('agent', readback.replace('62 cents', '-62 cents')),
     s.entry('user', 'yes'),
   );
   code(await s.tool('capture_order_intent', place), 422, 'readback_mismatch');
   await s.append(
-    s.entry('agent', readback.replace('0.5', '.50').replace('97000', '97,000.00')),
+    s.entry('agent', readback.replace('10 yes', '1,000 yes').replace('62 cents', '.620 dollars')),
     s.entry('user', 'yes'),
   );
-  code(await s.tool('capture_order_intent', { ...place, quantity: 50 }), 422, 'readback_mismatch');
-  assert.equal((await s.tool('capture_order_intent', place)).status, 201);
+  code(await s.tool('capture_order_intent', { ...place, quantity: 620 }), 422, 'readback_mismatch');
+  assert.equal((await s.tool('capture_order_intent', { ...place, quantity: 1000 })).status, 201);
 });
 
 test('confirmation freshness uses the first server receipt regardless of browser clock or transcript replay', async (t) => {

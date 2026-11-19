@@ -9,7 +9,9 @@ Submission deadline: Friday, November 20 at 12:00 PM CST (1:00 PM Toronto time)
 
 Prediction markets usually require users to browse contracts, compare terms, and enter orders on screen. Call-to-Predict lets a user talk through those steps and review the exact proposed order on the dashboard.
 
-A voice-first prediction-market trading assistant. Users speak to an ElevenLabs agent by phone or web, browse real Gemini
+Every order, cancellation and status request concerns a YES or NO event contract on Gemini Predictions. BTC/USD prices provide read-only context. The current browser demo simulates market data, previews contracts and captures requests for later approval.
+
+The longer-term project is a voice-first prediction-market trading assistant. Users speak to an ElevenLabs agent by phone or web, browse real Gemini
 markets, request optional external research, and explicitly authorize an order. The agent may spend limited test USDC on Arc
 via x402 to buy useful research; Gemini remains the core trading venue.
 

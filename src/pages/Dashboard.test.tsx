@@ -216,11 +216,11 @@ it('retries a lost capture response once with the original key and body', async 
   await act(async () => {
     const result = JSON.parse(
       await opts.clientTools.capture_order_intent({
-        venue: 'gemini_spot',
-        instrument: 'BTCUSD',
-        side: 'buy',
+        venue: 'gemini_prediction',
+        instrument: 'BTC-150K-2026',
+        side: 'yes',
         quantity: 1,
-        limit_price: 100,
+        limit_price: 0.18,
         confirmed_by_user: true,
         utterance: 'bitcoin',
       }),
@@ -296,7 +296,7 @@ it('replays missing evidence before retrying a transcript_not_synced tool call',
 it('waits for a late playback completion before flushing the yes to the tool', async () => {
   const f = fixture(),
     opts = await f.begin();
-  const text = 'Buy 1 BTCUSD. Say yes to confirm.';
+  const text = 'Buy 1 YES contract at 18 cents. Say yes to confirm.';
   let result!: Promise<string>;
   act(() => {
     opts.onMessage?.({ role: 'agent', source: 'ai', message: text, event_id: 1 });
@@ -329,7 +329,7 @@ it('waits for a late playback completion before flushing the yes to the tool', a
 it('accepts a fully played alignment if the playback-end event was lost', async () => {
   const f = fixture(),
     opts = await f.begin();
-  const text = 'Buy 1 BTCUSD. Say yes to confirm.';
+  const text = 'Buy 1 YES contract at 18 cents. Say yes to confirm.';
   act(() => {
     opts.onMessage?.({ role: 'agent', source: 'ai', message: text, event_id: 1 });
     opts.onModeChange?.({ mode: 'speaking' });
@@ -439,8 +439,8 @@ it('preserves a correction arriving after the turn was stored and closes the ses
 });
 
 it('renders identical chart states for SDK tool calls and buttons without sending an order or requesting data', async () => {
-  const actions = ['explore', 'buy', 'buy', 'sell', 'explore'] as const;
-  const buttons = { explore: 'Explore chart', buy: 'Preview buy', sell: 'Preview sell' };
+  const actions = ['explore', 'yes', 'yes', 'no', 'explore'] as const;
+  const buttons = { explore: 'Explore chart', yes: 'Preview YES · 18¢', no: 'Preview NO · 83¢' };
   const panel = () => screen.getByRole('region', { name: 'BTC/USD' });
   const manual = fixture();
   const fromClicks = actions.map((action) => {
@@ -462,6 +462,8 @@ it('renders identical chart states for SDK tool calls and buttons without sendin
     expect(data).toMatchObject({
       simulated: true,
       symbol: 'BTC/USD',
+      underlying_unit: 'USD per bitcoin',
+      contract:{venue:'gemini_prediction', instrument:'BTC-150K-2026', yes_bid:0.17,yes_ask:0.18,no_bid:0.82,no_ask:0.83,price_unit:'USD per contract',title:'Will Bitcoin trade above 150,000 dollars before January 1, 2027?',closes_at:'2026-12-31T23:59:00Z'},
       window_minutes: 5,
       action,
       update: i + 1,
@@ -481,7 +483,7 @@ it('renders identical chart states for SDK tool calls and buttons without sendin
     }
     if (action !== 'explore')
       expect(data).toMatchObject({
-        preview: { side: action, price_usd: 97455, execution: 'none' },
+        preview: { side: action, venue: 'gemini_prediction', instrument: 'BTC-150K-2026', contract_price: action === 'yes' ? 0.18 : 0.83, contract_price_cents: action === 'yes' ? 18 : 83, execution: 'none' },
       });
   }
   fireEvent.click(within(panel()).getByRole('button', { name: 'Cancel preview' }));

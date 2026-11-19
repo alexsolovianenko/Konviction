@@ -30,7 +30,7 @@ export function Dashboard() {
     <main>
       <header>
         <h1>Call-to-Predict</h1>
-        <p>Prepare Gemini order intents by voice. Market data is simulated.</p>
+        <p>Prepare YES or NO prediction contracts by voice. Market data is simulated.</p>
       </header>
       <section aria-label="Voice controls" className="controls">
         <button disabled={view.status !== 'Idle'} onClick={() => void voice.start()}>
