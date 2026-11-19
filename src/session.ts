@@ -46,9 +46,15 @@ export class Session {
   readonly entries: Entry[] = [];
   captured: Intent[] = [];
   conversationId?: string;
+  // Resolves to the sequence including a user turn awaiting late playback evidence.
+  pendingEvidence?: Promise<number>;
   private synced = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
+  private evidenceValidity = new AbortController();
+  invalidateEvidence() {
+    this.evidenceValidity.abort();
+  }
   constructor(
     readonly credentials: Credentials,
     private changed: (entries: Entry[]) => void,
@@ -61,7 +67,13 @@ export class Session {
     this.queue = work.catch(() => {});
     return work;
   }
-  private async request(path: string, body?: unknown, key?: string, keepalive = false) {
+  private async request(
+    path: string,
+    body?: unknown,
+    key?: string,
+    keepalive = false,
+    deadline?: AbortSignal,
+  ) {
     const response = await fetch('/api' + path, {
       method: body ? 'POST' : 'GET',
       headers: {
@@ -71,7 +83,9 @@ export class Session {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       keepalive,
-      signal: AbortSignal.timeout(3500),
+      signal: deadline
+        ? AbortSignal.any([deadline, AbortSignal.timeout(3500)])
+        : AbortSignal.timeout(3500),
     });
     return response.json();
   }
@@ -92,8 +106,9 @@ export class Session {
     const end = this.entries.length;
     void this.schedule(() => this.flush(end)).catch(() => this.report('Transcript sync delayed.'));
   }
-  private async flush(end: number, final = false) {
+  private async flush(end: number, final = false, deadline?: AbortSignal) {
     do {
+      deadline?.throwIfAborted();
       const entries = this.entries.slice(this.synced, Math.min(end, this.synced + 50));
       const last = this.synced + entries.length;
       const batch = {
@@ -103,7 +118,7 @@ export class Session {
         final: final && last === end,
       };
       const keepalive = batch.final && new Blob([JSON.stringify(batch)]).size < 64000;
-      const result = await this.request('/transcripts', batch, undefined, keepalive);
+      const result = await this.request('/transcripts', batch, undefined, keepalive, deadline);
       if (result.error || result.last_seq < last) throw new Error('Transcript sync failed.');
       this.synced = Math.max(this.synced, last);
     } while (this.synced < end);
@@ -119,44 +134,69 @@ export class Session {
       tool.name,
       (parameters: Record<string, unknown>) => {
         if (this.closed) return Promise.resolve(JSON.stringify(unavailable));
-        const end = this.entries.length;
+        const evidence = this.pendingEvidence ?? this.entries.length;
         const key = crypto.randomUUID();
         const optional = Object.keys(tool.parameters.properties).filter(
           (k) => !tool.parameters.required.includes(k),
         );
-        const body = {
-          parameters: { ...Object.fromEntries(optional.map((k) => [k, null])), ...parameters },
-          session_id: this.credentials.session_id,
-          last_transcript_seq: end,
-        };
-        return this.schedule(async () => {
-          let result = unavailable;
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              await this.flush(end);
-              result = await this.request('/tools/' + tool.name, body, key);
-              if (result.error?.code !== 'transcript_not_synced') break;
-              const expected = (result.error as { expected_seq?: number }).expected_seq;
-              if (expected && expected <= end) this.synced = expected - 1;
-            } catch {
-              result = unavailable;
+        const deadline = new AbortController();
+        const signal = AbortSignal.any([deadline.signal, this.evidenceValidity.signal]);
+        // Start the budget at SDK invocation, including time behind earlier API work.
+        return new Promise<string>((resolve) => {
+          let settled = false;
+          const complete = (result: typeof unavailable) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            const text = JSON.stringify(result);
+            this.record({ role: 'tool', tool_name: tool.name, text });
+            resolve(text);
+          };
+          const timer = setTimeout(
+            () => {
+              deadline.abort();
+              complete(unavailable);
+            },
+            tool.response_timeout_secs * 1000 - 1000,
+          );
+          void this.schedule(async () => {
+            const end = await evidence;
+            const body = {
+              parameters: { ...Object.fromEntries(optional.map((k) => [k, null])), ...parameters },
+              session_id: this.credentials.session_id,
+              last_transcript_seq: end,
+            };
+            let result = unavailable;
+            let submitted = false;
+            for (let attempt = 0; attempt < 2 && !signal.aborted; attempt++) {
+              try {
+                await this.flush(end, false, signal);
+                signal.throwIfAborted();
+                submitted = true;
+                result = await this.request('/tools/' + tool.name, body, key, false, signal);
+                if (result.error?.code !== 'transcript_not_synced') break;
+                const expected = (result.error as { expected_seq?: number }).expected_seq;
+                if (expected && expected <= end) this.synced = expected - 1;
+              } catch {
+                result = unavailable;
+              }
             }
-          }
-          const text = JSON.stringify(result);
-          this.record({ role: 'tool', tool_name: tool.name, text });
-          try {
-            await this.flush(this.entries.length);
-          } catch {
-            this.report('Transcript sync delayed.');
-          }
-          if (result.ok) {
+            complete(result);
+            // These writes and the dashboard refresh stay ordered with finalization,
+            // but neither delays the response to the voice agent.
             try {
-              await this.refresh();
+              await this.flush(this.entries.length);
             } catch {
-              this.report('Could not refresh captured intents.');
+              this.report('Transcript sync delayed.');
             }
-          }
-          return text;
+            if (result.ok || (submitted && result.error?.code === 'backend_unavailable')) {
+              try {
+                await this.refresh();
+              } catch {
+                this.report('Could not refresh captured intents.');
+              }
+            }
+          });
         });
       },
     ]),

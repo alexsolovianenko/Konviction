@@ -72,7 +72,7 @@ function append(repo, session, body, now) {
       requireRule(isDeepStrictEqual(entry, saved[entry.seq - 1]), 'seq_conflict');
     else saved.push(entry);
   }
-  for (const entry of saved.slice(previous)) repo.append(session.id, entry);
+  for (const entry of saved.slice(previous)) repo.append(session.id, entry, now);
   const state = body.final ? 'ended' : 'active';
   repo.touch(session.id, now, state, body.conversation_id);
   return [

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { api, compile, intentSchema, validIntent } from './contracts.mjs';
 import { SQLiteRepository } from './repository.mjs';
@@ -91,6 +93,7 @@ async function setup(t, overrides = {}) {
   };
   return {
     start,
+    baseUrl: 'http://127.0.0.1:' + server.address().port + '/api',
     request,
     repo,
     advance: (ms) => {
@@ -368,4 +371,125 @@ test('readback retains decimal points, signed numbers and thousands separators',
   );
   code(await s.tool('capture_order_intent', { ...place, quantity: 50 }), 422, 'readback_mismatch');
   assert.equal((await s.tool('capture_order_intent', place)).status, 201);
+});
+
+test('confirmation freshness uses the first server receipt regardless of browser clock or transcript replay', async (t) => {
+  const app = await setup(t);
+  for (const timestamp of ['2030-01-01T00:00:00Z', '2020-01-01T00:00:00Z']) {
+    const s = await app.start();
+    const user = s.entry('user', first.user);
+    const agent = s.entry('agent', readback);
+    const yesEntry = s.entry('user', 'yes', { timestamp });
+    await s.append(user, agent, yesEntry);
+    app.advance(120000);
+    assert.equal((await s.tool('capture_order_intent', place)).status, 201);
+    app.advance(1);
+    assert.equal((await s.append(yesEntry)).data.accepted, 0);
+    code(await s.tool('capture_order_intent', place), 422, 'confirmation_missing');
+    assert.equal(app.repo.transcript(s.session_id).at(-1).timestamp, timestamp);
+  }
+});
+
+test('legacy SQLite migration preserves the transcript and requires a fresh confirmation', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'legacy-capture-'));
+  const path = join(dir, 'capture.sqlite');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const id = randomUUID(),
+    token = randomUUID(),
+    now = Date.parse('2026-11-19T15:03:00Z');
+  const entries = [first.user, readback, 'yes'].map((text, i) => ({
+    text,
+    role: i === 1 ? 'agent' : 'user',
+    seq: i + 1,
+    timestamp: new Date(now).toISOString(),
+  }));
+  const old = new DatabaseSync(path);
+  old.exec(
+    'CREATE TABLE transcript(session TEXT, seq INTEGER, entry TEXT, PRIMARY KEY(session,seq))',
+  );
+  for (const entry of entries)
+    old.prepare('INSERT INTO transcript VALUES (?,?,?)').run(id, entry.seq, JSON.stringify(entry));
+  old.close();
+  const app = await setup(t, { path });
+  app.repo.create(
+    id,
+    createHash('sha256').update(token).digest('hex'),
+    now,
+    now + 3600000,
+    now + 900000,
+  );
+  const capture = (seq) =>
+    app.request(
+      '/tools/capture_order_intent',
+      { session_id: id, last_transcript_seq: seq, parameters: place },
+      token,
+      randomUUID(),
+    );
+  assert.deepEqual(app.repo.transcript(id), entries);
+  assert.equal(app.repo.receivedAt(id, 3), null);
+  const retry = await app.request('/transcripts', { session_id: id, entries }, token);
+  assert.equal(retry.data.accepted, 0);
+  code(await capture(3), 422, 'confirmation_missing');
+  await app.request(
+    '/transcripts',
+    {
+      session_id: id,
+      entries: [
+        { ...entries[1], seq: 4 },
+        { ...entries[2], seq: 5 },
+      ],
+    },
+    token,
+  );
+  assert.equal((await capture(5)).status, 201);
+});
+
+test('replays the original cached capture error after its confirmation expires', async (t) => {
+  const app = await setup(t),
+    s = await app.start();
+  await s.append(s.entry('user', first.user), s.entry('agent', readback), s.entry('user', 'yes'));
+  const key = randomUUID(),
+    params = { ...place, quantity: 9 };
+  const firstError = await s.tool('capture_order_intent', params, key);
+  code(firstError, 422, 'readback_mismatch');
+  app.advance(120001);
+  const replay = await s.tool('capture_order_intent', params, key);
+  assert.deepEqual(replay.data, firstError.data);
+  code(await s.tool('capture_order_intent', params), 422, 'confirmation_missing');
+  assert.equal((await s.list()).data.count, 0);
+});
+
+test('losing the committed capture response and retrying returns the original intent exactly once', async (t) => {
+  const app = await setup(t),
+    s = await app.start(),
+    key = randomUUID();
+  await s.append(s.entry('user', first.user), s.entry('agent', readback), s.entry('user', 'yes'));
+  const payload = { session_id: s.session_id, last_transcript_seq: 3, parameters: place };
+  // Drop the first response at its headers, after SQLite committed but before the client read the intent.
+  await new Promise((resolve, reject) => {
+    const req = httpRequest(
+      app.baseUrl + '/tools/capture_order_intent',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + s.session_token,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
+        },
+      },
+      (res) => {
+        const status = res.statusCode;
+        res.destroy();
+        resolve(status);
+      },
+    );
+    req.on('error', reject);
+    req.end(JSON.stringify(payload));
+  }).then((status) => assert.equal(status, 201));
+  app.advance(120001);
+  const retried = await s.tool('capture_order_intent', place, key);
+  assert.equal(retried.status, 201);
+  const listed = (await s.list()).data;
+  assert.equal(listed.count, 1);
+  assert.deepEqual(retried.data.intent, listed.intents[0]);
 });

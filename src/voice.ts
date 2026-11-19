@@ -53,12 +53,22 @@ export class Voice {
       }
       this.session = session;
       let draft: string | undefined;
+      let draftEvent: number | undefined;
       let interrupted = false;
       let speaking = false;
+      let playbackEnded = false;
+      let completedText: string | undefined;
       let cutoff: string | undefined;
+      let pendingUser:
+        | { text: string; resolve: (seq: number) => void; timer: ReturnType<typeof setTimeout> }
+        | undefined;
       let chunks: (AudioAlignmentPlaybackEvent & { start: number })[] = [];
+      let finishTimer: ReturnType<typeof setTimeout> | undefined;
+      let sealedResponse: { id: number; text: string } | undefined;
+      const turnChunks = () =>
+        chunks.filter((chunk) => chunk.event_id === (draftEvent ?? chunks[0]?.event_id));
       const heard = () =>
-        chunks
+        turnChunks()
           .map(({ alignment, start }) =>
             alignment.chars
               .filter(
@@ -69,21 +79,52 @@ export class Voice {
               .join(''),
           )
           .join('');
+      // Playback alignment and agent text can differ in spacing, case and final punctuation.
+      const comparable = (text: string) =>
+        text
+          .normalize('NFKC')
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, ' ')
+          .replace(/[.!?]+$/, '');
+      const fullyHeard = () =>
+        playbackEnded ||
+        (draft !== undefined && !!heard().trim() && comparable(heard()) === comparable(draft));
       const finish = (cut: boolean, corrected?: string) => {
-        if (draft !== undefined || chunks.length) {
+        clearTimeout(finishTimer);
+        if (draft !== undefined || turnChunks().length) {
+          if (draft !== undefined && draftEvent !== undefined)
+            sealedResponse = { id: draftEvent, text: draft };
           session.append({
             role: 'agent',
-            text: cut ? (corrected ?? cutoff ?? heard()) : (draft ?? heard()),
+            text: cut ? (corrected ?? cutoff ?? heard()) : (completedText ?? draft ?? heard()),
             ...(cut && { interrupted: true }),
           });
         }
+        const completedEvent = draftEvent ?? chunks[0]?.event_id;
+        chunks = chunks.filter((chunk) => chunk.event_id !== completedEvent);
         draft = undefined;
+        draftEvent = undefined;
         interrupted = false;
-        chunks = [];
         cutoff = undefined;
+        playbackEnded = false;
+        completedText = undefined;
         update({ draft: '' });
       };
-      this.finishSpeech = () => finish(true);
+      const finishTurn = (corrected?: string) => {
+        // A draft alone is model text. Without a playback end or fully played alignment,
+        // the server must receive only the known prefix and refuse this readback.
+        finish(interrupted || corrected !== undefined || !fullyHeard(), corrected);
+        if (pendingUser) {
+          const { text, resolve, timer } = pendingUser;
+          clearTimeout(timer);
+          pendingUser = undefined;
+          session.pendingEvidence = undefined;
+          session.append({ role: 'user', text });
+          resolve(session.entries.length);
+        }
+      };
+      this.finishSpeech = () => finishTurn();
       const callbacks: Callbacks = {
         onConnect: ({ conversationId }) => {
           if (!current()) return;
@@ -93,15 +134,39 @@ export class Voice {
         },
         onModeChange: ({ mode }) => {
           if (!current()) return;
-          if (mode === 'listening' && speaking && !interrupted && draft !== undefined) {
-            const aligned = chunks.map((chunk) => chunk.alignment.chars.join('')).join('');
-            if (!chunks.length || aligned.trim() === draft.trim()) finish(false);
+          if (mode === 'speaking') {
+            clearTimeout(finishTimer);
+            playbackEnded = false;
+            completedText = undefined;
+          }
+          if (mode === 'listening' && speaking && !interrupted) {
+            if (draft !== undefined || chunks.length) {
+              const aligned = comparable(
+                turnChunks()
+                  .map((chunk) => chunk.alignment.chars.join(''))
+                  .join(''),
+              );
+              const response = comparable(draft ?? '');
+              // A partial prefix is positive evidence of missing audio, even if a
+              // listening notification arrived after the buffer drained.
+              playbackEnded = !aligned || aligned === response || !response.startsWith(aligned);
+              if (aligned && response && aligned !== response && playbackEnded) {
+                completedText = turnChunks()
+                  .map((chunk) => chunk.alignment.chars.join(''))
+                  .join('');
+              }
+              if (playbackEnded && !pendingUser) {
+                clearTimeout(finishTimer);
+                finishTimer = setTimeout(() => finishTurn(), 250);
+              }
+            }
           }
           speaking = mode === 'speaking';
           update({ status: speaking ? 'Speaking' : 'Listening' });
         },
         onAudioAlignmentPlayback: (event) => {
-          if (current()) chunks.push({ ...event, start: performance.now() });
+          if (current() && event.event_id !== sealedResponse?.id)
+            chunks.push({ ...event, start: performance.now() });
         },
         onInterruption: () => {
           if (current()) {
@@ -110,18 +175,46 @@ export class Voice {
           }
         },
         onAgentResponseCorrection: (correction) => {
-          if (current() && draft === correction.original_agent_response)
-            finish(true, correction.corrected_agent_response);
+          if (!current()) return;
+          if (draft === correction.original_agent_response) {
+            finishTurn(correction.corrected_agent_response);
+          } else if (
+            sealedResponse?.id === correction.event_id &&
+            sealedResponse.text === correction.original_agent_response
+          ) {
+            // The append-only transcript already contains the original. Preserve the
+            // correction and close the session so it cannot authorize a later call.
+            session.invalidateEvidence();
+            session.append({
+              role: 'agent',
+              text: correction.corrected_agent_response,
+              interrupted: true,
+            });
+            void this.stop(
+              'Playback was corrected after transcript sync. Start voice for a new readback.',
+            );
+          }
         },
-        onMessage: ({ role, message }) => {
+        onMessage: ({ role, message, event_id }) => {
           if (!current()) return;
           if (role === 'agent') {
-            if (draft !== undefined && draft !== message) finish(true);
+            if (pendingUser || (draftEvent !== undefined && draftEvent !== event_id)) finishTurn();
             draft = message;
+            draftEvent = event_id;
             update({ draft });
           } else {
-            finish(interrupted || speaking || draft !== undefined);
-            session.append({ role, text: message });
+            if (pendingUser) finishTurn();
+            if (draft !== undefined || chunks.length) {
+              // The ASR result may beat playback completion or correction. Hold both
+              // transcript sequence and any tool that needs this yes for a bounded grace.
+              session.pendingEvidence = new Promise((resolve) => {
+                const timer = setTimeout(() => finishTurn(), 250);
+                pendingUser = { text: message, resolve, timer };
+              });
+            } else {
+              finishTurn();
+              session.append({ role, text: message });
+            }
           }
         },
         onDisconnect: (details) => {

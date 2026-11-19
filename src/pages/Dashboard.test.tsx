@@ -198,13 +198,13 @@ it('uses corrected interrupted speech and logs complete readbacks in order', asy
     [4, 'yes', false],
   ]);
 });
-it('retries a lost tool response once with the original key and body', async () => {
+it('retries a lost capture response once with the original key and body', async () => {
   const f = fixture(),
     opts = await f.begin();
   const original = f.fetchMock.getMockImplementation()!;
   const attempts: { key: string; body: BodyInit | null | undefined }[] = [];
   f.fetchMock.mockImplementation(async (path, init) => {
-    if (path.endsWith('/get_orderbook')) {
+    if (path.endsWith('/capture_order_intent')) {
       attempts.push({
         key: (init.headers as Record<string, string>)['Idempotency-Key'],
         body: init.body,
@@ -215,9 +215,13 @@ it('retries a lost tool response once with the original key and body', async () 
   });
   await act(async () => {
     const result = JSON.parse(
-      await opts.clientTools.get_orderbook({
+      await opts.clientTools.capture_order_intent({
         venue: 'gemini_spot',
         instrument: 'BTCUSD',
+        side: 'buy',
+        quantity: 1,
+        limit_price: 100,
+        confirmed_by_user: true,
         utterance: 'bitcoin',
       }),
     );
@@ -287,4 +291,149 @@ it('replays missing evidence before retrying a transcript_not_synced tool call',
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
   expect(f.entries().map((entry) => entry.seq)).toEqual([1, 1, 2]);
+});
+
+it('waits for a late playback completion before flushing the yes to the tool', async () => {
+  const f = fixture(),
+    opts = await f.begin();
+  const text = 'Buy 1 BTCUSD. Say yes to confirm.';
+  let result!: Promise<string>;
+  act(() => {
+    opts.onMessage?.({ role: 'agent', source: 'ai', message: text, event_id: 1 });
+    opts.onModeChange?.({ mode: 'speaking' });
+    opts.onMessage?.({ role: 'user', source: 'user', message: 'yes', event_id: 2 });
+    result = opts.clientTools.capture_order_intent({});
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(f.requests.some((r) => r.path.endsWith('/capture_order_intent'))).toBe(false);
+  await act(async () => {
+    opts.onModeChange?.({ mode: 'listening' });
+    await result;
+  });
+  expect(
+    f
+      .entries()
+      .slice(0, 2)
+      .map((e) => [e.text, !!e.interrupted]),
+  ).toEqual([
+    [text, false],
+    ['yes', false],
+  ]);
+  expect(
+    f.requests.find((r) => r.path.endsWith('/capture_order_intent'))?.body.last_transcript_seq,
+  ).toBe(2);
+});
+
+it('accepts a fully played alignment if the playback-end event was lost', async () => {
+  const f = fixture(),
+    opts = await f.begin();
+  const text = 'Buy 1 BTCUSD. Say yes to confirm.';
+  act(() => {
+    opts.onMessage?.({ role: 'agent', source: 'ai', message: text, event_id: 1 });
+    opts.onModeChange?.({ mode: 'speaking' });
+    opts.onAudioAlignmentPlayback?.({
+      event_id: 1,
+      alignment: {
+        chars: [text.toLowerCase().slice(0, -1)],
+        char_start_times_ms: [0],
+        char_durations_ms: [0],
+      },
+    });
+    opts.onMessage?.({ role: 'user', source: 'user', message: 'yes', event_id: 2 });
+  });
+  await waitFor(() => expect(f.entries()).toHaveLength(2));
+  expect(f.entries()[0]).toMatchObject({ text });
+  expect(f.entries()[0].interrupted).toBeUndefined();
+});
+
+it.each([false, true])(
+  'rejects unverifiable playback when a yes arrives (partial alignment %s)',
+  async (partial) => {
+    const f = fixture(),
+      opts = await f.begin();
+    act(() => {
+      opts.onMessage?.({
+        role: 'agent',
+        source: 'ai',
+        message: 'Buy one. Say yes to confirm.',
+        event_id: 1,
+      });
+      opts.onModeChange?.({ mode: 'speaking' });
+      if (partial) {
+        opts.onAudioAlignmentPlayback?.({
+          event_id: 1,
+          alignment: { chars: ['Buy'], char_start_times_ms: [0], char_durations_ms: [0] },
+        });
+        opts.onModeChange?.({ mode: 'listening' });
+      }
+      opts.onMessage?.({ role: 'user', source: 'user', message: 'yes', event_id: 2 });
+    });
+    await waitFor(() => expect(f.entries()).toHaveLength(2));
+    expect(f.entries()[0]).toMatchObject({ text: partial ? 'Buy' : '', interrupted: true });
+  },
+);
+
+it('records a late interruption and corrected prefix before the waiting yes', async () => {
+  const f = fixture(),
+    opts = await f.begin();
+  const text = 'Buy one. Say yes to confirm.';
+  act(() => {
+    opts.onMessage?.({ role: 'agent', source: 'ai', message: text, event_id: 1 });
+    opts.onModeChange?.({ mode: 'speaking' });
+    opts.onMessage?.({ role: 'user', source: 'user', message: 'yes', event_id: 2 });
+    opts.onInterruption?.({ event_id: 1 });
+    opts.onModeChange?.({ mode: 'listening' });
+    opts.onAgentResponseCorrection?.({
+      event_id: 1,
+      original_agent_response: text,
+      corrected_agent_response: 'Buy one.',
+    });
+  });
+  await waitFor(() => expect(f.entries()).toHaveLength(2));
+  expect(f.entries()[0]).toMatchObject({ text: 'Buy one.', interrupted: true });
+  expect(f.entries()[1].text).toBe('yes');
+});
+
+it('keeps early alignment for the next response while the previous draft is pending', async () => {
+  const f = fixture(),
+    opts = await f.begin();
+  const text = 'Buy one. Say yes to confirm.';
+  act(() => {
+    opts.onMessage?.({ role: 'agent', source: 'ai', event_id: 1, message: 'Earlier response.' });
+    opts.onModeChange?.({ mode: 'speaking' });
+    opts.onAudioAlignmentPlayback?.({
+      event_id: 2,
+      alignment: { chars: [text], char_start_times_ms: [0], char_durations_ms: [0] },
+    });
+    opts.onMessage?.({ role: 'agent', source: 'ai', event_id: 2, message: text });
+    opts.onMessage?.({ role: 'user', source: 'user', event_id: 3, message: 'yes' });
+  });
+  await waitFor(() => expect(f.entries()).toHaveLength(3));
+  expect(f.entries()[0]).toMatchObject({ text: '', interrupted: true });
+  expect(f.entries()[1]).toMatchObject({ text });
+  expect(f.entries()[1].interrupted).toBeUndefined();
+});
+
+it('preserves a correction arriving after the turn was stored and closes the session', async () => {
+  const f = fixture(),
+    opts = await f.begin();
+  const text = 'Buy one. Say yes to confirm.';
+  act(() => {
+    opts.onMessage?.({ role: 'agent', source: 'ai', event_id: 1, message: text });
+    opts.onModeChange?.({ mode: 'speaking' });
+    opts.onModeChange?.({ mode: 'listening' });
+  });
+  await waitFor(() => expect(f.entries()).toHaveLength(1));
+  act(() =>
+    opts.onAgentResponseCorrection?.({
+      event_id: 1,
+      original_agent_response: text,
+      corrected_agent_response: 'Buy',
+    }),
+  );
+  await waitFor(() => expect(f.finals()).toHaveLength(1));
+  expect(f.entries()[1]).toMatchObject({ text: 'Buy', interrupted: true });
+  expect(screen.getByRole('alert')).toHaveTextContent('Start voice for a new readback');
 });

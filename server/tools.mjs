@@ -127,7 +127,8 @@ export function runTool(repo, name, p, session, transcript, now) {
 
     requireRule(p.confirmed_by_user, 'confirmation_required');
     const confirmation = users.at(-1);
-    const age = now - Date.parse(confirmation?.timestamp);
+    const received = confirmation && repo.receivedAt(session, confirmation.seq);
+    const age = received == null ? Infinity : now - received;
     const words = plain(confirmation?.text ?? '').split(' ');
     requireRule(
       age >= 0 &&

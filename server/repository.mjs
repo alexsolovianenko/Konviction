@@ -12,10 +12,21 @@ export class SQLiteRepository {
       PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, token_hash TEXT UNIQUE, state TEXT,
         last_seen INTEGER, expires INTEGER, signed_expires INTEGER, conversation_id TEXT);
-      CREATE TABLE IF NOT EXISTS transcript(session TEXT, seq INTEGER, entry TEXT, PRIMARY KEY(session, seq));
+      CREATE TABLE IF NOT EXISTS transcript(session TEXT, seq INTEGER, entry TEXT, received_at INTEGER, PRIMARY KEY(session, seq));
       CREATE TABLE IF NOT EXISTS intents(session TEXT, confirmation INTEGER, record TEXT, UNIQUE(session,confirmation));
       CREATE INDEX IF NOT EXISTS session_intents ON intents(session);
       CREATE TABLE IF NOT EXISTS replays(session TEXT, key TEXT, fingerprint TEXT, response TEXT, PRIMARY KEY(session,key));`);
+    // Existing entries have no trusted receipt time. They remain readable for audit.
+    this.transaction(() => {
+      if (
+        !this.db
+          .prepare('PRAGMA table_info(transcript)')
+          .all()
+          .some((c) => c.name === 'received_at')
+      ) {
+        this.db.exec('ALTER TABLE transcript ADD COLUMN received_at INTEGER');
+      }
+    });
   }
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
@@ -49,10 +60,15 @@ export class SQLiteRepository {
       .all(id)
       .map((row) => JSON.parse(row.entry));
   }
-  append(id, entry) {
+  receivedAt(id, seq) {
+    return this.db
+      .prepare('SELECT received_at FROM transcript WHERE session=? AND seq=?')
+      .get(id, seq)?.received_at;
+  }
+  append(id, entry, now) {
     this.db
-      .prepare('INSERT INTO transcript VALUES (?,?,?)')
-      .run(id, entry.seq, JSON.stringify(entry));
+      .prepare('INSERT INTO transcript(session,seq,entry,received_at) VALUES (?,?,?,?)')
+      .run(id, entry.seq, JSON.stringify(entry), now);
   }
   intents(id) {
     return this.db
