@@ -13,6 +13,7 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 export default defineConfig({
   nitro: process.env['BUILD_WORKER'] === 'true',
   vite: {
+    define: { "import.meta.env.VITE_WORKER_TRADING": JSON.stringify(process.env["BUILD_WORKER"] === "true") },
     server: { host: "127.0.0.1", port: 5173, strictPort: true,
       fs: { deny: [".env", ".env.*", "*.{crt,pem,key}", "**/.git/**", "**/data/**", "**/*.{sqlite,sqlite-wal,sqlite-shm,db,db-wal,db-shm}"] },
       proxy: process.env['CAPTURE_PORT'] ? {

@@ -1,0 +1,99 @@
+{
+  "_readme": "ElevenLabs CLIENT tools for the browser /voice page, copied unchanged from the alex branch (contracts/tools.json market_tools and contracts/prepare_sandbox_buy.json at 081cd3a). The browser runs them: search_markets/get_orderbook call GET /api/public/market-tools/*, prepare_sandbox_buy calls POST /api/public/browser-trading/proposals with the in-memory session token. None of them can submit an order; approval is a separate typed-PIN action on screen. The agent must be private (authentication enabled) because sessions start from a server-issued signed URL.",
+  "tools": [
+    {
+      "name": "search_markets",
+      "type": "client",
+      "description": "Find Gemini prediction market events and their contracts in the Gemini Sandbox, a test environment. Pass key words of the event or topic, or an empty string to list the active events. Returns events, each with a ticker, a title and contracts; each contract has a symbol, a label, an expiry and buy and sell prices for yes and no in dollars per contract, any of which may be null. Use an event's ticker as event_ticker and a contract's symbol as contract_symbol and as an order's instrument.",
+      "expects_response": true,
+      "response_timeout_secs": 15,
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Key words of the event or topic, such as 'bitcoin' or 'fed'. Every word must match, so use few. An empty string lists the active events."
+          }
+        }
+      }
+    },
+    {
+      "name": "get_orderbook",
+      "type": "client",
+      "description": "Get a fresh Gemini Sandbox quote for one prediction contract: its buy and sell prices for yes and no in dollars per contract, any of which may be null. It is a quote, not a depth book. event_ticker is the event's ticker and contract_symbol is the contract's symbol, both copied exactly from a search_markets result in this conversation.",
+      "expects_response": true,
+      "response_timeout_secs": 15,
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_ticker",
+          "contract_symbol"
+        ],
+        "properties": {
+          "event_ticker": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "events[].ticker from a search_markets result."
+          },
+          "contract_symbol": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "events[].contracts[].symbol from that same event."
+          }
+        }
+      }
+    },
+    {
+      "name": "prepare_sandbox_buy",
+      "type": "client",
+      "description": "Prepare a Gemini Sandbox prediction buy proposal for private dashboard approval. This tool never submits an order.",
+      "expects_response": true,
+      "response_timeout_secs": 20,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "event_ticker": {
+            "type": "string",
+            "description": "Exact event ticker returned by search"
+          },
+          "contract_symbol": {
+            "type": "string",
+            "description": "Exact selected contract symbol"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no"
+            ],
+            "description": "Requested prediction outcome, YES or NO."
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Whole number of contracts requested."
+          },
+          "limit_price": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 0.99,
+            "description": "Maximum USD per contract"
+          }
+        },
+        "required": [
+          "event_ticker",
+          "contract_symbol",
+          "outcome",
+          "quantity",
+          "limit_price"
+        ]
+      }
+    }
+  ]
+}

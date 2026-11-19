@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { tradingRequest } from "../browserTrading";
+import { PIN_PATTERN, tradingRequest } from "../browserTrading";
 export const Route = createFileRoute("/open-trades")({ component: OpenTrades });
 type Rows = { error?: string; rows: Record<string, string | number>[] };
 type Account = { as_of: string; orders: Rows; positions: Rows; history: Rows };
@@ -13,7 +13,7 @@ function OpenTrades() {
     <main className="voice-panel panel mx-auto max-w-5xl p-5">
       <a href="/">← Console</a> · <a href="/voice">Browser voice</a>
       <h1>Open trades and positions</h1>
-      <p>Enter the local account PIN to refresh private Gemini Sandbox data.</p>
+      <p>Enter the approval PIN to read private Gemini Sandbox orders, fills and positions. Data comes straight from Gemini.</p>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -32,17 +32,17 @@ function OpenTrades() {
         }}
       >
         <label>
-          Account PIN{" "}
+          Approval PIN{" "}
           <input
             type="password"
             inputMode="numeric"
-            maxLength={4}
-            pattern="[0-9]{4}"
+            maxLength={8}
+            pattern="[0-9]{4,8}"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
           />
         </label>
-        <button disabled={busy || pin.length !== 4}>Refresh account</button>
+        <button disabled={busy || !PIN_PATTERN.test(pin)}>Refresh account</button>
       </form>
       {busy && <p>Reading Gemini Sandbox…</p>}
       {message && <p role="alert">{message}</p>}

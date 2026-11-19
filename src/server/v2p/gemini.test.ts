@@ -1,7 +1,7 @@
 import { createHmac, webcrypto } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { dashboardMarketsFrom } from "./dashboard-markets";
-import { gPrivate, gPublic } from "./gemini";
+import { classifyFetchError, gPrivate, gPublic } from "./gemini";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -30,7 +30,42 @@ it("signs epoch seconds without a body and blocks redirects", async () => {
   expect(JSON.parse(atob(payload))).toEqual({ request: "/v1/prediction-markets/terms/status", nonce: 1776294447 });
   expect(headers.get("x-gemini-signature")).toBe(createHmac("sha384", "unit-test-secret").update(payload).digest("hex"));
   expect(init?.body).toBeUndefined();
-  expect(init?.redirect).toBe("error");
+  // Cloudflare Workers throw on redirect: "error"; "manual" + refusing 3xx keeps redirects blocked.
+  expect(init?.redirect).toBe("manual");
+});
+
+it("refuses to follow a redirect from Gemini", async () => {
+  const fetchSpy = vi.fn<typeof fetch>(async () => new Response(null, { status: 302, headers: { Location: "https://evil.test/" } }));
+  vi.stubGlobal("fetch", fetchSpy);
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const r = await gPublic("/v1/prediction-markets/events", { limit: 1 });
+  expect(r.ok).toBe(false);
+  expect(r.status).toBe(302);
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+});
+
+it("reports the failure category and logs no secrets when fetch throws", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubEnv("GEMINI_API_KEY", "unit-test-key");
+  vi.stubEnv("GEMINI_API_SECRET", "unit-test-secret");
+  vi.stubGlobal("fetch", vi.fn(async () => {
+    throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+  }));
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  const r = await gPrivate("/v1/balances");
+  expect(r.status).toBe(0);
+  expect(r.error).toContain("(client_config)");
+  const logged = log.mock.calls.map((c) => c.join(" ")).join("\n");
+  expect(logged).toContain('"category":"client_config"');
+  expect(logged).toContain('"path":"/v1/balances"');
+  expect(logged).not.toMatch(/unit-test-key|unit-test-secret|x-gemini|signature/i);
+});
+
+it("classifies common network failures", () => {
+  expect(classifyFetchError(new Error("x"), true)).toBe("timeout");
+  expect(classifyFetchError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }), false)).toBe("dns");
+  expect(classifyFetchError(Object.assign(new TypeError("fetch failed"), { cause: { code: "CERT_HAS_EXPIRED" } }), false)).toBe("tls");
+  expect(classifyFetchError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }), false)).toBe("network");
 });
 
 it("does not invent missing prices or pass through unknown upstream fields", () => {

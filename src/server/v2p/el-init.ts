@@ -13,7 +13,7 @@ export async function handleElInit(req: Request): Promise<Response> {
   try { b = await req.json(); } catch { /* ignore */ }
   const caller = String(b.caller_id ?? "unknown");
   const vars: Record<string, string> = { caller_id: caller, returning_caller: "no", open_trades_note: "" };
-  if (toolAuthorized(req)) {
+  if (await toolAuthorized(req)) {
     try {
       const { returning, callCount } = await touchCaller(caller);
       vars.returning_caller = returning ? "yes" : "no";

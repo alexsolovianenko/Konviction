@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { tradingRequest, type Proposal, type Availability } from "../browserTrading";
+import { PIN_PATTERN, tradingRequest, type Proposal, type Availability } from "../browserTrading";
 
 export function TradeApproval({
   proposal,
@@ -60,7 +60,7 @@ export function TradeApproval({
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
-                  if (pending || pin.length !== 4) return;
+                  if (pending || !PIN_PATTERN.test(pin)) return;
                   setPending(true);
                   setPin("");
                   try {
@@ -77,13 +77,13 @@ export function TradeApproval({
                     type="password"
                     inputMode="numeric"
                     autoComplete="off"
-                    pattern="[0-9]{4}"
-                    maxLength={4}
+                    pattern="[0-9]{4,8}"
+                    maxLength={8}
                     value={pin}
                     onChange={(e) => setPin(e.target.value)}
                   />
                 </label>
-                <button disabled={pending || pin.length !== 4}>Approve sandbox buy</button>
+                <button disabled={pending || !PIN_PATTERN.test(pin)}>Approve sandbox buy</button>
               </form>
             )
           )}

@@ -308,8 +308,11 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   const fillFee = filledQty && avg ? feeEstimate(filledQty, avg) : null;
   const say: Record<string, string> = {
     FILLED: `Filled: ${filledQty} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}.`,
-    PARTIAL: `Partly filled: ${filledQty} of ${it.quantity} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}. The rest was cancelled, not filled.`,
-    NOT_FILLED: `Gemini accepted the order but nothing filled at that price, so it was cancelled. No money was spent and no position was opened.`,
+    PARTIAL: `Partly filled: ${filledQty} of ${it.quantity} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}. Gemini reports status ${o?.status ?? "unknown"}.`,
+    // Only say "cancelled" when Gemini itself reports it (david 8d1e9d4).
+    NOT_FILLED: String(o?.status ?? "").toLowerCase() === "cancelled"
+      ? `Gemini accepted the order but nothing filled at that price, so it was cancelled. No money was spent and no position was opened.`
+      : `Gemini accepted the order${o?.orderId ? ` (order ${o.orderId})` : ""} but reports nothing filled yet (status: ${o?.status ?? "unknown"}). Do not say it filled or was cancelled; check open orders.`,
     PENDING_UNKNOWN: `Gemini did not confirm the fill status. Check open orders and recent order history before taking further action.`,
     EXCHANGE_REJECTED: `Gemini rejected the order, so nothing was placed.`,
   };

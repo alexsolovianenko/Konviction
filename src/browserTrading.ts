@@ -1,3 +1,5 @@
+// Browser client for /api/public/browser-trading/* (adapted from alex's src/browserTrading.ts,
+// which targeted a local Node/SQLite server at /api/trading/*).
 export type Availability = { execution_enabled: boolean; message: string };
 export type Proposal = {
   proposal_id: string;
@@ -13,22 +15,30 @@ export type Proposal = {
   expires_at: string;
   readback: string;
 };
-export async function tradingRequest(path: string, body?: object, token?: string, key?: string) {
+export const workerTrading = import.meta.env["VITE_WORKER_TRADING"] === true;
+export const PIN_PATTERN = /^\d{4,8}$/;
+
+export async function tradingRequest(
+  path: "availability" | "session" | "proposals" | "approve" | "end" | "portfolio",
+  body?: object,
+  token?: string,
+  options: { keepalive?: boolean; idempotencyKey?: string } = {},
+) {
   try {
-    const response = await fetch("/api/trading/" + path, {
+    const response = await fetch((workerTrading ? "/api/public/browser-trading/" : "/api/trading/") + path, {
       method: body ? "POST" : "GET",
       cache: "no-store",
+      keepalive: options.keepalive ?? false,
       headers: {
         ...(body && { "Content-Type": "application/json" }),
+        ...(options.idempotencyKey && { "Idempotency-Key": options.idempotencyKey }),
         ...(token && { Authorization: "Bearer " + token }),
-        ...(key && { "Idempotency-Key": key }),
       },
       ...(body && { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(18000),
+      signal: AbortSignal.timeout(path === "approve" ? 30000 : 18000),
     });
     const result = await response.json();
-    if (typeof result?.ok === "boolean")
-      return { ...result, message: result.message ?? result.error?.message };
+    if (typeof result?.ok === "boolean") return { ...result, message: result.message ?? result.error?.message };
   } catch {
     /* Return a bounded message for network or deployment failures. */
   }
@@ -37,6 +47,6 @@ export async function tradingRequest(path: string, body?: object, token?: string
     message:
       path === "approve"
         ? "Approval result unavailable. Check open trades before trying again."
-        : "Local sandbox trading service unavailable.",
+        : "Sandbox trading service unavailable.",
   };
 }

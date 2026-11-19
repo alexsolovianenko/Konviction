@@ -18,7 +18,7 @@ const bad = () => {
 export function availability() {
   const missing = [];
   if (!hasCredentials()) missing.push("Gemini sandbox account credentials");
-  if (!/^\d{4}$/.test(process.env.DEMO_PIN ?? "")) missing.push("a four-digit server DEMO_PIN");
+  if (!/^\d{4,8}$/.test(process.env.DEMO_PIN ?? "")) missing.push("a 4–8 digit server DEMO_PIN");
   if (process.env.EXECUTION_ENABLED !== "true") missing.push("EXECUTION_ENABLED=true");
   return {
     ok: true,
@@ -39,9 +39,9 @@ function sessionOwner(repo, token) {
   return s.id;
 }
 function requirePin(store, pin) {
-  if (!/^\d{4}$/.test(process.env.DEMO_PIN ?? ""))
-    throw new TradeError("PIN_UNCONFIGURED", "Configure a four-digit server DEMO_PIN.", 503);
-  if (typeof pin !== "string" || !/^\d{4}$/.test(pin)) bad();
+  if (!/^\d{4,8}$/.test(process.env.DEMO_PIN ?? ""))
+    throw new TradeError("PIN_UNCONFIGURED", "Configure a 4–8 digit server DEMO_PIN.", 503);
+  if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) bad();
   store.checkPin(timingSafeEqual(hash(pin), hash(process.env.DEMO_PIN)));
 }
 const fields = {

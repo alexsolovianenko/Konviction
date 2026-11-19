@@ -1,6 +1,10 @@
 import { tradingRequest, type Proposal, type Availability } from './browserTrading';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
-import { Session, startCredentials, type Entry, type Intent } from './session';
+import { Session as LocalSession, startCredentials as localCredentials, type Entry, type Intent } from './session';
+import { Session as WorkerSession, startCredentials as workerCredentials } from './workerSession';
+import { workerTrading } from './browserTrading';
+const Session = workerTrading ? WorkerSession : LocalSession;
+const startCredentials = workerTrading ? workerCredentials : localCredentials;
 
 export type VoiceView = {
   proposal: Proposal | null;
@@ -24,7 +28,7 @@ export const initial: VoiceView = {
 export class Voice {
   private attempt = 0;
   private active = false;
-  private session: Session | undefined;
+  private session: WorkerSession | LocalSession | undefined;
   private conversation: undefined | { endSession: () => Promise<void> };
   private finishSpeech: undefined | (() => void);
   constructor(
@@ -242,7 +246,8 @@ export class Voice {
           ...session.tools,
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,message:'Session ended.'});
-            const result = await tradingRequest('proposals',params,credentials.session_token,crypto.randomUUID());
+            // The session token stays in the browser; the model only sees the tool result below.
+            const result = await tradingRequest('proposals',params,credentials.session_token,{idempotencyKey:crypto.randomUUID()});
             update({ proposal:result.proposal ?? null, availability:result.availability ?? null, tradeMessage:result.message ?? '' });
             return JSON.stringify(result.ok ? {ok:true, proposal:result.proposal, approval_available:result.availability.execution_enabled,
               next_step:'Review the proposal in the dashboard. Approval is a separate private UI action.'} : result);
@@ -278,8 +283,12 @@ export class Voice {
     if (!session || !this.active) return;
     const result = await tradingRequest('approve',{proposal_id:proposalId,pin},session.credentials.session_token);
     if (session !== this.session) return;
-    this.update({tradeMessage:result.say ?? result.message ?? result.outcome_summary,
-      ...(result.error !== 'WRONG_PIN' && {proposal:null})});
+    // Show exactly what Gemini returned: order id and exchange status, never an inferred fill.
+    const exchange = result.order_id
+      ? ` Gemini Sandbox order ${result.order_id} · status ${result.exchange_status ?? 'unknown'} · ${result.outcome_summary}.`
+      : result.outcome_summary ? ` Result: ${result.outcome_summary}.` : '';
+    this.update({tradeMessage:(result.say ?? result.message ?? '') + exchange,
+      ...(!['WRONG_PIN','BAD_INPUT'].includes(result.error) && {proposal:null})});
   }
 
   async stop(error = '') {

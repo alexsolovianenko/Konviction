@@ -137,11 +137,20 @@ export function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export function toolAuthorized(req: Request): boolean {
-  const expected = envStr("TOOL_SHARED_SECRET");
+/** Constant-time compare that also hides the expected length (compares SHA-256 digests). */
+export async function secretEqual(got: string, expected: string): Promise<boolean> {
   if (!expected) return false;
-  const got = req.headers.get("x-tool-secret") ?? "";
-  return safeEqual(got, expected);
+  return safeEqual(await sha256Hex("v2p-cmp:" + got), await sha256Hex("v2p-cmp:" + expected));
+}
+
+/**
+ * Header-only auth. The old `?s=` query-string fallback was removed: URLs end up in
+ * proxy/access logs and ElevenLabs tool configs, which would leak the secret.
+ */
+export async function toolAuthorized(req: Request): Promise<boolean> {
+  const expected = envStr("TOOL_SHARED_SECRET");
+  if (expected.length < 24) return false; // refuse weak or missing secrets
+  return secretEqual(req.headers.get("x-tool-secret") ?? "", expected);
 }
 
 /** Port note: no after-response hook available in this route runtime, so the work is awaited. */

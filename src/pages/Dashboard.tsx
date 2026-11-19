@@ -24,7 +24,7 @@ export function Dashboard({ focused = false }: { focused?: boolean } = {}) {
     <section className={focused ? "voice-panel panel focused-voice" : "voice-panel panel"}>
       <header>
         {focused ? <><a href="/">← Full console</a><h1>Talk to the market</h1></> : <><h2>Browser voice</h2><a href="/voice">Open focused voice page →</a></>}
-        <p>Explore Gemini Sandbox prediction contracts and capture an intent by voice.</p>
+        <p>Explore Gemini Sandbox prediction contracts by voice. Review a buy proposal here and approve it with your private PIN.</p>
       </header>
       <section aria-label="Voice controls" className="controls">
         <button disabled={view.status !== 'Idle'} onClick={() => void voice.start()}>

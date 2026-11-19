@@ -1,19 +1,22 @@
 // @ts-nocheck -- mechanical port of the Deno edge-function code; logic kept verbatim.
-// ElevenLabs webhook tools for Voice-to-Predict.
-// POST /api/public/agent-tools/{find_market|prepare_trade|execute_trade|get_portfolio}
-// Header X-Tool-Secret must equal TOOL_SHARED_SECRET.
+// ElevenLabs webhook (server) tools for Voice-to-Predict — READ-ONLY and PROPOSAL-ONLY.
+// POST /api/public/agent-tools/{find_market|prepare_trade|get_portfolio}
+// Header X-Tool-Secret must equal TOOL_SHARED_SECRET (header only; no query-string secret).
 // caller / conversation_id come from ElevenLabs dynamic variables, never from the model.
+//
+// There is deliberately NO execute tool: the language model can never submit an order.
+// Orders are submitted only by POST /api/public/browser-trading/approve, which needs a verified
+// browser voice session plus a PIN typed on screen. A phone approval path comes with Twilio.
 
 import {
-  contractTradable, findContract, getEvent, getUsdAvailable, gPrivate, listActiveEvents, quoteFor,
+  contractTradable, getUsdAvailable, gPrivate, listActiveEvents, quoteFor,
   type Contract, type GEvent,
 } from "./gemini";
-import { prepareTrade as prepareQuotedTrade, executeTrade as executeClaimedTrade } from "./trade-engine";
-import { db, executionEnabled, logActivity } from "./db";
-import { createReceipt } from "./receipts";
+import { prepareTrade as prepareQuotedTrade } from "./trade-engine";
+import { db, logActivity } from "./db";
+import { dailyCapError, supabaseLedger } from "./ledger";
 import {
-  cents, corsHeaders, envStr, feeEstimate, hashPhone, json, localHour, LIMITS, num,
-  randomCode, round2, safeEqual, speakTime, toolAuthorized, usd,
+  corsHeaders, json, localHour, LIMITS, num, randomCode, speakTime, toolAuthorized,
 } from "./util";
 
 // deno-lint-ignore no-explicit-any
@@ -156,13 +159,11 @@ async function prepareTrade(b: Body) {
   return prepareQuotedTrade(b, async ({ readback, ...terms }) => {
     const { side, outcome, quantity, limit_price: limit, notional_usd: notional, est_fee_usd: fee, instrument_symbol: symbol, quote_price: quotePrice } = terms;
     if (side === "buy") {
-      const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
-      const { data: today, error: dayError } = await db.from("orders").select("filled_notional_usd").eq("side", "buy").gte("created_at", startOfDay.toISOString());
-      if (dayError) return err("RISK_UNAVAILABLE", "Could not verify the daily sandbox limit.");
-      const spent = (today ?? []).reduce((s, r) => s + Number(r.filled_notional_usd ?? 0), 0);
-      if (spent + notional + fee > LIMITS.maxDailyUsd + 1e-9) {
-        return err("CAP_EXCEEDED", `Daily demo limit of ${usd(LIMITS.maxDailyUsd)} would be exceeded (${usd(spent)} already used today).`);
-      }
+      // Same account-wide ledger as browser approval (filled + in-flight + unknown reservations).
+      const committed = await supabaseLedger.committedUsd();
+      if (committed === null) return err("RISK_UNAVAILABLE", "Could not verify the daily sandbox limit.");
+      const capErr = dailyCapError(committed, notional + fee);
+      if (capErr) return err("CAP_EXCEEDED", capErr);
     }
 
     // Supersede older proposals for this caller.
@@ -180,52 +181,8 @@ async function prepareTrade(b: Body) {
       ok: true, intent_code: code, side, outcome, quantity, limit_price: limit, notional_usd: notional,
       est_fee_usd: fee, fee_is_estimate: true, current_price: quotePrice, intent_expires_in_s: LIMITS.intentTtlSeconds,
       readback,
-      next_step: "Read the readback to the caller word for word (money in words), then ask them to say their 4-digit PIN to confirm. If anything changes, call prepare_trade again.",
+      next_step: "Read the readback to the caller. Phone approval is not available yet: nothing is placed until the trade is approved on the secure dashboard. Never ask for or repeat a PIN.",
     });
-  });
-}
-
-// ---------------------------------------------------------------- execute_trade
-
-async function executeTrade(b: Body) {
-  const caller = callerOf(b);
-  const code = String(b.intent_code ?? "").toUpperCase().trim();
-  const pin = String(b.pin ?? b.spoken_pin ?? "").replace(/\D/g, "");
-  if (!code) return err("BAD_INPUT", "intent_code is required");
-
-  if (!(await executionEnabled())) {
-    return err("EXECUTION_DISABLED", "Trading is switched off right now. Nothing was placed.");
-  }
-
-  // PIN + lockout
-  const { data: cRow } = await db.from("callers").select("*").eq("phone", caller).maybeSingle();
-  if (cRow?.locked_until && Date.parse(cRow.locked_until) > Date.now()) {
-    return err("LOCKED", "Too many wrong PINs. Trading is locked for this caller for 15 minutes. Nothing was placed.");
-  }
-  const expectedPin = envStr("DEMO_PIN");
-  if (!expectedPin || !safeEqual(pin, expectedPin)) {
-    const failures = (cRow?.pin_failures ?? 0) + 1;
-    const lock = failures >= 3 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
-    await db.from("callers").upsert({ phone: caller, pin_failures: lock ? 0 : failures, locked_until: lock });
-    await logActivity("PIN_FAILED", caller, `Wrong PIN for ${code} (${failures}/3)`);
-    return err("WRONG_PIN", lock ? "Wrong PIN. Trading is now locked for 15 minutes. Nothing was placed." : "That PIN didn't match. Nothing was placed. They can try again.");
-  }
-  await db.from("callers").upsert({ phone: caller, pin_failures: 0, locked_until: null });
-
-  // Atomic single use: PROPOSED -> EXECUTING exactly once, only if unexpired and for this caller.
-  const { data: claimed, error: claimErr } = await db.from("intents")
-    .update({ status: "EXECUTING", updated_at: new Date().toISOString() })
-    .eq("code", code).eq("caller", caller).eq("status", "PROPOSED").gt("expires_at", new Date().toISOString())
-    .select("*");
-  if (claimErr || !claimed || claimed.length !== 1) {
-    await db.from("intents").update({ status: "EXPIRED" }).eq("code", code).eq("status", "PROPOSED").lte("expires_at", new Date().toISOString());
-    return err("INTENT_NOT_EXECUTABLE", "That trade proposal has expired or was already used. Nothing was placed. Prepare it again.");
-  }
-  const it = claimed[0];
-  return executeClaimedTrade(it, caller, {
-    finish: (status: string) => db.from("intents").update({status, updated_at: new Date().toISOString()}).eq("id", it.id),
-    receipt: createReceipt, log: logActivity,
-    saveOrder: (order: Body) => db.from("orders").insert(order),
   });
 }
 
@@ -275,7 +232,7 @@ async function getPortfolio(_b: Body) {
 
 export async function handleAgentTools(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (!toolAuthorized(req)) return json({ ok: false, error: "UNAUTHORIZED" }, 401);
+  if (!(await toolAuthorized(req))) return json({ ok: false, error: "UNAUTHORIZED" }, 401);
   const tool = new URL(req.url).pathname.split("/").filter(Boolean).pop();
   let body: Body = {};
   try { body = await req.json(); } catch { /* empty body ok */ }
@@ -285,8 +242,11 @@ export async function handleAgentTools(req: Request): Promise<Response> {
     switch (tool) {
       case "find_market": res = await findMarket(body); break;
       case "prepare_trade": res = await prepareTrade(body); break;
-      case "execute_trade": res = await executeTrade(body); break;
       case "get_portfolio": res = await getPortfolio(body); break;
+      case "execute_trade":
+        // Removed on purpose: no voice/LLM tool may submit an order.
+        await logActivity("TOOL_EXECUTE_REFUSED", callerOf(body), "execute_trade refused: approval happens only on the dashboard");
+        return json({ ok: false, error: "APPROVAL_REQUIRED", message: "Orders can only be approved on the secure dashboard. Nothing was placed." }, 403);
       default: return json({ ok: false, error: "UNKNOWN_TOOL", tool }, 404);
     }
     const out = await res.clone().json().catch(() => null);
