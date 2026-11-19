@@ -26,7 +26,7 @@
     {
       "name": "get_orderbook",
       "type": "client",
-      "description": "Get a fresh Gemini Sandbox quote for one prediction contract: its buy and sell prices for yes and no in dollars per contract, any of which may be null. displayed_buy_quantity_at_ask gives the observed contract quantity at each matching best buy price, or null if unknown. event_ticker is the event's ticker and contract_symbol is the contract's symbol, both copied exactly from a search_markets result in this conversation.",
+      "description": "Read a fresh Gemini Sandbox contract quote using the exact event and contract from search. For liquidity questions include outcome and the requested side (default buy), whole-contract quantity and/or limit_price if stated. liquidity reports displayed depth through the limit, spread and a before-fee average for the estimated executable portion of the requested size. Quote prices in cents, label estimates as snapshots, and report null as unknown. This tool is read-only.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,
@@ -47,6 +47,33 @@
             "type": "string",
             "maxLength": 200,
             "description": "events[].contracts[].symbol from that same event."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no"
+            ],
+            "description": "Required for a liquidity snapshot. Use the selected outcome."
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "description": "Direction of the requested estimate. Defaults to buy."
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Requested whole-contract count. Omit for depth only."
+          },
+          "limit_price": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 1,
+            "description": "Inclusive maximum buy or minimum sell price in dollars per contract (62 cents = 0.62). Omit if unstated."
           }
         }
       }
@@ -100,6 +127,15 @@
           "outcome"
         ]
       }
+    },
+    {
+      "type": "client",
+      "name": "prepare_sandbox_remainder",
+      "description": "Only on an explicit request to retry the unfilled sandbox buy, prepare its exact remaining whole contracts at the original cap. Speak the returned say verbatim and wait for fresh approval.",
+      "expects_response": true,
+      "pre_tool_speech": "off",
+      "response_timeout_secs": 20,
+      "parameters": { "type": "object", "properties": {}, "additionalProperties": false, "required": [] }
     },
     {
       "type": "client",

@@ -12,10 +12,11 @@ vi.mock("./gemini", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./gemini")>()),
   getEvent: vi.fn(),
   gPrivate: vi.fn(),
+  gPublic: vi.fn(),
   hasCredentials: () => true,
 }));
 
-import { getEvent, gPrivate } from "./gemini";
+import { getEvent, gPrivate, gPublic } from "./gemini";
 import { GLOBAL_GUARD, runBrowserTrading, type Store } from "./browser-trading";
 import { mintSessionToken, verifySessionToken } from "./browser-session";
 
@@ -264,6 +265,7 @@ describe("approval: the only order-submission path", () => {
     const { s, id } = await proposed();
     const r = (await run("approve", { proposal_id: id, pin: PIN }, s.session_token)) as any;
     expect(r.outcome_summary).toBe("PENDING_UNKNOWN");
+    expect(r.remainder_buy).toBeUndefined();
     expect(r.say).not.toMatch(/filled:/i);
     expect(await store.committedUsd()).toBeGreaterThan(0.3);
   });
@@ -272,7 +274,29 @@ describe("approval: the only order-submission path", () => {
     const { s, id } = await proposed();
     vi.mocked(gPrivate).mockResolvedValue({ ok: true, status: 201, text: "", data: { orderId: "1", status: "cancelled", filledQuantity: "0.25", remainingQuantity: "0.75" } });
     const result = await run("approve", { proposal_id: id, pin: PIN }, s.session_token);
+    expect(result.remainder_buy).toBeUndefined();
+    expect(result.say).toContain("quantity at your limit was unknown");
     expect(result).toMatchObject({ outcome_summary: "PARTIAL", filled_quantity: 0.25, say: expect.stringContaining("0.25 of 1") });
+    expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
+  it.each(["0", "1"])("reproposes the confirmed whole remainder after %s executions with the original cap", async (filled) => {
+    const s = await startSession();
+    const { proposal } = await run("proposals", {...order, quantity: 5}, s.session_token);
+    vi.mocked(gPrivate).mockResolvedValue({ok:true, status:201, text:"", data:{
+      orderId:"123", status:"cancelled", filledQuantity:filled, remainingQuantity:"0",
+      avgExecutionPrice: filled === "0" ? null : ".30",
+    }});
+    vi.mocked(gPublic).mockResolvedValueOnce({ok:true,status:200,text:"",data:{asks:[{price:".31",amount:"2"}]}});
+    const approval = {proposal_id:proposal.proposal_id, pin:PIN};
+    const result = await run("approve", approval, s.session_token);
+    expect(result.remainder_buy).toEqual({...order, quantity:5-Number(filled)});
+    expect(result.say).toContain("only 2 contracts at or below your limit");
+    expect((await run("approve", approval, s.session_token)).remainder_buy).toEqual(result.remainder_buy);
+    quote(".45");
+    const retry = await run("proposals", result.remainder_buy, s.session_token);
+    expect(retry.proposal).toMatchObject({quantity:5-Number(filled), quote_price:.45, limit_price:.31});
+    expect(retry.proposal.proposal_id).not.toBe(proposal.proposal_id);
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 

@@ -1123,7 +1123,7 @@ x-market-data:
           items: { $ref: "#/x-market-data/schemas/MarketEvent" }
   get_orderbook:
     request: "GET /api/public/market-tools/get_orderbook?event_ticker={event_ticker}&contract_symbol={contract_symbol}"
-    note: "Returns a single contract quote and displayed quantities from matching best levels in the public sandbox book."
+    note: "Returns a single contract quote. Include outcome for a read-only liquidity snapshot from the full Gemini Sandbox book."
     parameters:
       type: object
       additionalProperties: false
@@ -1131,6 +1131,10 @@ x-market-data:
       properties:
         event_ticker: { type: string, maxLength: 200, pattern: "^[A-Za-z0-9_.-]+$", description: "events[].ticker from search_markets." }
         contract_symbol: { type: string, maxLength: 200, pattern: "^[A-Za-z0-9_.-]+$", description: "events[].contracts[].symbol from that event." }
+        outcome: { type: string, enum: [yes, no], description: "Required when any liquidity parameter is supplied." }
+        side: { type: string, enum: [buy, sell], default: buy }
+        quantity: { type: integer, minimum: 1 }
+        limit_price: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1, description: "Inclusive buy ceiling or sell floor, dollars per contract." }
     behavior:
       - "The server reads that one event fresh from the sandbox and returns the contract whose symbol equals contract_symbol."
     result:
@@ -1150,6 +1154,21 @@ x-market-data:
           properties:
             yes: { type: [number, "null"] }
             no: { type: [number, "null"] }
+        liquidity:
+          type: object
+          description: "Present for explicit outcome queries. All quantities are contracts and all prices are dollars per contract, before fees. as_of is observation time."
+          required: [outcome, side, quantity, limit_price, snapshot_only, depth_unknown, spread, displayed_quantity, estimated_executable_quantity, estimated_average_price]
+          properties:
+            outcome: { type: string, enum: [yes, no] }
+            side: { type: string, enum: [buy, sell] }
+            quantity: { type: [integer, "null"] }
+            limit_price: { type: [number, "null"] }
+            snapshot_only: { const: true }
+            depth_unknown: { type: boolean }
+            spread: { type: [number, "null"], description: "Best ask minus best bid when both exist." }
+            displayed_quantity: { type: [number, "null"], description: "Depth on the requested side at the limit or better, or all displayed depth if no limit." }
+            estimated_executable_quantity: { type: [number, "null"], description: "Requested size covered by eligible levels. Null for depth-only requests or unknown depth." }
+            estimated_average_price: { type: [number, "null"], description: "Volume-weighted average for the executable portion. Null when zero or unknown." }
   schemas:
     MarketEvent:
       type: object

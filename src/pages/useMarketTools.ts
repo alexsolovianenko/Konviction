@@ -3,7 +3,12 @@ import type { MarketContract, MarketEvent, NativeCombo } from '../components/con
 
 export type TrackedContract = { outcome?: 'yes' | 'no' | null; eventTicker: string; symbol: string; title: string; label: string | null };
 export type WindowInfo = { event_ticker: string; contract_symbol: string; title: string; label: string | null; expiry: string; seconds_to_expiry: number; market_state: string };
-export type MarketResult = { ok: boolean; error?: string; event_ticker?: string; track_group?: boolean; combos?: NativeCombo[]; listings_checked?: number;
+export type Liquidity = {
+  outcome: 'yes' | 'no'; side: 'buy' | 'sell'; quantity: number | null; limit_price: number | null;
+  snapshot_only: true; depth_unknown: boolean; spread: number | null; displayed_quantity: number | null;
+  estimated_executable_quantity: number | null; estimated_average_price: number | null;
+};
+export type MarketResult = { ok: boolean; liquidity?: Liquidity; error?: string; event_ticker?: string; track_group?: boolean; combos?: NativeCombo[]; listings_checked?: number;
   timing?: { tracked_outcome?: 'yes' | 'no' | null; selected_event_ticker?: string | null; imminent: boolean; current: WindowInfo | null; next_window: WindowInfo | null }[]; events?: MarketEvent[]; title?: string; contract?: MarketContract; as_of?: string };
 export type Lookup = { id: number; name: string; params: Record<string, unknown>; result: MarketResult; received: string };
 export type MarketTools = ReturnType<typeof useMarketTools>;
@@ -32,10 +37,12 @@ export function useMarketTools() {
     let value: MarketResult;
     try {
       const keys = name === 'search_markets' ? ['query'] : ['event_ticker', 'contract_symbol'];
-      if (Object.keys(params).length !== keys.length || keys.some(k => typeof params[k] !== 'string')) {
+      const optional = name === 'get_orderbook' ? ['side', 'outcome', 'quantity', 'limit_price'] : [];
+      if (keys.some(k => typeof params[k] !== 'string') || Object.entries(params).some(([k, v]) =>
+        ![...keys, ...optional].includes(k) || (typeof v !== 'string' && !(typeof v === 'number' && Number.isFinite(v))))) {
         throw new Error('Invalid market tool parameters.');
       }
-      const query = new URLSearchParams(params as Record<string, string>);
+      const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]));
       const response = await fetch('/api/public/market-tools/' + name + '?' + query, { cache: 'no-store', signal: AbortSignal.timeout(12000) });
       value = await response.json();
       if (typeof value?.ok !== 'boolean') throw new Error('Unexpected market response.');

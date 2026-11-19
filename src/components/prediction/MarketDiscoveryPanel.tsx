@@ -34,6 +34,7 @@ function TrackedRow({ item, onRemove }: { item: TrackedContract; onRemove(): voi
 export function MarketDiscoveryPanel() {
   const { market } = useVoice();
   const result = market.result;
+  const liquidity = result?.liquidity;
   const tracked = market.tracked ?? [];
   const selected = result?.contract;
   const eventTicker = result?.event_ticker;
@@ -46,6 +47,18 @@ export function MarketDiscoveryPanel() {
     !tracked.some((i) => i.symbol === selected.symbol);
   return (
     <>
+      {liquidity && (
+        <section aria-label="Displayed liquidity" className="grid gap-1 text-sm">
+          <strong>Gemini Sandbox snapshot · {liquidity.side} {liquidity.outcome.toUpperCase()}</strong>
+          <p>{liquidity.displayed_quantity ?? "Unknown"} contracts displayed
+            {liquidity.limit_price !== null && ` at ${cents(liquidity.limit_price)} or better`}.
+            {" "}Spread {liquidity.spread === null ? "unknown" : cents(liquidity.spread)}.</p>
+          {liquidity.quantity !== null && <p>{liquidity.depth_unknown ? "Fill estimate unavailable" :
+            `Estimated fill: ${liquidity.estimated_executable_quantity} of ${liquidity.quantity} contracts`}
+            {liquidity.estimated_average_price !== null && ` at ${cents(liquidity.estimated_average_price)} on average before fees`}.</p>}
+          {result?.as_of && <time dateTime={result.as_of}>Observed {new Date(result.as_of).toLocaleTimeString()}</time>}
+        </section>
+      )}
       {result?.timing?.map((window) => {
         const next = window.next_window;
         if (!next || window.current) return null;

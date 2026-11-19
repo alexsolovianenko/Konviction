@@ -135,10 +135,13 @@ export class TradingRepository {
   finish(id, result) {
     const unknown = result.outcome_summary === "PENDING_UNKNOWN";
     const release = !unknown && (!result.ok || result.outcome_summary === "NOT_FILLED");
+    let retainedFraction = release ? 0 : 1;
+    if (result.outcome_summary === "PARTIAL" && result.remainder_buy) {
+      const filled = result.filled_quantity;
+      retainedFraction = filled / (filled + result.remainder_buy.quantity);
+    }
     this.db
-      .prepare(
-        "UPDATE browser_proposals SET status=?,result=?,reserved_cents=CASE WHEN ? THEN 0 ELSE reserved_cents END WHERE id=? AND status='EXECUTING'",
-      )
-      .run(unknown ? "UNKNOWN" : "DONE", JSON.stringify(result), release ? 1 : 0, id);
+      .prepare("UPDATE browser_proposals SET status=?,result=?,reserved_cents=ceil(reserved_cents * ?) WHERE id=? AND status='EXECUTING'")
+      .run(unknown ? "UNKNOWN" : "DONE", JSON.stringify(result), retainedFraction, id);
   }
 }

@@ -14,8 +14,8 @@
 import { db, executionEnabled, logActivity } from "./db";
 import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
-import { gPrivate, hasCredentials } from "./gemini";
-import { prepareTrade, executeTrade, isValidBuySize } from "./trade-engine";
+import { gPrivate, getUsdAvailable, hasCredentials } from "./gemini";
+import { prepareTrade, executeTrade, remainderBuy, isValidBuySize } from "./trade-engine";
 import { dailyCapError, orderCapError, supabaseLedger } from "./ledger";
 import {
   fetchSignedUrl, mintSessionToken, SESSION_PREFIX, SESSION_TTL_MS, sessionConfigured, verifySessionToken,
@@ -230,12 +230,16 @@ async function approve(store: Store, token: string | undefined, body) {
     if (!row || row.caller !== s.caller) throw new TradeError("UNKNOWN_PROPOSAL", "Proposal unavailable for this voice session.", 404);
     const order = ["EXECUTING", "DONE", "FAILED"].includes(row.status) ? await store.getOrderByIntent(row.id) : null;
     if (order) {
+      const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
       // Replay: report the recorded Gemini result; never submit a second order.
       return {
         ok: order.outcome_summary !== "EXCHANGE_REJECTED", replayed: true, outcome_summary: order.outcome_summary,
         order_id: order.gemini_order_id, exchange_status: order.exchange_status, filled_quantity: order.filled_qty,
         remaining_quantity: order.remaining_qty, avg_price: order.avg_price,
-        say: "This proposal was already approved. Showing the recorded Gemini result.",
+        ...(remainder && { remainder_buy: remainder }),
+        say: order.filled_qty == null ? "Final fill unavailable. Check order history." :
+          `Recorded ${order.filled_qty} of ${row.quantity} contracts filled${order.avg_price == null ? "" : " at an average of " + Math.round(Number(order.avg_price) * 100) + "¢"}.` +
+          (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
       };
     }
     if (row.status === "EXECUTING") throw new TradeError("IN_PROGRESS", "Approval already received. Check open trades before doing anything else.");
@@ -290,12 +294,13 @@ async function portfolio(store: Store, body) {
   if (!keysAre(body, ["pin"])) bad();
   await requirePin(store, body.pin, null);
   if (!hasCredentials()) throw new TradeError("ACCOUNT_UNCONFIGURED", "Gemini Sandbox credentials are not configured.", 503);
-  const [orders, positions, history] = await Promise.all([
+  const [orders, positions, history, balance] = await Promise.all([
     accountSection("/v1/prediction-markets/orders/active", "orders"),
     accountSection("/v1/prediction-markets/positions", "positions"),
     accountSection("/v1/prediction-markets/orders/history", "orders"),
+    getUsdAvailable(),
   ]);
-  return { ok: true, as_of: new Date().toISOString(), source: "Gemini Sandbox", orders, positions, history };
+  return { ok: true, as_of: new Date().toISOString(), source: "Gemini Sandbox", orders, positions, history, usd_available: balance.usd, balance_error: balance.error };
 }
 
 // ------------------------------------------------------------------ HTTP

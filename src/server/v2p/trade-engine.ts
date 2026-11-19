@@ -1,5 +1,6 @@
 // @ts-nocheck -- shared with the mechanically ported phone backend.
-import { contractTradable, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
+import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
+import { liquiditySnapshot } from "./book-liquidity";
 import { comboEligibility } from "./native-combo";
 import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, speakTime, usd } from "./util";
 type Body = Record<string, any>;
@@ -192,6 +193,21 @@ function rejectionMessage(data: Record<string, unknown> | null, status: number):
   return "Gemini rejected the order without a recognized reason. Check the sandbox account’s permissions and contract status before retrying.";
 }
 
+function exchangeQuantity(value: unknown) {
+  if (typeof value !== "number" && !(typeof value === "string" && /^\d*\.?\d+$/.test(value))) return null;
+  return num(value);
+}
+
+export function remainderBuy(intent, summary, filled, status) {
+  if (intent.side !== "buy" || !["PARTIAL", "NOT_FILLED"].includes(summary) ||
+      !["cancelled", "canceled", "closed"].includes(String(status).toLowerCase())) return null;
+  const executed = exchangeQuantity(filled);
+  const quantity = Number(intent.quantity) - executed;
+  if (!Number.isSafeInteger(executed) || executed < 0 || !Number.isSafeInteger(quantity) || quantity <= 0) return null;
+  return { event_ticker: intent.event_ticker, contract_symbol: intent.instrument_symbol, outcome: intent.outcome,
+    quantity, limit_price: Number(intent.limit_price) };
+}
+
 export async function executeTrade(it, caller, { finish, log, receipt, saveOrder }) {
   const code = it.code;
   // Re-quote at execution time.
@@ -276,7 +292,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   } else {
     // The placement response can precede matching. Reconcile once by the exact order id.
     const terminal = (order: any) => ["filled", "cancelled", "canceled", "closed"].includes(String(order?.status ?? "").toLowerCase());
-    if (o?.orderId && (num(o.filledQuantity) === null || (!terminal(o) && Number(o.filledQuantity) < it.quantity))) {
+    if (o?.orderId && (exchangeQuantity(o.filledQuantity) === null || (!terminal(o) && Number(o.filledQuantity) < it.quantity))) {
       await new Promise((r) => setTimeout(r, 1500));
       const h = await gPrivate("/v1/prediction-markets/orders/history", {
         symbol: it.instrument_symbol,
@@ -286,12 +302,12 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
       const match = (h.data?.orders ?? []).find(
         (x: any) => String(x.orderId) === String(o.orderId),
       );
-      if (match) o = match;
+      if (h.ok && match) o = match;
     }
-    const filled = num(o?.filledQuantity) ?? 0;
+    const filled = exchangeQuantity(o?.filledQuantity) ?? 0;
     summary =
-      num(o?.filledQuantity) === null || filled < 0 || filled > Number(it.quantity) + 1e-9 ||
-      (filled < it.quantity && !terminal(o))
+      exchangeQuantity(o?.filledQuantity) === null || filled < 0 || filled > Number(it.quantity) + 1e-9 ||
+      (filled < it.quantity && (!terminal(o) || String(o?.status).toLowerCase() === "filled"))
         ? "PENDING_UNKNOWN"
         : filled <= 0
           ? "NOT_FILLED"
@@ -300,7 +316,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
             : "PARTIAL";
   }
 
-  const filledQty = num(o?.filledQuantity);
+  const filledQty = exchangeQuantity(o?.filledQuantity);
   const avg = num(o?.avgExecutionPrice);
   const filledNotional =
     filledQty && avg ? round2(filledQty * avg) : filledQty ? round2(filledQty * limit) : 0;
@@ -354,18 +370,38 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   const reason = placed.data?.reason ?? placed.data?.error;
   const average = avg !== null ? ` at an average of ${cents(avg)}` : "";
   const say: Record<string, string> = {
-    FILLED: `Filled ${filledQty} sandbox contracts${average}.`,
-    PARTIAL: `Filled ${filledQty} of ${it.quantity} sandbox contracts${average}. ${cancelled
-      ? "The exchange cancelled the remainder. Request a fresh quote for the unfilled amount."
-      : "Check order history for the remainder before placing another order."}`,
-    NOT_FILLED: cancelled
-      ? `Zero of ${it.quantity} contracts filled at your ${cents(limit)} limit. Gemini cancelled the immediate-or-cancel order. Request a fresh quote before trying again.`
-      : "Gemini reports zero fills so far. Check order history before placing another order.",
+    FILLED: `Filled ${filledQty} of ${it.quantity} sandbox contracts${average}.`,
+    PARTIAL: `Filled ${filledQty} of ${it.quantity} sandbox contracts${average}.`,
+    NOT_FILLED: `Zero of ${it.quantity} contracts filled at your ${cents(limit)} limit.`,
     PENDING_UNKNOWN: filledQty !== null && filledQty > 0 && filledQty <= it.quantity
       ? `Gemini reports ${filledQty} filled so far. Check order history for the final quantity before placing another order.`
       : "Gemini has not confirmed the final fill. Check order history before placing another order.",
     EXCHANGE_REJECTED: rejection,
   };
+  const remainder = remainderBuy(it, summary, filledQty, o?.status);
+  if (summary === "PARTIAL" || summary === "NOT_FILLED") {
+    if (cancelled) say[summary] += " Gemini cancelled the unfilled contracts.";
+    if (it.side === "buy") {
+      let depth = "Resting quantity at your limit was unknown.";
+      if (o?.reason === "InsufficientLiquidity") {
+        depth = "Gemini reported insufficient resting liquidity at your limit.";
+      } else if (q.buy !== null && q.buy > limit) {
+        depth = "The best ask before submission was above your limit.";
+      } else {
+        // This later snapshot describes the current book, never the cause of a past fill.
+        const book = await gPublic("/v1/book/" + encodeURIComponent(it.instrument_symbol), {limit_bids: 0, limit_asks: 0});
+        const unfilled = it.quantity - filledQty;
+        const { displayed_quantity: size } = liquiditySnapshot(book?.ok ? book.data : null,
+          { outcome: it.outcome, side: "buy", quantity: unfilled, limit_price: limit });
+        if (size !== null && size < unfilled)
+          depth = `The book now shows only ${size} contracts at or below your limit, too few for the remainder.`;
+        else if (size !== null)
+          depth = `The book now shows ${size} contracts at or below your limit. Available size can change.`;
+      }
+      say[summary] += " " + depth;
+    }
+    if (remainder) say[summary] += ` Ask to retry the remaining ${remainder.quantity} at up to ${cents(limit)} each.`;
+  }
   return json({
     ok: summary !== "EXCHANGE_REJECTED",
     outcome_summary: summary,
@@ -375,6 +411,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     remaining_quantity: num(o?.remainingQuantity),
     avg_price: avg,
     est_fee_usd: fillFee,
+    ...(remainder && { remainder_buy: remainder }),
     say: say[summary],
     ...(summary === "EXCHANGE_REJECTED" && { voice_say: typeof reason === "string" && Object.hasOwn(voiceReasons, reason) ? voiceReasons[reason] : "Rejected. Check order details." }),
   });

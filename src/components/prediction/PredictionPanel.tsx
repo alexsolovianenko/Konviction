@@ -141,6 +141,8 @@ export function PredictionPanel() {
         proposal={view.proposal}
         availability={view.availability}
         message={view.tradeMessage}
+        remainderQuantity={view.remainderQuantity}
+        retry={() => voice.prepareRemainderOnScreen()}
         pair={(pin) => voice.pairDevice({pin})}
         approve={(id, pin) => voice.approve(id, pin)}
       />}

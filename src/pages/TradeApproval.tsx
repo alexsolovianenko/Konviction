@@ -9,11 +9,15 @@ export function TradeApproval({
   message,
   approve,
   pair,
+  remainderQuantity,
+  retry,
 }: {
   proposal: Proposal | null;
   availability: Availability | null;
   message: string;
   approve: (id: string, pin: string) => Promise<void>;
+  remainderQuantity?: number | null;
+  retry?: () => Promise<unknown>;
   pair?: (pin: string) => Promise<boolean>;
 }) {
   const [status, setStatus] = useState<Availability | null>(null);
@@ -148,6 +152,11 @@ export function TradeApproval({
         <p role="status" className="mt-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
           {message}
         </p>
+      )}
+      {remainderQuantity && retry && (
+        <button className="btn mt-2" onClick={() => void retry()}>
+          Prepare remaining {remainderQuantity} {remainderQuantity === 1 ? "contract" : "contracts"}
+        </button>
       )}
     </section>
   );

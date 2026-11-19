@@ -17,7 +17,7 @@ Open http://127.0.0.1:5173. The launcher starts a private loopback capture servi
 
 No keys, wallet, account or database are necessary for market reads. Search markets queries the current listing of up to 100 active Gemini Sandbox events. An empty search returns the first results. Matching uses event titles, tickers, category, contract labels and symbols. Results include up to eight matching events and eight contracts per event. Select a quote to fetch the event again. Prices come from Gemini in dollars per YES or NO contract and the UI shows cents. Missing quotes and upstream failures are displayed explicitly.
 
-The browser and voice use the same handlers and results. The client tools are `search_markets({query})` and `get_orderbook({event_ticker, contract_symbol})`. Both use fresh public GETs via /api/public/market-tools. The console's separate overview polls /api/public/dashboard-state and caches the public event listing for 15 seconds.
+The browser and voice use the same handlers and results. The client tools are `search_markets({query})` and `get_orderbook({event_ticker, contract_symbol, outcome?, side?, quantity?, limit_price?})`. Both use fresh public GETs via /api/public/market-tools. The console's separate overview polls /api/public/dashboard-state and caches the public event listing for 15 seconds.
 
 ## Optional private features
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { workerTrading } from "../../browserTrading";
 import { PrivatePortfolio } from "./PrivatePortfolio";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Phone, Search } from "lucide-react";
@@ -125,9 +126,9 @@ export function OverviewView() {
           </a>
         )}
       />
-      {d ? <AccountStrip d={d} /> : <Waiting q={q} />}
-      <Panel title="Gemini order history">
-        <PrivatePortfolio showPositions={!d?.account.configured || Boolean(d.account.positions_error)} />
+      {d ? (d.account.configured || !workerTrading) && <AccountStrip d={d} /> : <Waiting q={q} />}
+      <Panel title={workerTrading && !d?.account.configured ? "Gemini Sandbox account" : "Gemini order history"}>
+        <PrivatePortfolio showBalance={workerTrading && !d?.account.configured} showPositions={!d?.account.configured || Boolean(d.account.positions_error)} />
       </Panel>
       {d && (
         <>

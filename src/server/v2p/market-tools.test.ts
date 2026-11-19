@@ -105,3 +105,51 @@ it('ranks event-wide volume across pages and filters individual contract deadlin
   expect(reply.events.map((e: {ticker: string; volume_usd: number}) => [e.ticker, e.volume_usd]))
     .toEqual([['BTC-D', 2100], ['BTC-B', 1001]]);
 });
+
+it.each([
+  {outcome:'yes',side:'buy',limit:'0.54',displayed:6,avg:.515, spread:.1},
+  {outcome:'no',side:'buy',limit:'0.6',displayed:2,avg:.6, spread:.1},
+  {outcome:'yes',side:'sell',limit:'0.39',displayed:2,avg:.4, spread:.1},
+  {outcome:'no',side:'sell',limit:'0.46',displayed:6,avg:.485, spread:.1},
+  {outcome:'yes',side:'buy',limit:'0.48',displayed:0,avg:null, spread:.1},
+])('walks the sandbox $outcome $side book best-first through $limit', async ({outcome,side,limit,displayed,avg,spread}) => {
+  const fetchBook = vi.fn(async (url: URL, init: RequestInit) => {
+    expect(init.method).toBe('GET');
+    if (url.pathname === '/v1/book/C') {
+      expect(url.searchParams.toString()).toBe('limit_bids=0&limit_asks=0');
+      return Response.json({ asks:[{price:'.53',amount:'4'},{price:'.50',amount:'2'}],
+        bids:[{price:'.38',amount:'4'},{price:'.40',amount:'2'}] });
+    }
+    return Response.json({ticker:'E', title:'Event', contracts:[{instrumentSymbol:'C'}]});
+  });
+  vi.stubGlobal('fetch',fetchBook);
+  const params = new URLSearchParams({event_ticker:'E',contract_symbol:'C',outcome,side,quantity:'4',limit_price:limit});
+  const result = await (await marketTool('get_orderbook',params)).json();
+  expect(result.liquidity).toMatchObject({side,outcome,snapshot_only:true,depth_unknown:false,spread,
+    displayed_quantity:displayed,estimated_executable_quantity:Math.min(4, displayed),estimated_average_price:avg});
+});
+
+it.each([
+  {book:{asks:[],bids:[]}, depth:0, unknown:false},
+  {book:{asks:null,bids:[]}, depth:null, unknown:true},
+  {book:{asks:[{price:'.5',amount:false}],bids:[]}, depth:null, unknown:true},
+  {book:{asks:[{price:'.5',amount:'3'}],bids:[{price:'.6',amount:'3'}]}, depth:null, unknown:true},
+  {book:null, depth:null, unknown:true},
+])('distinguishes absent, unreliable and empty depth', async ({book,depth,unknown}) => {
+  vi.stubGlobal('fetch',async (url: URL) => url.pathname === '/v1/book/C'
+    ? book ? Response.json(book) : new Response('',{status:503})
+    : Response.json({ticker:'E',title:'Event',contracts:[{instrumentSymbol:'C'}]}));
+  const params = new URLSearchParams({event_ticker:'E',contract_symbol:'C',outcome:'yes',limit_price:'.5'});
+  const result = await (await marketTool('get_orderbook',params)).json();
+  expect(result.liquidity).toMatchObject({side:'buy',depth_unknown:unknown,displayed_quantity:depth,spread:null,
+    estimated_executable_quantity:null,estimated_average_price:null});
+});
+
+it.each(['quantity=2','outcome=yes&quantity=1.5','outcome=no&limit_price=0','outcome=yes&side=hold',
+  'outcome=yes&outcome=no','outcome=yes&extra=1'])('rejects invalid liquidity input %s before fetching', async extra => {
+  const get = vi.fn();
+  vi.stubGlobal('fetch',get);
+  const params = new URLSearchParams('event_ticker=E&contract_symbol=C&' + extra);
+  expect((await marketTool('get_orderbook', params)).status).toBe(400);
+  expect(get).not.toHaveBeenCalled();
+});

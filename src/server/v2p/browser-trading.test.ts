@@ -118,6 +118,22 @@ it("requires owner, separate PIN and enabled execution; moved asks preserve the 
   expect(gPrivate).toHaveBeenCalledWith("/v1/prediction-markets/order", expect.objectContaining({price:"0.40"}), expect.objectContaining({submitBefore:expect.any(Number)}));
 });
 
+it("releases the cancelled share of the SQLite reservation for a separately approved remainder", async () => {
+  vi.stubEnv("MAX_DAILY_USD", "0.84");
+  const t = token();
+  const first = await propose(t);
+  vi.mocked(gPrivate).mockResolvedValueOnce({ok:true,status:200,text:"",data:{
+    orderId:"1",status:"cancelled",filledQuantity:"1",remainingQuantity:"0",avgExecutionPrice:".39",
+  }});
+  const result = await approve(t, first.proposal.proposal_id);
+  quote(".45");
+  const retry = await propose(t, randomUUID(), result.remainder_buy);
+  expect(retry.proposal).toMatchObject({quantity:1,limit_price:.4,quote_price:.45});
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+  await expect(approve(t, retry.proposal.proposal_id, "0000")).rejects.toMatchObject({code:"WRONG_PIN"});
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+});
+
 it("atomically reserves aggregate daily exposure, submits at most once and replays completed results", async () => {
   vi.stubEnv("MAX_DAILY_USD", "1.20");
   const t = token(),

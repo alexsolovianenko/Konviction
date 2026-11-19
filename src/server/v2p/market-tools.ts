@@ -1,3 +1,4 @@
+import { liquiditySnapshot, type LiquidityQuery } from "./book-liquidity";
 import { dashboardMarkets, dashboardMarketsFrom } from "./dashboard-markets";
 import { comboEligibility } from "./native-combo";
 import { gPublic, geminiReadError, findContract, type GEvent } from "./gemini";
@@ -42,7 +43,9 @@ export async function marketTool(name: string, params: URLSearchParams) {
   const fail = (error: string, status: number) => Response.json({ ok: false, error }, { status });
   const fields = name === "search_markets" ? ["query"] : name === "get_settlement_index" ? ["event_ticker"] : ["event_ticker", "contract_symbol"];
   if (!["search_markets", "get_orderbook", "get_settlement_index"].includes(name)) return fail("Unknown market tool.", 404);
-  if (Array.from(params.keys()).length !== fields.length || fields.some(k => !params.has(k) || params.get(k)!.length > 200))
+  const optional = name === "get_orderbook" ? ["outcome", "side", "quantity", "limit_price"] : [];
+  if (fields.some(k => !params.has(k)) || Array.from(params).some(([key, value]) =>
+    ![...fields, ...optional].includes(key) || params.getAll(key).length !== 1 || value.length > 200))
     return fail("Invalid market tool parameters.", 400);
   if (name === "get_settlement_index") return settlementIndex(params.get("event_ticker")!);
   if (name === "search_markets") {
@@ -81,9 +84,21 @@ export async function marketTool(name: string, params: URLSearchParams) {
   const ticker = params.get("event_ticker")!;
   const symbol = params.get("contract_symbol")!;
   if (![ticker, symbol].every(v => /^[a-z0-9_.-]+$/i.test(v) && !/^\.+$/.test(v))) return fail("Invalid prediction contract identifier.", 400);
+  let liquidityQuery: LiquidityQuery | null = null;
+  if (optional.some(key => params.has(key))) {
+    const outcome = params.get("outcome");
+    const side = params.get("side") ?? "buy";
+    const quantity = params.has("quantity") ? Number(params.get("quantity")) : null;
+    const limit = params.has("limit_price") ? Number(params.get("limit_price")) : null;
+    if ((outcome !== "yes" && outcome !== "no") || (side !== "buy" && side !== "sell") ||
+        (quantity !== null && !(Number.isSafeInteger(quantity) && quantity > 0)) ||
+        (limit !== null && !(limit > 0 && limit < 1))) return fail("Invalid liquidity parameters. Specify an outcome, positive whole quantity and a limit between zero and one dollar when applicable.", 400);
+    liquidityQuery = { outcome, side, quantity, limit_price: limit };
+  }
+  const depth = liquidityQuery ? 0 : 1; // Gemini uses zero to request every displayed level.
   const [result, book] = await Promise.all([
     gPublic("/v1/prediction-markets/events/" + encodeURIComponent(ticker)),
-    gPublic("/v1/book/" + encodeURIComponent(symbol), { limit_bids: 1, limit_asks: 1 }),
+    gPublic("/v1/book/" + encodeURIComponent(symbol), { limit_bids: depth, limit_asks: depth }),
   ]);
   if (!result.ok) return fail("Gemini Sandbox event unavailable: " + geminiReadError(result), 502);
   const row = result.data?.data ?? result.data;
@@ -102,5 +117,6 @@ export async function marketTool(name: string, params: URLSearchParams) {
   const now = Date.now();
   return Response.json({ ok: true, source: "Gemini Sandbox", as_of: new Date(now).toISOString(),
     event_ticker: ticker, title: event.title, contract, displayed_buy_quantity_at_ask, seconds_to_expiry: secondsUntil(contract.expiry, now),
+    ...(liquidityQuery && { liquidity: liquiditySnapshot(book.ok ? book.data : null, liquidityQuery) }),
     payout_per_contract: { yes: payoutAtAsk(contract.buy.yes), no: payoutAtAsk(contract.buy.no) } });
 }

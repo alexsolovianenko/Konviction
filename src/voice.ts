@@ -26,6 +26,7 @@ export type VoiceView = {
   proposal: Proposal | null;
   availability: Availability | null;
   tradeMessage: string;
+  remainderQuantity: number | null;
   status: string;
   entries: Entry[];
   intents: Intent[];
@@ -49,6 +50,8 @@ const shortTradeIssue: Record<string, string> = {
   EXECUTION_DISABLED: 'Sandbox trading is disabled.',
   SERVICE_UNAVAILABLE: 'Trading service unavailable.',
   UNAUTHORIZED: 'Restart voice to trade.',
+  NO_REMAINDER: 'No confirmed whole-contract remainder.',
+  BUSY: 'Checking the current order.',
   NO_SESSION: 'Start voice to trade.',
   SESSION_ENDED: 'Session ended.',
   LOCKED: 'Approval is locked.',
@@ -61,7 +64,7 @@ const shortTradeIssue: Record<string, string> = {
 };
 
 export const initial: VoiceView = {
-  proposal:null, availability:null, tradeMessage:"", positionSnapshot:null,
+  remainderQuantity:null, proposal:null, availability:null, tradeMessage:"", positionSnapshot:null,
   status: 'Idle',
   entries: [],
   intents: [],
@@ -88,6 +91,8 @@ export class Voice {
   private visibleContract = "";
   private currentProposal: Proposal | null = null;
   private approving = false;
+  private preparing = false;
+  private remainder: {quantity: number; limit_price: number; event_ticker: string; contract_symbol: string; outcome: string} | null = null;
   private proposalRequest: Record<string, unknown> | null = null;
   private finishSpeech: undefined | (() => void);
   constructor(
@@ -338,24 +343,11 @@ export class Voice {
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,say:'Session ended.'});
             const result = await this.prepareBuy(params);
-            if (!result.ok) {
-              const error = result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE');
-              let say = shortTradeIssue[error] ?? 'Couldn’t prepare the order.';
-              if (error === 'CAP_EXCEEDED') {
-                if (/too small to buy even one contract/i.test(result.message)) say = 'Budget is below one contract.';
-                else if (/daily/i.test(result.message)) say = 'Daily spending limit reached.';
-                else if (/contracts per order/i.test(result.message)) say = 'Too many contracts.';
-                else if (/per order/i.test(result.message)) say = 'Over the per-order limit.';
-              }
-              return JSON.stringify({ok:false, error, say});
-            }
-            const { quantity, outcome } = result.proposal;
-            const paired = result.availability.voice_authorized && result.availability.voice_confirmation_supported;
-            const say = !result.availability.execution_enabled ? 'Approval is unavailable.'
-              : paired && result.proposal.voice_readback ? result.proposal.voice_readback
-              : 'Ready for approval on screen.';
-            return JSON.stringify({ok:true, quantity, outcome, say});
+            return this.proposalReply(result);
           },
+          prepare_sandbox_remainder: async () => current()
+            ? this.proposalReply(await this.prepareRemainder())
+            : JSON.stringify({ok:false, say:'Session ended.'}),
           confirm_sandbox_buy: async () => JSON.stringify(current()
             ? await this.confirmByVoice() : {ok:false, say:'Session ended.'}),
           get_sandbox_positions: async () => JSON.stringify(current()
@@ -387,6 +379,37 @@ export class Voice {
     }
   }
 
+  private proposalReply(result: Awaited<ReturnType<Voice['prepareBuy']>>) {
+    if (!result.ok) {
+      const error = result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE');
+      let say = shortTradeIssue[error] ?? 'Couldn’t prepare the order.';
+      if (error === 'CAP_EXCEEDED') {
+        if (/too small to buy even one contract/i.test(result.message)) say = 'Budget is below one contract.';
+        else if (/daily/i.test(result.message)) say = 'Daily spending limit reached.';
+        else if (/contracts per order/i.test(result.message)) say = 'Too many contracts.';
+        else if (/per order/i.test(result.message)) say = 'Over the per-order limit.';
+      }
+      return JSON.stringify({ok:false, error, say});
+    }
+    const { quantity, outcome } = result.proposal;
+    const paired = result.availability.voice_authorized && result.availability.voice_confirmation_supported;
+    const say = !result.availability.execution_enabled ? 'Approval is unavailable.'
+      : paired && result.proposal.voice_readback ? result.proposal.voice_readback
+      : 'Ready for approval on screen.';
+    return JSON.stringify({ok:true, quantity, outcome, say});
+  }
+
+  async prepareRemainderOnScreen() {
+    const result = await this.prepareRemainder();
+    if (result.proposal?.voice_readback) this.conversation?.sendContextualUpdate?.(
+      "The user requested the remainder on screen. Speak this exact readback and wait for confirmation: " + result.proposal.voice_readback);
+  }
+
+  async prepareRemainder() {
+    if (!this.remainder) return {ok:false, error:'NO_REMAINDER'};
+    return this.prepareBuy(this.remainder);
+  }
+
   async prepareBuy(params: Record<string, unknown>) {
     const session = this.session;
     if (!this.active || !session) return {ok:false, message:'Start voice to prepare a proposal.', error:'NO_SESSION'};
@@ -395,12 +418,21 @@ export class Voice {
       this.update({tradeMessage:message});
       return {ok:false, message, error:'UNAUTHORIZED'};
     }
-    const result = await tradingRequest('proposals', params, session.credentials.session_token, {idempotencyKey:crypto.randomUUID()});
-    if (session !== this.session) return {ok:false, message:'Session ended.', error:'SESSION_ENDED'};
-    this.currentProposal = result.proposal ?? null;
-    this.proposalRequest = result.proposal ? {...params} : null;
-    this.update({proposal:this.currentProposal, availability:result.availability ?? null, tradeMessage:result.message ?? ''});
-    return result;
+    if (this.preparing || this.approving) return {ok:false, error:'BUSY'};
+    this.preparing = true;
+    if (params !== this.remainder) this.remainder = null;
+    this.update({remainderQuantity:null});
+    try {
+      const result = await tradingRequest('proposals', params, session.credentials.session_token, {idempotencyKey:crypto.randomUUID()});
+      if (session !== this.session) return {ok:false, message:'Session ended.', error:'SESSION_ENDED'};
+      if (result.proposal) this.remainder = null;
+      this.currentProposal = result.proposal ?? null;
+      this.proposalRequest = result.proposal ? {...params} : null;
+      this.update({remainderQuantity:this.remainder?.quantity ?? null, proposal:this.currentProposal, availability:result.availability ?? null, tradeMessage:result.message ?? ''});
+      return result;
+    } finally {
+      this.preparing = false;
+    }
   }
 
   async pairDevice(credentials: { pairing_token: string } | { pin: string }) {
@@ -432,7 +464,7 @@ export class Voice {
     if (!proposal) return {ok:false, say:'No pending proposal.'};
     if (!(session instanceof LocalSession) || !proposal.voice_readback)
       return {ok:false, say:'Approve the order on screen.'};
-    if (this.approving) return {ok:false, say:'Checking your order.'};
+    if (this.preparing || this.approving) return {ok:false, say:'Checking your order.'};
     this.approving = true;
     try {
       const sequence = await session.confirmationSequence().catch(() => null);
@@ -445,8 +477,8 @@ export class Voice {
       if (result.outcome_summary) {
         this.showExchangeResult(result);
         const fills: Record<string, string> = {
-          FILLED: 'Filled in the sandbox.', PARTIAL: `Sandbox filled ${result.filled_quantity} of ${proposal.quantity}.`,
-          NOT_FILLED: `No fills at ${Math.round(proposal.limit_price * 100)} cents.`, PENDING_UNKNOWN: 'Fill status is pending.',
+          FILLED: 'Filled in the sandbox.', PARTIAL: result.say ?? `Sandbox filled ${result.filled_quantity} of ${proposal.quantity}.`,
+          NOT_FILLED: result.say ?? `No fills at ${Math.round(proposal.limit_price * 100)} cents.`, PENDING_UNKNOWN: 'Fill status is pending.',
           EXCHANGE_REJECTED: result.voice_say ?? 'Exchange rejected the order.',
         };
         return {ok:result.ok, say:fills[result.outcome_summary] ?? 'Order status is unconfirmed.'};
@@ -505,22 +537,31 @@ export class Voice {
       : result.outcome_summary ? ` Result: ${result.outcome_summary}.` : '';
     const clear = !['WRONG_PIN','BAD_INPUT'].includes(result.error);
     if (clear) this.currentProposal = null;
-    this.update({tradeMessage:(result.say ?? result.message ?? '') + exchange, ...(clear && {proposal:null})});
+    this.remainder = result.remainder_buy ?? null;
+    this.update({remainderQuantity:this.remainder?.quantity ?? null, tradeMessage:(result.say ?? result.message ?? '') + exchange, ...(clear && {proposal:null})});
   }
 
   async approve(proposalId: string,pin: string) {
     const session = this.session;
-    if (!session || !this.active) return;
-    const result = await tradingRequest('approve',{proposal_id:proposalId,pin},session.credentials.session_token);
-    if (session !== this.session) return;
-    this.showExchangeResult(result);
+    if (!session || !this.active || this.approving || this.preparing || this.currentProposal?.proposal_id !== proposalId) return;
+    this.approving = true;
+    try {
+      const result = await tradingRequest('approve',{proposal_id:proposalId,pin},session.credentials.session_token);
+      if (session !== this.session) return;
+      this.showExchangeResult(result);
+      if (this.remainder) this.conversation?.sendContextualUpdate?.(
+        "Typed approval result: " + result.say + " Wait for the caller to request a remainder proposal.");
+    } finally {
+      this.approving = false;
+    }
   }
 
   async stop(error = '') {
     if (!this.active) return;
     this.finishSpeech?.();
     const closing = ++this.attempt;
-    this.update({ proposal:null, positionSnapshot:null, status: 'Ending session', draft: '', error });
+    this.remainder = null;
+    this.update({ remainderQuantity:null, proposal:null, positionSnapshot:null, status: 'Ending session', draft: '', error });
     const conversation = this.conversation,
       session = this.session;
     this.conversation = undefined;

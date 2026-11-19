@@ -79,3 +79,14 @@ it("opens the native combo's own quote with the exact pair returned by Gemini", 
   });
   expect(screen.getByText("Unavailable for trading")).toBeTruthy();
 });
+
+it("shows the executable portion, average and limit from an explicit liquidity snapshot", () => {
+  context.mockReturnValue({ market: { result: { liquidity: {
+    outcome: "no", side: "buy", quantity: 5, limit_price: 0.6, spread: 0.04,
+    depth_unknown: false, displayed_quantity: 2, estimated_executable_quantity: 2, estimated_average_price: 0.55,
+  } } } });
+  render(<MarketDiscoveryPanel />);
+  const snapshot = screen.getByRole("region", {name: "Displayed liquidity"});
+  expect(snapshot).toHaveTextContent("2 contracts displayed at 60¢ or better. Spread 4¢.");
+  expect(snapshot).toHaveTextContent("Estimated fill: 2 of 5 contracts at 55¢ on average before fees.");
+});
