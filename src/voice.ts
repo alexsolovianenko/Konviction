@@ -29,12 +29,16 @@ export class Voice {
   private attempt = 0;
   private active = false;
   private session: WorkerSession | LocalSession | undefined;
-  private conversation: undefined | { endSession: () => Promise<void> };
+  private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number };
   private finishSpeech: undefined | (() => void);
   constructor(
     private update: (patch: Partial<VoiceView>) => void,
     private marketAction: (name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) => Promise<unknown>,
   ) {}
+
+  outputLevel() {
+    return this.conversation?.getOutputVolume?.() ?? 0;
+  }
 
   async start() {
     if (this.active) return;

@@ -318,3 +318,28 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 }
+
+/* The voice canvas has a paper palette, independent of the trading console. */
+[data-voice-home="true"] {
+  color-scheme: light;
+  --background: #fafafa; --foreground:#202020; --card:#fff; --subtle:#424242;
+  --card-foreground:#202020; --muted-foreground:#666; --primary:#171717; --primary-foreground:#fff;
+  --raised:#eee; --border:#e5e5e5; --border-strong:#ccc; --sidebar:#f5f5f5;
+  --accent-foreground:#333; --input:#bbb; --destructive:#a52727; --success:#247450;
+  background:var(--background); color:var(--foreground);
+}
+.voice-canvas { max-width:46rem; margin:clamp(3rem,12vh,8rem) auto 3rem; display:grid; gap:1.15rem; }
+.ink-orb { --amplitude:0; justify-self:center; width:76px; aspect-ratio:1; overflow:hidden; border-radius:50%; position:relative; isolation:isolate; background:#cacaca; transform:scale(calc(1 + var(--amplitude)*.25)); transition:transform 90ms linear; }
+.ink-orb i { position:absolute; inset:-45%; background:radial-gradient(ellipse at 23% 32%,#131313 0 12%,transparent 38%),radial-gradient(ellipse at 82% 62%,#a4a4a4 0 10%,transparent 51%),linear-gradient(155deg,#050505 23%,#555 36%,#fafafa 48%,#aaa 72%,#eee 90%); filter:blur(2px); }
+.ink-orb[data-phase="speaking"] i { animation:ink-drift 2.3s ease-in-out infinite alternate; }
+.ink-orb:is([data-phase="thinking"],[data-phase="lookup"],[data-phase="listening"]) i { animation:ink-drift 7s ease-in-out infinite alternate; }
+@keyframes ink-drift { from {transform:rotate(-14deg) translateY(-3%)} to {transform:rotate(22deg) translateY(5%)} }
+@media(prefers-reduced-motion:reduce){.ink-orb i {animation:none!important}}
+.voice-composer { display:grid; gap:.6rem; padding:.9rem; border:1px solid #e4e4e4; border-radius:22px; background:white; box-shadow:0 5px 23px #00000008; }
+.voice-composer input { width:100%; min-width:0; padding:.2rem .35rem; color:#222; background:transparent; }
+.composer-actions { display:flex; align-items:center; justify-content:flex-end; gap:.5rem; }
+.composer-actions span { margin-right:auto; padding-left:.35rem; font-size:.75rem; color:#656565; }
+.composer-actions button { display:grid; place-items:center; width:36px; height:36px; border-radius:50%; background:#171717; color:white; cursor:pointer; }
+.conversation-lines p,.home-results details { padding:.7rem 0; border-bottom:1px solid #e5e5e5; }
+.conversation-lines b { display:block; color:#686868; font-size:.78rem; }
+.home-results button { display:block; padding:.35rem .8rem; text-align:left; text-decoration:underline; }

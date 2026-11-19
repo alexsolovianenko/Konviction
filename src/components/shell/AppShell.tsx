@@ -1,12 +1,13 @@
 import { ClientOnly, Link, useLocation } from "@tanstack/react-router";
-import { AudioLines, ChartCandlestick, LayoutDashboard, LockKeyhole } from "lucide-react";
+import { House, AudioLines, ChartCandlestick, LayoutDashboard, LockKeyhole } from "lucide-react";
 import type { ReactNode } from "react";
 import { useDashboardState, useNow } from "../console/Console";
 import { StatusBubble } from "../voice/StatusBubble";
 import { VoiceProvider, useVoice } from "../voice/VoiceProvider";
 
 const nav = [
-  { to: "/", label: "Markets", icon: ChartCandlestick },
+  { to: "/", label: "Home", icon: House },
+  { to: "/markets", label: "Markets", icon: ChartCandlestick },
   { to: "/dashboard", label: "Account", icon: LayoutDashboard },
   { to: "/open-trades", label: "Private trades", icon: LockKeyhole },
 ] as const;
@@ -38,10 +39,11 @@ function ProposalNotice({ path }: { path: string }) {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useLocation({ select: (location) => location.pathname });
-  const active = (to: string) => (to === "/" ? ["/", "/voice", "/markets"].includes(path) : path.startsWith(to));
+  const home = path === "/" || path === "/voice";
+  const active = (to: string) => (to === "/" ? ["/", "/voice"].includes(path) : path.startsWith(to));
   return (
     <VoiceProvider>
-      <div className="min-h-dvh lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)]">
+      <div data-voice-home={home} className="min-h-dvh lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)]">
         <aside className="sticky top-0 hidden h-dvh flex-col border-r border-border bg-sidebar px-2 py-3 lg:flex">
           <Link to="/" className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-semibold hover:bg-raised">
             <span className="grid size-5 place-items-center rounded bg-primary text-primary-foreground">
@@ -68,21 +70,21 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         <div className="flex min-w-0 flex-col">
-          <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
+          {!home && <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
             <div className="flex h-12 items-center gap-3 px-4 lg:px-8">
               <Link to="/" aria-label="Voice-to-Predict home" className="grid size-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground lg:hidden">
                 <AudioLines className="size-4" aria-hidden />
               </Link>
               <div className="min-w-0 flex-1"><StatusBubble /></div>
             </div>
-          </header>
+          </header>}
           <main className="w-full max-w-[84rem] flex-1 px-4 pb-24 pt-6 lg:px-8 lg:pb-12 lg:pt-8">
             <ProposalNotice path={path} />
             {children}
           </main>
         </div>
 
-        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-border bg-sidebar pb-[env(safe-area-inset-bottom)] lg:hidden">
+        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-border bg-sidebar pb-[env(safe-area-inset-bottom)] lg:hidden">
           {nav.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
