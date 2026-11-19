@@ -284,3 +284,18 @@ it("shows the labelled chart and the full PIN approval for the same contract", a
     ),
   ).toBe(true);
 });
+
+it("opens a requested quote without showing purchase controls", async () => {
+  fetchMock.mockImplementation(async () => quote());
+  voiceState.mockReturnValue({
+    voice: {},
+    market: { result: await quote().json(), history: [] },
+    view: { proposal: null, tradeMessage: "" },
+  });
+  render(<PredictionPanel />);
+  await flush();
+  expect(screen.getByRole("region", { name: "Contract price chart" })).toBeVisible();
+  expect(screen.queryByRole("form")).toBeNull();
+  expect(screen.queryByLabelText("Sandbox trade approval")).toBeNull();
+  expect(screen.queryByText("Budget (USD)")).toBeNull();
+});

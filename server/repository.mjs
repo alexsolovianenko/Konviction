@@ -14,6 +14,7 @@ export class SQLiteRepository {
         last_seen INTEGER, expires INTEGER, signed_expires INTEGER, conversation_id TEXT);
       CREATE TABLE IF NOT EXISTS transcript(session TEXT, seq INTEGER, entry TEXT, received_at INTEGER, PRIMARY KEY(session, seq));
       CREATE TABLE IF NOT EXISTS intents(session TEXT, confirmation INTEGER, record TEXT, UNIQUE(session,confirmation));
+      CREATE TABLE IF NOT EXISTS intent_names(intent_id TEXT PRIMARY KEY, name TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS session_intents ON intents(session);
       CREATE TABLE IF NOT EXISTS replays(session TEXT, key TEXT, fingerprint TEXT, response TEXT, PRIMARY KEY(session,key));`);
     // Existing entries have no trusted receipt time. They remain readable for audit.
@@ -76,10 +77,14 @@ export class SQLiteRepository {
       .all(id)
       .map((row) => ({ seq: row.confirmation, intent: JSON.parse(row.record) }));
   }
-  insert(intent, seq = null) {
+  spokenName(id) {
+    return this.db.prepare('SELECT name FROM intent_names WHERE intent_id=?').get(id)?.name;
+  }
+  insert(intent, seq = null, spokenName) {
     this.db
       .prepare('INSERT INTO intents VALUES (?,?,?)')
       .run(intent.session_id, seq, JSON.stringify(intent));
+    if (spokenName) this.db.prepare('INSERT INTO intent_names VALUES (?,?)').run(intent.id, spokenName);
   }
   replay(id, key) {
     return this.db.prepare('SELECT * FROM replays WHERE session=? AND key=?').get(id, key);

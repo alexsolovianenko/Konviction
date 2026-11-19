@@ -37,7 +37,18 @@ function validateOrder(p, market) {
   requireRule(market, 'unknown_instrument');
   requireRule(decimalPlaces(p.limit_price) <= 2, 'invalid_price');
 }
-function readbackMatches(readback, p, target, cancel) {
+function readbackMatches(readback, p, target, cancel, spokenName, precedingUser) {
+  const exact = (text) => fold(text).trim().replace(/\s+/g, ' ');
+  if (cancel && !target && exact(readback) === 'confirming: cancel the order you just named on gemini prediction. say yes to confirm.') {
+    const request = /^(?:please )?cancel (?:the |my )?(?:order )?([a-z0-9 -]+?)(?: please)?[.!]?$/i.exec(precedingUser?.trim() ?? '');
+    return Boolean(request && reference(request[1]) === p.order_id);
+  }
+  if (spokenName) {
+    const terms = target ?? p;
+    const action = cancel ? 'cancel your prepared order to buy' : 'buy';
+    const expected = `Confirming: ${action} ${terms.quantity} ${terms.side} contracts of ${spokenName} on Gemini prediction at a limit of ${Math.round(100 * terms.limit_price)} cents each. Say yes to confirm.`;
+    if (exact(readback) === exact(expected)) return true;
+  }
   const words =
     fold(readback)
       .replace(/(?<=\d),(?=\d)/g, '')
@@ -145,7 +156,22 @@ export function runTool(repo, name, p, session, transcript, now, market, legacyM
       'readback_missing',
     );
     requireRule(!readback.interrupted, 'readback_interrupted');
-    requireRule(readbackMatches(readback.text, intent, target, cancel), 'readback_mismatch');
+    let spokenName;
+    if (target) {
+      spokenName = repo.spokenName(target.id);
+      if (spokenName) {
+        const cancelled = new Set(orders.filter(o => o.intent === 'cancel_order').map(o => o.order_id));
+        const indistinguishable = orders.some(o => o.id !== target.id && o.intent === 'place_order' &&
+          !cancelled.has(o.id) && o.side === target.side && o.quantity === target.quantity &&
+          o.limit_price === target.limit_price && repo.spokenName(o.id) === spokenName);
+        if (indistinguishable) spokenName = undefined;
+      }
+    } else if (market?.title?.trim() && market?.label?.trim()) {
+      spokenName = market.title.trim() + ', ' + market.label.trim();
+    }
+    const precedingUser = speech[readbackIndex - 1];
+    requireRule(readbackMatches(readback.text, intent, target, cancel, spokenName,
+      precedingUser?.role === 'user' ? precedingUser.text : undefined), 'readback_mismatch');
     requireRule(utteranceMatches, 'utterance_mismatch');
     // Late ASR fragments can extend an already consumed answer to the same readback.
     const used = records.find(
@@ -176,7 +202,7 @@ export function runTool(repo, name, p, session, transcript, now, market, legacyM
     }
     intent.confirmed_by_user = true;
     requireRule(validIntent(intent), 'invalid_parameters');
-    repo.insert(intent, confirmation.seq);
+    repo.insert(intent, confirmation.seq, cancel ? undefined : spokenName);
     return [201, captureResult(intent, false)];
   }
 
@@ -209,6 +235,7 @@ export function runTool(repo, name, p, session, transcript, now, market, legacyM
       .slice(0, 5)
       .map(({ id, venue, instrument, side, quantity, limit_price, created_at }) => ({
         intent_id: id,
+        spoken_name: repo.spokenName(id),
         venue,
         instrument,
         side,

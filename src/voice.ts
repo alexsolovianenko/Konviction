@@ -29,12 +29,22 @@ export class Voice {
   private attempt = 0;
   private active = false;
   private session: WorkerSession | LocalSession | undefined;
-  private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number };
+  private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number; sendContextualUpdate: (text: string) => void };
+  private visibleContract = "";
   private finishSpeech: undefined | (() => void);
   constructor(
     private update: (patch: Partial<VoiceView>) => void,
     private marketAction: (name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) => Promise<unknown>,
   ) {}
+
+  setVisibleContract(eventTicker?: string, symbol?: string) {
+    const selection = eventTicker && symbol ? JSON.stringify({event_ticker:eventTicker, contract_symbol:symbol}) : "";
+    if (selection === this.visibleContract) return;
+    this.visibleContract = selection;
+    this.conversation?.sendContextualUpdate?.(selection
+      ? "Contract on screen (silent tool context): " + selection
+      : "The contract chart is no longer visible.");
+  }
 
   outputLevel() {
     return this.conversation?.getOutputVolume?.() ?? 0;
@@ -268,6 +278,7 @@ export class Voice {
         return;
       }
       this.conversation = conversation;
+      if (this.visibleContract) conversation.sendContextualUpdate?.("Contract on screen (silent tool context): " + this.visibleContract);
     } catch (error) {
       if (!current()) return;
       const denied =

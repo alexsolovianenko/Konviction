@@ -2,7 +2,7 @@
 // The phone/webhook tools must never be able to submit an order.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("./db", () => ({ db: {}, executionEnabled: vi.fn(async () => true), logActivity: vi.fn(async () => {}) }));
+vi.mock("./db", () => ({ db: { from: vi.fn() }, executionEnabled: vi.fn(async () => true), logActivity: vi.fn(async () => {}) }));
 vi.mock("./receipts", () => ({ createReceipt: vi.fn() }));
 vi.mock("./gemini", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./gemini")>()),
@@ -10,7 +10,10 @@ vi.mock("./gemini", async (importOriginal) => ({
   getEvent: vi.fn(),
 }));
 
-import { gPrivate } from "./gemini";
+vi.mock("./ledger", async (original) => ({ ...(await original<typeof import("./ledger")>()), supabaseLedger: { committedUsd: async () => 0 } }));
+
+import { db } from "./db";
+import { getEvent, gPrivate } from "./gemini";
 import { handleAgentTools } from "./agent-tools";
 
 const SECRET = "tool-secret-0123456789abcdefXYZ";
@@ -38,4 +41,23 @@ it("still requires the header secret (query-string secrets are ignored)", async 
     method: "POST", body: JSON.stringify({ query: "btc" }),
   }));
   expect(res.status).toBe(401);
+});
+
+it("keeps exact identifiers in the saved proposal and out of the spoken readback", async () => {
+  const symbol = "GEMI-BTC05M2611190950-UP";
+  const ticker = "BTC05M2611190950";
+  vi.mocked(getEvent).mockResolvedValue({ event: { title: ticker, ticker, contracts: [{
+    instrumentSymbol: symbol, status: "active", marketState: "open",
+    expiryDate: new Date(Date.now() + 3600000).toISOString(), prices: { buy: { yes: ".40" } },
+  }] } });
+  const insert = vi.fn(async () => ({ error: null }));
+  vi.mocked(db.from).mockReturnValue({
+    update: () => ({ eq: () => ({ eq: async () => ({error: null}) }) }), insert,
+  } as unknown as ReturnType<typeof db.from>);
+  const res = await call("prepare_trade", {
+    event_ticker: ticker, instrument_symbol: symbol, outcome: "yes", side: "buy", quantity: 1,
+  });
+  const body = await res.json();
+  expect(body).toMatchObject({ ok: true, readback: "Review the proposal on your dashboard." });
+  expect(insert).toHaveBeenCalledWith(expect.objectContaining({ instrument_symbol: symbol, event_ticker: ticker }));
 });

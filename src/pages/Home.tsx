@@ -1,3 +1,4 @@
+import { AudioLines } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../components/voice/VoiceProvider';
 import { ActivityPanel } from '../components/voice/ActivityPanel';
@@ -6,12 +7,8 @@ import { PredictionPanel } from '../components/prediction/PredictionPanel';
 export function Home() {
   const { voice, view, status, market } = useVoice();
   const orb = useRef<HTMLSpanElement>(null);
-  const transcript = useRef<HTMLOListElement>(null);
   const turns = view.entries.filter(entry => entry.role !== 'tool');
-  useEffect(() => {
-    const list = transcript.current;
-    if (list) list.scrollTop = list.scrollHeight;
-  }, [turns.length, view.draft]);
+  const caption = view.draft || turns.at(-1)?.text;
   const idle = view.status === 'Idle';
   const speaking = view.status === 'Speaking';
   useEffect(() => {
@@ -28,33 +25,41 @@ export function Home() {
 
   return (
     <section className="voice-canvas" aria-label="Voice workspace">
-      <h1 className="sr-only">Talk to the market</h1>
-      <button type="button" className="voice-trigger"
-        aria-label={idle ? 'Start voice' : 'End session'}
-        disabled={view.status === 'Ending session'}
-        onClick={() => void (idle ? voice.start() : voice.stop())}>
-        <span className="ink-orb" ref={orb} data-phase={speaking ? 'speaking' : status.phase} aria-hidden="true"><i /></span>
-        <span>{idle ? 'Start voice' : 'End session'}</span>
-      </button>
-      {!idle && <p className="voice-state" role="status">{status.label}</p>}
-      {view.error && <p className="voice-state" role="alert">{view.error}</p>}
-      <PredictionPanel />
-      {(!idle || turns.length > 0 || view.draft) && <section className="voice-transcript" aria-label="Live transcript">
-        <h2>Live transcript</h2>
-        <ol ref={transcript} role="log" aria-live="polite">
-          {turns.map(turn => <li key={turn.seq}><strong>{turn.role === 'user' ? 'You' : 'Assistant'}</strong><span>{turn.text}{turn.interrupted && ' (interrupted)'}</span></li>)}
-          {view.draft && <li><strong>Assistant</strong><span>{view.draft}</span></li>}
-        </ol>
-      </section>}
-      {market.result && <section className="home-results">
+      <header className="home-heading">
+        <h1><AudioLines size={17} aria-hidden="true" /> Voice-to-Predict</h1>
+        <span>Gemini Sandbox</span>
+      </header>
+      <div className="home-voice-card">
+        <button type="button" className="voice-trigger"
+          aria-label={idle ? 'Start voice' : 'End session'}
+          title={idle ? 'Start voice' : 'End session'}
+          disabled={view.status === 'Ending session'}
+          onClick={() => {
+            if (idle) {
+              market.reset();
+              void voice.start();
+            } else void voice.stop();
+          }}>
+          <span className="ink-orb" ref={orb} data-phase={speaking ? 'speaking' : status.phase} aria-hidden="true"><i /></span>
+          <span>{idle ? 'Start voice' : status.phase === 'listening' ? 'Listening to your market request' : status.label}</span>
+        </button>
+        <p className="home-caption" aria-label="Latest transcript" aria-live="polite">
+          {caption || (idle ? 'Tap the orb to talk about a prediction market.' : 'Your words will appear here.')}
+        </p>
+        <div className="home-wave bars" data-live={!idle && ['speaking','listening'].includes(status.phase)} aria-hidden="true">
+          {[7, 13, 9, 20, 26, 16, 22, 12, 8].map((height, i) => <i key={i} style={{height, animationDelay: (i * -.14) + 's'}} />)}
+        </div>
+        {view.error && <p className="voice-state" role="alert">{view.error}</p>}
+      </div>
+      <PredictionPanel key={market.epoch} />
+      {turns.length > 0 && <details className="voice-transcript"><summary>Full transcript</summary>
+        <ol>{turns.map(turn => <li key={turn.seq}><strong>{turn.role === 'user' ? 'You' : 'Assistant'}</strong><span>{turn.text}{turn.interrupted && ' (interrupted)'}</span></li>)}</ol>
+      </details>}
+      {(market.result?.events || market.result?.error) && <section className="home-results">
         {market.result.error && <p role="alert">{market.result.error}</p>}
         {market.result.events?.length === 0 && <p>No matching markets.</p>}
         {market.result.events?.map(event => <details key={event.ticker}><summary>{event.title}</summary>
           {event.contracts.map(contract => <button key={contract.symbol} onClick={() => void market.run('get_orderbook', {event_ticker:event.ticker,contract_symbol:contract.symbol})}>{contract.label || contract.symbol}</button>)}</details>)}
-        {market.result.contract && <p>{market.result.title} · {market.result.contract.label} · {(['yes','no'] as const).map(side => {
-          const price = market.result?.contract?.buy[side];
-          return side.toUpperCase() + ' ' + (price == null ? 'unavailable' : Math.round(price * 100) + '¢');
-        }).join(' / ')}</p>}
       </section>}
       {(market.history.length > 0 || view.entries.some(entry => entry.role === 'tool')) && <details><summary>Session activity</summary><ActivityPanel /></details>}
     </section>

@@ -11,7 +11,16 @@ export function useMarketTools() {
   const [pending, setPending] = useState<{ name: string; params: Record<string, unknown> } | null>(null);
   const [history, setHistory] = useState<Lookup[]>([]);
   const sequence = useRef(0);
+  const epoch = useRef(0);
+  function reset() {
+    epoch.current++;
+    setResult(undefined);
+    setHistory([]);
+    setPending(null);
+    setBusy(false);
+  }
   async function run(name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) {
+    const sessionEpoch = epoch.current;
     const id = ++sequence.current;
     setBusy(true);
     setPending({ name, params });
@@ -28,10 +37,11 @@ export function useMarketTools() {
     } catch (e) {
       value = { ok: false, error: e instanceof Error && e.message === 'Invalid market tool parameters.' ? e.message : 'Gemini Sandbox market data unavailable.' };
     }
+    if (sessionEpoch !== epoch.current) return value;
     const entry = { id, name, params, result: value, received: new Date().toISOString() };
     setHistory(previous => [entry, ...previous].sort((a, b) => b.id - a.id).slice(0, 20));
     if (id === sequence.current) { setResult(value); setBusy(false); setPending(null); }
     return value;
   }
-  return { run, result, busy, pending, history };
+  return { run, result, busy, pending, history, reset, epoch: epoch.current };
 }

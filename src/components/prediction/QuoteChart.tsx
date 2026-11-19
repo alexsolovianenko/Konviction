@@ -9,7 +9,7 @@ const SERIES = [
 ] as const;
 const H = 220;
 const PAD = { top: 12, right: 64, bottom: 24, left: 36 };
-const MIN_SPAN_MS = 60_000;
+
 
 /** Line chart of session-observed contract prices. Draws only the samples it is given. */
 export function QuoteChart({ samples }: { samples: QuoteSample[] }) {
@@ -30,7 +30,7 @@ export function QuoteChart({ samples }: { samples: QuoteSample[] }) {
   if (!first || !last) return null;
 
   const t0 = first.t;
-  const span = Math.max(last.t - t0, MIN_SPAN_MS);
+  const span = Math.max(last.t - t0, 1);
   const plotW = Math.max(width - PAD.left - PAD.right, 40);
   const plotH = H - PAD.top - PAD.bottom;
   const x = (t: number) => PAD.left + ((t - t0) / span) * plotW;
@@ -89,7 +89,7 @@ export function QuoteChart({ samples }: { samples: QuoteSample[] }) {
         role="img"
         tabIndex={0}
         aria-label={`Session-observed Gemini Sandbox prices, ${samples.length} samples. Latest YES ${cents(last.yes)}, NO ${cents(last.no)} at ${hms(new Date(last.t).toISOString())}.`}
-        className="block touch-none outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="block max-w-full touch-pan-y outline-none focus-visible:ring-1 focus-visible:ring-ring"
         onPointerMove={(e) => nearest(e.clientX, e.currentTarget)}
         onPointerDown={(e) => nearest(e.clientX, e.currentTarget)}
         onPointerLeave={() => setHover(null)}
@@ -127,15 +127,15 @@ export function QuoteChart({ samples }: { samples: QuoteSample[] }) {
         <text x={PAD.left} y={H - 6} fontSize={10} fill="var(--muted-foreground)">
           {hms(new Date(t0).toISOString())}
         </text>
-        <text
+        {samples.length > 1 && <text
           x={PAD.left + plotW}
           y={H - 6}
           textAnchor="end"
           fontSize={10}
           fill="var(--muted-foreground)"
         >
-          {hms(new Date(t0 + span).toISOString())}
-        </text>
+          {hms(new Date(last.t).toISOString())}
+        </text>}
         {SERIES.map((s) => (
           <g key={s.key}>
             <path

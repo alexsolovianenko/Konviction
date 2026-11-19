@@ -135,7 +135,7 @@ async function findMarket(b: Body) {
     return {
       event_ticker: ev.ticker,
       event_title: ev.title,
-      contract_label: c.label ?? c.abbreviatedName ?? c.ticker,
+      contract_label: c.label ?? c.abbreviatedName ?? null,
       instrument_symbol: c.instrumentSymbol,
       expires_spoken: speakTime(c.expiryDate ?? ev.expiryDate),
       minutes_to_expiry: minutes,
@@ -148,7 +148,7 @@ async function findMarket(b: Body) {
     ok: true,
     ambiguous: top.length > 1 && top[0] && top[1] && cands[0].score === cands[1].score,
     matches,
-    guidance: "Confirm which contract the caller means before preparing a trade. Prices are in dollars per contract (0.47 = 47 cents). Sandbox prices are test prices, not real market prices.",
+    guidance: "Use event titles and contract labels in speech. Keep identifiers in tool arguments. Confirm which contract the caller means before preparing a trade. Prices are in dollars per contract (0.47 = 47 cents). Sandbox prices are test prices, not real market prices.",
   });
 }
 
@@ -156,7 +156,7 @@ async function findMarket(b: Body) {
 
 async function prepareTrade(b: Body) {
   const caller = callerOf(b);
-  return prepareQuotedTrade(b, async ({ readback, ...terms }) => {
+  return prepareQuotedTrade(b, async ({ readback: _displayReadback, ...terms }) => {
     const { side, outcome, quantity, limit_price: limit, notional_usd: notional, est_fee_usd: fee, instrument_symbol: symbol, quote_price: quotePrice } = terms;
     if (side === "buy") {
       // Same account-wide ledger as browser approval (filled + in-flight + unknown reservations).
@@ -180,8 +180,8 @@ async function prepareTrade(b: Body) {
     return json({
       ok: true, intent_code: code, side, outcome, quantity, limit_price: limit, notional_usd: notional,
       est_fee_usd: fee, fee_is_estimate: true, current_price: quotePrice, intent_expires_in_s: LIMITS.intentTtlSeconds,
-      readback,
-      next_step: "Read the readback to the caller. Phone approval is not available yet: nothing is placed until the trade is approved on the secure dashboard. Never ask for or repeat a PIN.",
+      readback: "Review the proposal on your dashboard.",
+      next_step: "Speak only the readback. The dashboard shows the terms for private approval.",
     });
   });
 }
@@ -224,7 +224,7 @@ async function getPortfolio(_b: Body) {
     open_orders: (active.data?.orders ?? []).length,
     recent_settlements: recentSettled,
     cash_available_usd: bal.usd,
-    note: "Only speak numbers present here. Settlement is final only if it appears in recent_settlements. Sandbox prices are test prices.",
+    note: "Describe positions by event title, contract label and outcome. Never read identifiers aloud. Only speak numbers present here. Settlement is final only if it appears in recent_settlements. Sandbox prices are test prices.",
   });
 }
 

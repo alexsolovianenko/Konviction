@@ -21,7 +21,8 @@ const capture = repo ? createApi({
     const { event, error } = await getEvent(match[1]);
     if (error) throw new Error('Prediction contract lookup unavailable');
     const contract = findContract(event, symbol);
-    return event?.ticker === match[1] && contract?.status === 'active' && contract.marketState === 'open';
+    if (event?.ticker !== match[1] || contract?.status !== 'active' || contract.marketState !== 'open') return false;
+    return { title: event.title, label: contract.label };
   },
 }) : (await import('node:http')).createServer((_req, res) => {
   res.writeHead(503, { 'Content-Type': 'application/json' });

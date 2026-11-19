@@ -17,6 +17,10 @@ const [first, yes] = evals.cases.find((c) => c.id === 'pred-01').turns;
 const place = yes.expect.calls[0].args;
 const venue = 'gemini_prediction';
 const readback = first.expect.reply_exact;
+const fixtureContracts = evals.market_fixture.events.flatMap(event =>
+  event.contracts.map(contract => ({ instrument: contract.symbol, title: event.title, label: contract.label })));
+const fixture = fixtureContracts.find(contract => contract.instrument === place.instrument);
+const legacyReadback = readback.replace(fixture.title + ', ' + fixture.label, place.instrument);
 const validators = new Map();
 function checkSchema(schema, value) {
   const key = JSON.stringify(schema);
@@ -42,7 +46,7 @@ async function setup(t, overrides = {}) {
   const server = createApi({
     repo,
     legacyMarket,
-    lookupInstrument: async (symbol, venue) => api['x-simulated-catalog'][venue]?.find(c => c.instrument === symbol),
+    lookupInstrument: async (symbol, venue) => fixtureContracts.find(c => c.instrument === symbol && venue === 'gemini_prediction') ?? api['x-simulated-catalog'][venue]?.find(c => c.instrument === symbol),
     apiKey: 'secret',
     agentId: 'private',
     upstream,
@@ -370,7 +374,7 @@ test('readback retains decimal points, signed numbers and thousands separators',
   );
   code(await s.tool('capture_order_intent', place), 422, 'readback_mismatch');
   await s.append(
-    s.entry('agent', readback.replace('10 yes', '1,000 yes').replace('62 cents', '.620 dollars')),
+    s.entry('agent', legacyReadback.replace('10 yes', '1,000 yes').replace('62 cents', '.620 dollars')),
     s.entry('user', 'yes'),
   );
   code(await s.tool('capture_order_intent', { ...place, quantity: 620 }), 422, 'readback_mismatch');
@@ -720,7 +724,7 @@ test('running capture API accepts a verified sandbox contract and replays withou
     lookupInstrument: async instrument => { seen.push(instrument); return instrument === symbol; },
   });
   const s = await f.start();
-  await s.append(s.entry('user', place.utterance), s.entry('agent', readback.replace(place.instrument, symbol)), s.entry('user', 'yes'));
+  await s.append(s.entry('user', place.utterance), s.entry('agent', legacyReadback.replace(place.instrument, symbol)), s.entry('user', 'yes'));
   const params = { ...place, instrument: symbol };
   const key = randomUUID();
   const response = await s.tool('capture_order_intent', params, key);
@@ -729,4 +733,53 @@ test('running capture API accepts a verified sandbox contract and replays withou
   assert.deepEqual((await s.tool('capture_order_intent', params, key)).data, response.data);
   code(await s.tool('capture_order_intent', { ...params, instrument: 'BTCUSD' }), 422, 'unknown_instrument');
   assert.deepEqual(seen, [symbol, 'BTCUSD']);
+});
+
+test('market display names bind capture and cancellation without a spoken symbol', async t => {
+  const symbol = 'GEMI-BTC05M-TEST-UP';
+  const app = await setup(t, {
+    legacyMarket: undefined,
+    lookupInstrument: async value => value === symbol && { title: 'Bitcoin at 10 AM', label: 'Up' },
+  });
+  const session = await app.start();
+  const capture = { ...place, instrument: symbol };
+  const friendly = legacyReadback.replace(place.instrument, 'Bitcoin at 10 AM, Up');
+  await session.append(session.entry('user', place.utterance),
+    session.entry('agent', friendly.replace('10 AM', '11 AM')), session.entry('user', 'yes'));
+  code(await session.tool('capture_order_intent', capture), 422, 'readback_mismatch');
+  await session.append(session.entry('agent', friendly), session.entry('user', 'yes'));
+  const order = await session.tool('capture_order_intent', capture);
+  assert.equal(order.status, 201);
+  const utterance = 'cancel my bitcoin order';
+  await session.append(session.entry('user', utterance),
+    session.entry('agent', friendly.replace('buy', 'cancel your prepared order to buy')), session.entry('user', 'yes'));
+  const cancel = await session.tool('capture_cancel_intent', { venue, order_id: order.data.intent.id, utterance, confirmed_by_user: true });
+  assert.equal(cancel.status, 201);
+  assert.equal(cancel.data.intent.instrument, symbol);
+});
+
+test('ID-free external cancel confirmation binds only the complete latest request', async t => {
+  const app = await setup(t);
+  const session = await app.start();
+  const utterance = 'cancel order AB123';
+  await session.append(session.entry('user', 'cancel order CD456'), session.entry('user', utterance),
+    session.entry('agent', 'Confirming: cancel the order you just named on Gemini prediction. Say yes to confirm.'),
+    session.entry('user', 'yes'));
+  const args = { venue, order_id: 'CD456', utterance, confirmed_by_user: true };
+  code(await session.tool('capture_cancel_intent', args), 422, 'readback_mismatch');
+  assert.equal((await session.tool('capture_cancel_intent', { ...args, order_id: 'AB123' })).status, 201);
+});
+
+test('identical prepared orders cannot be selected by an ambiguous spoken description', async t => {
+  const session = await (await setup(t)).start();
+  const spoken = legacyReadback.replace(place.instrument, fixture.title + ', ' + fixture.label);
+  let order;
+  for (let i = 0; i < 2; i++) {
+    await session.append(session.entry('user', place.utterance), session.entry('agent', spoken), session.entry('user', 'yes'));
+    order = await session.tool('capture_order_intent', place);
+    assert.equal(order.status, 201);
+  }
+  const utterance = 'cancel my order';
+  await session.append(session.entry('user', utterance), session.entry('agent', spoken.replace('buy', 'cancel your prepared order to buy')), session.entry('user', 'yes'));
+  code(await session.tool('capture_cancel_intent', { venue, order_id: order.data.intent.id, utterance, confirmed_by_user: true }), 422, 'readback_mismatch');
 });

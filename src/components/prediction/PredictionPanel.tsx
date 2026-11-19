@@ -46,9 +46,6 @@ export function selectTarget(
 /** Live contract chart plus the full typed-PIN purchase panel, driven by the voice session. */
 export function PredictionPanel() {
   const { voice, view, market } = useVoice();
-  const [outcome, setOutcome] = useState<"yes" | "no">("yes");
-  const [budget, setBudget] = useState("");
-  const [preparing, setPreparing] = useState(false);
   const selected = selectTarget(view.proposal, market.result, market.history);
   // Keep the last selection while unrelated lookups come and go; a proposal always overrides it.
   const [target, setTarget] = useState<QuoteTarget | null>(selected);
@@ -60,7 +57,13 @@ export function PredictionPanel() {
   // A proposal without an event ticker may still be charted when it is the contract already open.
   const shown = view.proposal
     ? (selected ?? (target?.symbol === view.proposal.instrument_symbol ? target : null))
-    : target;
+    : selected ?? target;
+  const visibleEvent = shown?.eventTicker;
+  const visibleSymbol = shown?.symbol;
+  useEffect(() => {
+    voice.setVisibleContract?.(visibleEvent, visibleSymbol);
+  }, [voice, visibleEvent, visibleSymbol]);
+  useEffect(() => () => voice.setVisibleContract?.(), [voice]);
   const feed = useContractQuotes(shown);
   const [now, setNow] = useState(() => Date.now());
   const expiry = feed.contract?.expiry ?? null;
@@ -71,16 +74,14 @@ export function PredictionPanel() {
   }, [expiry, feed.status]);
 
   if (!shown && !view.proposal && !view.tradeMessage) return null;
-  const latest = feed.samples.at(-1);
+  const latest = feed.contract?.symbol === shown?.symbol ? feed.samples.at(-1) : undefined;
   return (
     <section aria-label="Prediction contract" className="grid min-w-0 gap-4">
       {shown && (
-        <div className="min-w-0 rounded-lg border border-border bg-card p-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <>
+          <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <h2 className="min-w-0 text-lg font-semibold tracking-tight">
-              {feed.title
-                ? `${feed.title} · ${feed.contract?.label ?? shown.symbol}`
-                : shown.symbol}
+              {[feed.title, feed.contract?.label].filter(Boolean).join(" · ") || "Selected contract"}
             </h2>
             <p role="status" className="text-xs text-muted-foreground">
               {feed.status === "live"
@@ -89,68 +90,55 @@ export function PredictionPanel() {
                   ? "Loading quote…"
                   : feed.message}
             </p>
-          </div>
-          <p className="tnum mt-0.5 break-words text-xs text-muted-foreground">
-            {shown.symbol}
-            {expiry && feed.status !== "closed" && ` · Closes in ${countdown(expiry, now)}`}
-          </p>
-          {latest && (
-            <dl className="mt-3 flex gap-8 text-sm">
-              {(["yes", "no"] as const).map((side) => (
-                <div key={side}>
-                  <dt className="text-xs text-muted-foreground">Buy {side.toUpperCase()}</dt>
-                  <dd className="mt-0.5 font-mono text-xl">
-                    {latest[side] === null ? "unavailable" : cents(latest[side])}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          {feed.samples.length > 0 && (
-            <div className="mt-3">
-              <QuoteChart samples={feed.samples} />
-              <p className="mt-2 text-xs text-muted-foreground">
-                Session-observed Gemini Sandbox YES/NO buy prices for this contract, sampled about
-                every {POLL_MS / 1000} seconds since you opened it. This is not the BTC price and
-                not exchange history.
-              </p>
+          </header>
+          <dl className="contract-metrics grid grid-cols-3 gap-2 sm:gap-3">
+            {(["yes", "no"] as const).map((side) => (
+              <div key={side} className="min-w-0 rounded-xl border border-border bg-card px-3 py-3 sm:px-4">
+                <dt className="text-xs text-muted-foreground">{side.toUpperCase()} buy</dt>
+                <dd className="tnum mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
+                  {cents(latest?.[side])}
+                </dd>
+              </div>
+            ))}
+            <div className="min-w-0 rounded-xl border border-border bg-card px-3 py-3 sm:px-4">
+              <dt className="text-xs text-muted-foreground">Expires in</dt>
+              <dd className="tnum mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
+                {feed.status === "closed" ? "Closed" : expiry ? <time dateTime={expiry} title={new Date(expiry).toLocaleString()}>{countdown(expiry, now)}</time> : "—"}
+              </dd>
             </div>
-          )}
-          {feed.samples.length === 0 && feed.status !== "loading" && (
-            <p className="mt-3 text-sm text-muted-foreground">
-              No Gemini Sandbox quote observed for this contract, so there is no chart.
-            </p>
-          )}
-        </div>
+          </dl>
+          <section aria-label="Contract price chart" className="contract-chart min-w-0 rounded-xl border border-border bg-card p-4 sm:p-5">
+            <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold">Contract prices</h3>
+              <span className="text-xs text-muted-foreground">Session · {POLL_MS / 1000}s intervals</span>
+            </div>
+            {feed.samples.length > 0 ? (
+              <>
+                <QuoteChart samples={feed.samples} />
+                <details className="mt-2 text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">Data source</summary>
+                  <p className="mt-1">Session-observed Gemini Sandbox YES/NO buy prices. This is not the BTC price or exchange history.</p>
+                </details>
+              </>
+            ) : (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                {feed.status === "loading" ? "Waiting for the first quote…" : "No quote received for this contract."}
+              </p>
+            )}
+          </section>
+        </>
       )}
       {view.proposal && !shown && (
         <p role="alert" className="text-sm text-warning">
           Chart unavailable: the proposal did not name its event.
         </p>
       )}
-      {shown && !view.proposal && (
-        <form aria-label="Prepare sandbox buy" className="flex flex-wrap items-end gap-3" onSubmit={async e => {
-          e.preventDefault();
-          const price = latest?.[outcome];
-          if (preparing || view.status === "Idle" || feed.status !== "live" || price == null || !(Number(budget) > 0)) return;
-          setPreparing(true);
-          try {
-            await voice.prepareBuy({event_ticker:shown.eventTicker, contract_symbol:shown.symbol, outcome, budget_usd:Number(budget), limit_price:price});
-          } finally { setPreparing(false); }
-        }}>
-          <label>Outcome<select className="field" value={outcome} onChange={e => setOutcome(e.target.value === "no" ? "no" : "yes")}><option value="yes">YES</option><option value="no">NO</option></select></label>
-          <label>Budget (USD)<input className="field" type="number" min="0.01" step="0.01" required value={budget} onChange={e => setBudget(e.target.value)} /></label>
-          <button className="btn btn-primary" disabled={preparing || !["Speaking","Listening"].includes(view.status) || feed.status !== "live" || latest?.[outcome] == null || !(Number(budget)>0)}>
-            {preparing ? "Preparing…" : "Preview sandbox buy"}
-          </button>
-        </form>
-      )}
-      <TradeApproval
+      {(view.proposal || view.tradeMessage) && <TradeApproval
         proposal={view.proposal}
         availability={view.availability}
         message={view.tradeMessage}
         approve={(id, pin) => voice.approve(id, pin)}
-      />
+      />}
     </section>
   );
 }

@@ -690,6 +690,7 @@ components:
       additionalProperties: false
       required: [intent_id, venue, instrument, side, quantity, limit_price, capture_status, cancel_captured, created_at]
       properties:
+        spoken_name: { type: string, description: "Verified event title and contract label saved with this prepared order." }
         intent_id: { type: string, format: uuid }
         venue: { $ref: "#/components/schemas/OrderVenue" }
         instrument: { type: string }
@@ -889,14 +890,14 @@ x-confirmation-enforcement:
     examples_reject: ["okay", "sure", "sounds good", "yes but make it ten", "yes, no wait", "I guess", "do it", "confirm", "Yes?", "yes, right?", "no yes", "entries ['yes', 'but make it two']", "entries ['no', 'yes']", "entries ['yes', 'actually no']", "entries ['yes', 'wait what was the price?']"]
   readback_templates:
     note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence. Orders are prediction contracts only, so there is no spot template."
-    prediction_order: "Confirming: buy {quantity} {side} contracts of {instrument} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
-    cancel_by_user_reference: "Confirming: cancel order {order_id} on Gemini prediction. Say yes to confirm."
-    cancel_of_prepared_prediction_order: "Confirming: cancel your prepared order to buy {quantity} {side} contracts of {instrument} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
+    prediction_order: "Confirming: buy {quantity} {side} contracts of {event_title}, {contract_label} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
+    cancel_by_user_reference: "Confirming: cancel the order you just named on Gemini prediction. Say yes to confirm."
+    cancel_of_prepared_prediction_order: "Confirming: cancel your prepared order to buy {quantity} {side} contracts of {event_title}, {contract_label} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
   readback_match:
     normalization: "Lower case; remove thousands separators inside numbers and currency symbols; keep decimal points and hyphens inside words; strip other punctuation; collapse whitespace. Numbers are compared by numeric value, so 62 equals 62.0."
     place_order_prediction:
       - "contains the phrase 'gemini prediction'"
-      - "contains the instrument as a whole word, case-insensitive"
+      - "contains the verified human-readable event title and contract label for this instrument; raw symbols are reserved for tool arguments and legacy transcripts"
       - "contains the phrase '{side} contracts' (yes contracts or no contracts)"
       - "contains a number equal to quantity"
       - "contains a number equal to limit_price times 100 directly followed by 'cents', or a number equal to limit_price directly followed by 'dollars'"
@@ -904,7 +905,7 @@ x-confirmation-enforcement:
     cancel_order_by_user_reference:
       - "contains the word 'cancel'"
       - "contains the phrase 'gemini prediction'"
-      - "after removing every non-alphanumeric character from the readback, contains the normalized order_id"
+      - "uses the cancel_by_user_reference wording for the single complete order reference the user just supplied"
     cancel_order_of_prepared_order:
       - "contains the word 'cancel'"
       - "passes every place_order check for the target intent's venue, instrument, side, quantity and limit_price, except the 'does not contain cancel' check"
@@ -1043,8 +1044,8 @@ x-error-codes:
   invalid_price: { http: 422, agent_hint: "Ask the user for the limit price again: 1 to 99 cents per contract." }
   venue_mismatch: { http: 422, agent_hint: "The prepared order is on the other venue. Read the cancel back with the correct venue and ask for yes." }
   instrument_mismatch: { http: 422, agent_hint: "The prepared order is for a different instrument. Use get_order_status to find the right order." }
-  order_not_cancellable: { http: 422, agent_hint: "That reference is not a prepared order. Use get_order_status or ask the user for the order ID." }
-  order_id_not_user_supplied: { http: 422, agent_hint: "The user has not said that order ID. Ask the user for the order ID; never guess it." }
+  order_not_cancellable: { http: 422, agent_hint: "That reference is not a prepared order. Use get_order_status with the market description." }
+  order_id_not_user_supplied: { http: 422, agent_hint: "The user has not said that order ID. Ask which market the user means." }
   confirmation_required: { http: 422, agent_hint: "Read the exact terms back and ask the user to say yes before capturing." }
   confirmation_missing: { http: 422, agent_hint: "The user has not said an explicit yes. Read the exact terms back again and ask them to say yes." }
   readback_missing: { http: 422, agent_hint: "Read the exact terms back, ending with 'Say yes to confirm.', and wait for yes." }
@@ -1193,21 +1194,21 @@ x-capture-status-queries:
     - "get_order_status is the agent's only source of status. It never asks Gemini: it reads the capture store of the calling session and reports capture status only. It knows nothing about the sandbox account or the exchange."
     - "Every match has capture_status captured and the response has execution none. The agent says the order is prepared for approval and has not been sent to Gemini. It never says open, working, live, filled, partially filled, executed, cancelled or rejected."
     - "cancel_captured true means a cancel for that prepared order has also been prepared for approval. It does not mean the order was cancelled."
-    - "A status question about a reference the user supplied (an order ID that is not the id of a captured intent) returns count 0. The agent may repeat the reference and says it has no prepared order with that reference in this session and cannot see exchange status."
+    - "A status question about a reference the user supplied (an order ID that is not the id of a captured intent) returns count 0. The agent keeps the reference in tool arguments and says it has no prepared order with that reference in this session and cannot see exchange status."
     - "Orders prepared in an earlier session are not visible. The answer is count 0."
     - "venue is required and is always gemini_prediction. Only prediction captures exist, so there is nothing to look up on spot. An instrument filter that matches no captured order is not an error; it matches nothing."
     - "Each call writes one order_status audit intent with confirmed_by_user false, order_id set to the queried reference or null, instrument set to the filter or the empty string, and side set to the filter or null (x-audit-records)."
-    - "An order_id that is not the id of a captured intent and normalizes to the empty string is 400 invalid_parameters. The agent asks the user for the order ID instead of sending punctuation or filler."
+    - "An order_id that is not the id of a captured intent and normalizes to the empty string is 400 invalid_parameters. The agent asks which market the user means."
 
 x-cancel-resolution:
   summary: How a cancel request becomes exactly one order_id. The agent never chooses between candidates and never invents or completes an ID.
   by_user_reference:
-    - "The user speaks a complete order ID. The agent normalizes it (x-normalization order_reference), reads the cancel back with the reference on Gemini prediction, and captures after an explicit yes. The reference is recorded as stated and is not checked against Gemini. The venue is always gemini_prediction and is not asked for."
+    - "The user speaks a complete order ID. The agent normalizes it (x-normalization order_reference), uses the cancel_by_user_reference readback on Gemini prediction, and captures after an explicit yes. The reference is recorded as stated and is not checked against Gemini. The venue is always gemini_prediction and is not asked for."
     - "instrument is optional for a cancel by reference. When given it must be a contract symbol the Gemini Sandbox knows, else 422 unknown_instrument and nothing is stored; a spot pair such as BTCUSD is never accepted. When omitted it is stored as the empty string."
-    - "A partial reference ('the one ending in 45') is not a reference. The agent asks for the full order ID."
+    - "A partial reference ('the one ending in 45') is not a reference. The agent asks which market the user means."
   by_description:
     - "The user describes the order in words ('my bitcoin order', 'the fed one', 'the last one'). The agent calls get_order_status with the venue and every filter the user gave (instrument, side)."
-    - "count 0: the agent says it has no matching prepared order in this session and asks for the order ID. Nothing is captured."
+    - "count 0: the agent says it has no matching prepared order in this session. Nothing is captured."
     - "count 1: the agent reads the cancel back with the full terms of that prepared order (cancel_of_prepared_* template) and captures with order_id set to its intent_id after an explicit yes."
     - "count 2 or more: the description is ambiguous. The agent names the candidates by their distinguishing terms and asks which one. It does not pick the newest, the largest or the first. 'The last one' or 'the most recent one' is a description that selects matches[0] (newest first); the readback still states its full terms."
     - "A match with cancel_captured true already has a prepared cancel. The agent says so and does not capture again (the backend would answer cancel_already_captured)."
@@ -1215,7 +1216,7 @@ x-cancel-resolution:
     - "There is no bulk cancel. 'Cancel everything' is handled one order at a time, each with its own readback and its own yes."
   backend_guarantees:
     - "order_id must be the id of a place_order intent of this session, or occur in the user's own transcript entries after reference normalization (order_id_not_user_supplied otherwise)."
-    - "The readback must state the target's terms or the spoken reference (readback_mismatch otherwise), so a yes to one candidate can never cancel another."
+    - "The readback must state the target’s human-readable terms or use the external-cancel template bound to the immediately preceding request (readback_mismatch otherwise), so a yes to one candidate can never cancel another."
 
 x-execution-boundary:
   summary: >
