@@ -51,8 +51,7 @@ function decimalPlaces(value) {
 }
 function validateOrder(p, market) {
   requireRule(market, 'unknown_instrument');
-  requireRule(Number.isInteger(p.quantity), 'invalid_quantity');
-  requireRule(decimalPlaces(p.limit_price) <= 2 && p.limit_price <= 0.99, 'invalid_price');
+  requireRule(decimalPlaces(p.limit_price) <= 2, 'invalid_price');
 }
 function readbackMatches(readback, p, target, cancel) {
   const words =
@@ -132,6 +131,7 @@ export function runTool(repo, name, p, session, transcript, now) {
         );
         intent.instrument = target.instrument;
       } else {
+        requireRule(p.instrument == null || market, 'unknown_instrument');
         requireRule(
           intent.order_id && reference(userText).includes(intent.order_id),
           'order_id_not_user_supplied',

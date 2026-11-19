@@ -86,6 +86,22 @@ function append(repo, session, body, now) {
   ];
 }
 
+const orderPaths = new Set([
+  '/intents',
+  '/tools/capture_order_intent',
+  '/tools/capture_cancel_intent',
+  '/tools/get_order_status',
+]);
+
+function enforcePredictionScope(path, body) {
+  if (!orderPaths.has(path)) return;
+  const params = path === '/intents' ? body : body?.parameters;
+  requireRule(
+    params?.venue !== 'gemini_spot' && !['buy', 'sell'].includes(params?.side),
+    'invalid_parameters',
+  );
+}
+
 function handle(repo, session, path, method, body, key, now) {
   requireRule(body?.session_id == null || body.session_id === session.id, 'unauthorized');
   requireRule(now < session.expires, 'session_not_found');
@@ -125,11 +141,7 @@ function handle(repo, session, path, method, body, key, now) {
       'idempotency_key_reused',
     );
     // A matching cache entry can predate the prediction-only contract.
-    const params = path === '/intents' ? body : body.parameters;
-    const orderPath = ['/intents', '/tools/capture_order_intent', '/tools/capture_cancel_intent', '/tools/get_order_status'].includes(path);
-    if (orderPath && (params?.venue === 'gemini_spot' || ['buy', 'sell'].includes(params?.side))) {
-      requireRule(false, 'invalid_parameters');
-    }
+    enforcePredictionScope(path, body);
     if (!ended) repo.touch(session.id, now, session.state);
     return JSON.parse(replay.response);
   }
@@ -137,6 +149,7 @@ function handle(repo, session, path, method, body, key, now) {
   try {
     requireRule(!ended, 'session_ended');
     requireRule(cacheable && requests[path](body), 'invalid_parameters');
+    enforcePredictionScope(path, body);
     validateQueryParameters(path, body.parameters);
     const transcript = repo.transcript(session.id);
     requireRule(transcript.length >= body.last_transcript_seq, 'transcript_not_synced', {

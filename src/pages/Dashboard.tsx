@@ -98,9 +98,11 @@ export function Dashboard() {
                   <p>
                     {intent.venue.replace('_', ' ')} · {intent.instrument || intent.order_id}
                   </p>
-                  {intent.quantity !== null && (
+                  {intent.quantity !== null && intent.limit_price !== null && (
                     <p>
-                      {intent.side} {intent.quantity} at ${intent.limit_price}
+                      {intent.quantity} {intent.side?.toUpperCase()}{' '}
+                      {intent.quantity === 1 ? 'contract' : 'contracts'} at{' '}
+                      {Math.round(intent.limit_price * 100)}¢ each
                     </p>
                   )}
                   {intent.order_id && intent.instrument && <p>Order {intent.order_id}</p>}

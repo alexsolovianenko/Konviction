@@ -12,7 +12,10 @@ const contract = {
   instrument: 'BTC-150K-2026',
   title: 'Will Bitcoin trade above 150,000 dollars before January 1, 2027?',
   closes_at: '2026-12-31T23:59:00Z',
-  yes_bid: 0.17, yes_ask: 0.18, no_bid: 0.82, no_ask: 0.83,
+  yes_bid: 0.17,
+  yes_ask: 0.18,
+  no_bid: 0.82,
+  no_ask: 0.83,
   price_unit: 'USD per contract',
 } as const;
 type ContractPreview = {
@@ -56,8 +59,14 @@ export function applyChartAction(chart: DemoChart, action: ChartAction | 'cancel
   if (action === 'cancel') preview = null;
   if (action === 'yes' || action === 'no') {
     const price = action === 'yes' ? contract.yes_ask : contract.no_ask;
-    preview = { venue: contract.venue, instrument: contract.instrument, side: action,
-      contract_price: price, contract_price_cents: Math.round(price * 100), execution: 'none' };
+    preview = {
+      venue: contract.venue,
+      instrument: contract.instrument,
+      side: action,
+      contract_price: price,
+      contract_price_cents: Math.round(price * 100),
+      execution: 'none',
+    };
   }
   return { ...market, update: chart.update + 1, action, selected, preview };
 }

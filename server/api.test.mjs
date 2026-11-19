@@ -245,8 +245,8 @@ test('domain and transcript confirmation precedence; failed attempts never captu
   await reject({ unexpected: true }, 'invalid_parameters', 400);
   await reject({ instrument: 'FAKE' }, 'unknown_instrument');
   await reject({ side: 'sell' }, 'invalid_parameters', 400);
-  await reject({ quantity: 1e-9 }, 'invalid_quantity');
-  await reject({ limit_price: 1.001 }, 'invalid_price');
+  await reject({ quantity: 1e-9 }, 'invalid_parameters', 400);
+  await reject({ limit_price: 0.121 }, 'invalid_price');
   await reject({ confirmed_by_user: false }, 'confirmation_required');
   await reject({}, 'confirmation_missing');
   await s.append(s.entry('user', first.user), s.entry('user', 'yes'));
@@ -285,13 +285,13 @@ test('prediction book, cent readback, numeric normalization and spoken order ref
   assert.equal((await s.tool('capture_order_intent', prediction)).status, 201);
   code(
     await s.tool('capture_order_intent', { ...prediction, quantity: 0.5 }),
-    422,
-    'invalid_quantity',
+    400,
+    'invalid_parameters',
   );
   code(
     await s.tool('capture_order_intent', { ...prediction, limit_price: 1 }),
-    422,
-    'invalid_price',
+    400,
+    'invalid_parameters',
   );
   const book = await s.tool('get_orderbook', {
     venue: prediction.venue,
@@ -560,4 +560,151 @@ test('query parameter errors precede transcript sync and unknown book precedes m
   );
   code(await s.tool('get_orderbook', { ...base, instrument: 'FAKE' }), 422, 'unknown_instrument');
   assert.equal((await s.list()).data.count, 0);
+});
+
+test('rejects spot order, cancel and status even with valid spoken evidence and a pre-upgrade replay', async (t) => {
+  const app = await setup(t),
+    s = await app.start();
+  const spot = {
+    ...place,
+    venue: 'gemini_spot',
+    side: 'buy',
+    instrument: 'BTCUSD',
+    quantity: 1,
+    limit_price: 97455,
+    utterance: 'buy one bitcoin at 97455 dollars',
+  };
+  await s.append(
+    s.entry('user', spot.utterance),
+    s.entry(
+      'agent',
+      'Confirming: buy 1 BTCUSD on Gemini spot at a limit of 97455 dollars. Say yes to confirm.',
+    ),
+    s.entry('user', 'yes'),
+  );
+  const cancel = {
+    venue: 'gemini_spot',
+    order_id: 'AB123',
+    confirmed_by_user: true,
+    utterance: 'cancel AB123',
+  };
+  for (const [path, parameters] of [
+    ['/tools/capture_order_intent', spot],
+    ['/tools/capture_cancel_intent', cancel],
+    ['/tools/get_order_status', { venue: 'gemini_spot', utterance: 'status' }],
+    ['/intents', { ...spot, intent: 'place_order' }],
+    ['/intents', { ...cancel, intent: 'cancel_order' }],
+  ]) {
+    const envelope = {
+      session_id: s.session_id,
+      last_transcript_seq: 3,
+      ...(path === '/intents' ? parameters : { parameters }),
+    };
+    const fresh = randomUUID();
+    const send = (key) => app.request(path, envelope, s.session_token, key);
+    code(await send(fresh), 400, 'invalid_parameters');
+    code(await send(fresh), 400, 'invalid_parameters');
+    const imported = randomUUID();
+    app.repo.remember(s.session_id, imported, JSON.stringify([path, envelope]), [
+      200,
+      { simulated: true, ok: true },
+    ]);
+    code(await send(imported), 400, 'invalid_parameters');
+  }
+  code(
+    await s.tool('get_order_status', { venue, side: 'sell', utterance: 'status' }),
+    400,
+    'invalid_parameters',
+  );
+  code(
+    await s.post(
+      '/intents',
+      { ...place, side: 'buy', intent: 'place_order', last_transcript_seq: 3 },
+      randomUUID(),
+    ),
+    400,
+    'invalid_parameters',
+  );
+  assert.equal(app.repo.intents(s.session_id).length, 0);
+});
+
+test('legacy spot trades stay in SQLite and read-only spot queries remain visible', async (t) => {
+  const app = await setup(t),
+    s = await app.start();
+  const legacy = {
+    id: randomUUID(),
+    session_id: s.session_id,
+    created_at: new Date().toISOString(),
+    intent: 'place_order',
+    venue: 'gemini_spot',
+    instrument: 'BTCUSD',
+    side: 'buy',
+    quantity: 1,
+    limit_price: 97455,
+    order_id: null,
+    confirmed_by_user: true,
+    utterance: 'buy bitcoin',
+    status: 'captured',
+  };
+  app.repo.insert(legacy);
+  app.repo.insert({
+    ...legacy,
+    id: randomUUID(),
+    intent: 'cancel_order',
+    side: null,
+    quantity: null,
+    limit_price: null,
+    order_id: legacy.id,
+  });
+  app.repo.insert({
+    ...legacy,
+    id: randomUUID(),
+    intent: 'order_status',
+    side: null,
+    quantity: null,
+    limit_price: null,
+    confirmed_by_user: false,
+  });
+  await s.append(s.entry('user', 'what is bitcoin trading at'));
+  const market = await s.tool('get_orderbook', {
+    venue: 'gemini_spot',
+    instrument: 'BTCUSD',
+    utterance: 'what is bitcoin trading at',
+  });
+  assert.equal(market.status, 200);
+  assert.equal((await s.list()).data.count, 1);
+  const status = await s.tool('get_order_status', {
+    venue,
+    order_id: legacy.id,
+    utterance: 'status',
+  });
+  assert.equal(status.data.count, 0);
+  code(
+    await s.tool('capture_cancel_intent', {
+      venue,
+      order_id: legacy.id,
+      utterance: 'cancel my order',
+      confirmed_by_user: true,
+    }),
+    422,
+    'order_id_not_user_supplied',
+  );
+  await s.append(
+    s.entry('user', 'cancel AB123'),
+    s.entry('agent', 'Cancel order AB123 on Gemini prediction. Say yes to confirm.'),
+    s.entry('user', 'yes'),
+  );
+  code(
+    await s.tool('capture_cancel_intent', {
+      venue,
+      order_id: 'AB123',
+      instrument: 'BTCUSD',
+      utterance: 'cancel AB123',
+      confirmed_by_user: true,
+    }),
+    422,
+    'unknown_instrument',
+  );
+  assert.equal(app.repo.intents(s.session_id).length, 5);
+  assert.equal((await s.list()).data.count, 2);
 });

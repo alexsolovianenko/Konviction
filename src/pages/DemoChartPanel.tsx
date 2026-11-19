@@ -85,16 +85,22 @@ export function DemoChartPanel({
         ))}
       </div>
       <div className="chart-actions">
-        <button className="secondary" onClick={() => act('explore')}>Explore chart</button>
+        <button className="secondary" onClick={() => act('explore')}>
+          Explore chart
+        </button>
       </div>
       <div className="contract-preview">
         <h3>{chart.contract.title}</h3>
         <p>{chart.contract.instrument} · Simulated event contract</p>
-      <div className="chart-actions">
-        <button onClick={() => act('yes')}>Preview YES · {Math.round(chart.contract.yes_ask * 100)}¢</button>
-        <button className="outcome-no" onClick={() => act('no')}>Preview NO · {Math.round(chart.contract.no_ask * 100)}¢</button>
-      </div>
-      <p>Ask prices per contract</p>
+        <div className="chart-actions">
+          <button onClick={() => act('yes')}>
+            Preview YES · {Math.round(chart.contract.yes_ask * 100)}¢
+          </button>
+          <button className="outcome-no" onClick={() => act('no')}>
+            Preview NO · {Math.round(chart.contract.no_ask * 100)}¢
+          </button>
+        </div>
+        <p>Ask prices per contract</p>
       </div>
       <div aria-live="polite" className="chart-feedback">
         {chart.update > 0 && (
@@ -106,7 +112,10 @@ export function DemoChartPanel({
         {chart.preview && (
           <div className="preview-detail">
             <p>
-              <strong>{chart.preview.side.toUpperCase()} · {chart.preview.instrument}</strong> at {chart.preview.contract_price_cents}¢ per contract · Preview only
+              <strong>
+                {chart.preview.side.toUpperCase()} · {chart.preview.instrument}
+              </strong>{' '}
+              at {chart.preview.contract_price_cents}¢ per contract · Preview only
             </p>
             <button className="secondary" onClick={() => act('cancel')}>
               Cancel preview

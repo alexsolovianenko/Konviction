@@ -453,6 +453,13 @@ it('renders identical chart states for SDK tool calls and buttons without sendin
     sdk = await f.begin();
   await waitFor(() => expect(f.requests.some((r) => r.path.endsWith('/transcripts'))).toBe(true));
   const count = f.fetchMock.mock.calls.length;
+  for (const action of ['buy', 'sell']) {
+    expect(JSON.parse(await sdk.clientTools.explore_demo_chart({ action }))).toEqual({
+      simulated: true,
+      ok: false,
+      error: 'Chart action unavailable',
+    });
+  }
   for (const [i, action] of actions.entries()) {
     let data;
     await act(async () => {
@@ -463,7 +470,17 @@ it('renders identical chart states for SDK tool calls and buttons without sendin
       simulated: true,
       symbol: 'BTC/USD',
       underlying_unit: 'USD per bitcoin',
-      contract:{venue:'gemini_prediction', instrument:'BTC-150K-2026', yes_bid:0.17,yes_ask:0.18,no_bid:0.82,no_ask:0.83,price_unit:'USD per contract',title:'Will Bitcoin trade above 150,000 dollars before January 1, 2027?',closes_at:'2026-12-31T23:59:00Z'},
+      contract: {
+        venue: 'gemini_prediction',
+        instrument: 'BTC-150K-2026',
+        yes_bid: 0.17,
+        yes_ask: 0.18,
+        no_bid: 0.82,
+        no_ask: 0.83,
+        price_unit: 'USD per contract',
+        title: 'Will Bitcoin trade above 150,000 dollars before January 1, 2027?',
+        closes_at: '2026-12-31T23:59:00Z',
+      },
       window_minutes: 5,
       action,
       update: i + 1,
@@ -483,7 +500,14 @@ it('renders identical chart states for SDK tool calls and buttons without sendin
     }
     if (action !== 'explore')
       expect(data).toMatchObject({
-        preview: { side: action, venue: 'gemini_prediction', instrument: 'BTC-150K-2026', contract_price: action === 'yes' ? 0.18 : 0.83, contract_price_cents: action === 'yes' ? 18 : 83, execution: 'none' },
+        preview: {
+          side: action,
+          venue: 'gemini_prediction',
+          instrument: 'BTC-150K-2026',
+          contract_price: action === 'yes' ? 0.18 : 0.83,
+          contract_price_cents: action === 'yes' ? 18 : 83,
+          execution: 'none',
+        },
       });
   }
   fireEvent.click(within(panel()).getByRole('button', { name: 'Cancel preview' }));
