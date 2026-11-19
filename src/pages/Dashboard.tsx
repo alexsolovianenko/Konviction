@@ -29,7 +29,7 @@ function Workspace({ children }: { children?: ReactNode }) {
     <div className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_21rem] xl:gap-10">
       <div className="flex min-w-0 flex-col gap-6">
         <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{children ? 'Prediction markets' : 'Conversation'}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Prediction markets</h1>
           <section aria-label="Voice controls" className="flex items-center gap-3">
             <span role="status" className="tnum text-sm text-muted-foreground">
               Microphone · {view.status}
@@ -37,28 +37,6 @@ function Workspace({ children }: { children?: ReactNode }) {
             <VoiceButton />
           </section>
         </header>
-
-        {!children && (
-          <section aria-label="Conversation history" className="space-y-5 border-y border-border py-6">
-            {view.entries.some(entry => entry.role !== 'tool') || view.draft ? (
-              <div role="log" aria-live="polite" className="max-h-[48vh] space-y-4 overflow-auto">
-                {view.entries.filter(entry => entry.role !== 'tool').map(entry => (
-                  <div key={entry.seq}><strong className="text-xs text-muted-foreground">{entry.role === 'user' ? 'You' : 'Assistant'}</strong>
-                    <p>{entry.text}{entry.interrupted && <em> (interrupted)</em>}</p></div>
-                ))}
-                {view.draft && <p>{view.draft}</p>}
-              </div>
-            ) : (
-              <div><h2 className="text-lg font-medium">What market are you following?</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Start voice to ask a question, or explore a market below.</p></div>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {[['Bitcoin · 5 minutes', 'five-minute bitcoin'], ['Ethereum', 'ETH'], ['Browse active events', '']].map(([label, term]) => (
-                <button key={label} className="btn btn-quiet" onClick={() => { setQuery(term ?? ''); void market.run('search_markets', { query: term ?? '' }); }}>{label}</button>
-              ))}
-            </div>
-          </section>
-        )}
 
         <TradeApproval
           proposal={view.proposal}
@@ -102,7 +80,7 @@ function Workspace({ children }: { children?: ReactNode }) {
               {result.error && <p role="alert" className="text-sm text-destructive">{result.error}</p>}
               {result.events?.length === 0 && <p className="text-sm text-muted-foreground">No matching events in the current sandbox listing.</p>}
               {result.events?.map((e) => (
-                <details open={result.events?.length === 1} key={e.ticker} className="border-b border-border pb-2">
+                <details open key={e.ticker} className="border-b border-border pb-2">
                   <summary className="flex items-start gap-1.5 py-1 text-sm font-medium">
                     <ChevronRight className="chev mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
                     {e.title} · {e.ticker}

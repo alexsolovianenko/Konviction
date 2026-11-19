@@ -1,13 +1,12 @@
 import { ClientOnly, Link, useLocation } from "@tanstack/react-router";
-import { House, AudioLines, ChartCandlestick, LayoutDashboard, LockKeyhole } from "lucide-react";
+import { AudioLines, ChartCandlestick, LayoutDashboard, LockKeyhole } from "lucide-react";
 import type { ReactNode } from "react";
 import { useDashboardState, useNow } from "../console/Console";
 import { StatusBubble } from "../voice/StatusBubble";
 import { VoiceProvider, useVoice } from "../voice/VoiceProvider";
 
 const nav = [
-  { to: "/", label: "Home", icon: House },
-  { to: "/markets", label: "Markets", icon: ChartCandlestick },
+  { to: "/", label: "Markets", icon: ChartCandlestick },
   { to: "/dashboard", label: "Account", icon: LayoutDashboard },
   { to: "/open-trades", label: "Private trades", icon: LockKeyhole },
 ] as const;
@@ -39,7 +38,7 @@ function ProposalNotice({ path }: { path: string }) {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useLocation({ select: (location) => location.pathname });
-  const active = (to: string) => (to === "/" ? ["/", "/voice"].includes(path) : path.startsWith(to));
+  const active = (to: string) => (to === "/" ? ["/", "/voice", "/markets"].includes(path) : path.startsWith(to));
   return (
     <VoiceProvider>
       <div className="min-h-dvh lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -83,7 +82,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         </div>
 
-        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-border bg-sidebar pb-[env(safe-area-inset-bottom)] lg:hidden">
+        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-border bg-sidebar pb-[env(safe-area-inset-bottom)] lg:hidden">
           {nav.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}

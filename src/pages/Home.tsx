@@ -6,10 +6,6 @@ import { Dashboard } from "./Dashboard";
 // Markets first: the live listing is usable before voice starts, and "Quote" on a row runs the same
 // read-only Gemini Sandbox lookup the voice assistant uses.
 export function Home() {
-  return <Dashboard />;
-}
-
-export function MarketWorkspace() {
   const { market } = useVoice();
   return (
     <ClientOnly>
