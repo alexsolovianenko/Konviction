@@ -37,9 +37,10 @@ export async function startCredentials(): Promise<Credentials> {
     method: 'POST',
     signal: AbortSignal.timeout(8000),
   });
-  if (!response.ok)
-    throw new Error((await response.json()).error?.message || 'Voice service unavailable');
-  return response.json();
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.signed_url || !result.session_token || !result.session_id)
+    throw new Error(result?.error?.message || 'Voice service unavailable. Start voice to try again.');
+  return result;
 }
 
 export class Session {

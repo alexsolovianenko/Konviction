@@ -579,3 +579,14 @@ it('redeems a device pairing link once and removes its secret before requesting 
     window.history.replaceState(null, '', '/');
   }
 });
+
+it('keeps the provider close reason visible when final transcript sync also fails', async () => {
+  const f = fixture();
+  const sdk = await f.begin();
+  f.fetchMock.mockRejectedValue(new Error('offline'));
+  act(() => sdk.onDisconnect?.({ reason: 'agent', closeCode: 1000,
+    closeReason: 'The AI agent you are trying to reach is not available.' }));
+  await waitFor(() => expect(screen.getByText('Start Voice')).toBeEnabled());
+  expect(screen.getByRole('alert')).toHaveTextContent('agent unavailable');
+  expect(screen.getByRole('alert')).toHaveTextContent('Could not verify final transcript sync');
+});

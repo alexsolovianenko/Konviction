@@ -27,3 +27,17 @@ it("shows exchange fills behind the PIN even when the journal is offline and ope
   expect(await screen.findByText("GEMI-TEST")).toBeInTheDocument();
   expect(tradingRequest).toHaveBeenCalledWith("portfolio", { pin: "7314" });
 });
+
+it("offers a PIN retry when device pairing expires and the dashboard feed is down", async () => {
+  feed.mockReturnValue({ isError: true, error: new Error("offline") });
+  vi.mocked(tradingRequest).mockResolvedValueOnce({ ok: true, voice_authorized: true })
+    .mockResolvedValueOnce({ ok: false, error: "DEVICE_REQUIRED", message: "Unlock this device." });
+  render(<OverviewView />);
+  const read = screen.getByRole("button", { name: "Read Gemini account" });
+  await screen.findByText(/dashboard-state unavailable/);
+  expect(read).toBeEnabled();
+  fireEvent.click(read);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unlock this device.");
+  expect(screen.getByLabelText("Approval PIN")).toBeVisible();
+  expect(read).toBeDisabled();
+});

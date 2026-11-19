@@ -44,11 +44,11 @@ export function deriveStatus(view: VoiceView, market: Pick<MarketTools, 'pending
       detail: last.role === 'user' ? `“${last.text}”` : `Reading ${last.tool_name ?? 'tool'} result`,
     };
   if (live) return { phase: 'listening', label: 'Listening', detail: view.draft || 'Ask about a prediction market' };
-  if (view.error) return { phase: 'error', label: 'Voice stopped', detail: 'Press the button to try again' };
+  if (view.error) return { phase: 'error', label: 'Voice stopped', detail: 'Choose Start voice on Home to try again' };
   return {
     phase: 'idle',
     label: 'Voice is off',
-    detail: view.entries.length ? `Session ended · ${view.entries.length} transcript entries` : 'Press the button to start talking',
+    detail: view.entries.length ? `Session ended · ${view.entries.length} transcript entries` : 'Choose Start voice on Home to talk',
   };
 }
 

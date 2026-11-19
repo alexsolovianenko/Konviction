@@ -126,14 +126,14 @@ export function OverviewView() {
           </a>
         )}
       />
-      {!d ? <Waiting q={q} /> : (
+      {d ? <AccountStrip d={d} /> : <Waiting q={q} />}
+      <SettlementCalls />
+      <Panel title="Gemini order history">
+        <p className="mb-4 text-sm text-muted-foreground">Check whether Gemini received or filled an order.</p>
+        <PrivatePortfolio showPositions={!d?.account.configured || Boolean(d.account.positions_error)} />
+      </Panel>
+      {d && (
         <>
-          <AccountStrip d={d} />
-          <SettlementCalls />
-          <Panel title="Gemini order history">
-            <p className="mb-4 text-sm text-muted-foreground">Check whether Gemini received or filled an order.</p>
-            <PrivatePortfolio showPositions={!d.account.configured || Boolean(d.account.positions_error)} />
-          </Panel>
           {(d.history_available !== false || d.orders.length > 0 || d.intents.length > 0) && <Trades d={d} now={now} open={open} />}
           {d.account.configured && <Positions d={d} open={open} />}
           {(d.history_available !== false || d.activity.length > 0) && <Timeline d={d} open={open} />}

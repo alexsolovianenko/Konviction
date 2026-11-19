@@ -281,10 +281,12 @@ export class Voice {
           }
         },
         onDisconnect: (details) => {
-          if (current())
-            void this.stop(
-              providerError || (details.reason === 'error' ? voiceError(details.message, 'Connection lost. Start voice to reconnect.') : ''),
-            );
+          if (!current()) return;
+          const reason = details.reason === 'user' ? '' : details.closeReason ?? details.context?.reason;
+          const fallback = details.reason === 'error'
+            ? voiceError(details.message, 'Connection lost. Start voice to reconnect.')
+            : '';
+          void this.stop(voiceError(reason ?? '', providerError || fallback));
         },
         onError: (message) => { providerError = voiceError(message); update({error:providerError}); },
       };
@@ -476,7 +478,7 @@ export class Voice {
         status: 'Idle',
         ...(session && { entries: [...session.entries], intents: session.captured }),
         ...(results.some((r) => r.status === 'rejected') && {
-          error: 'Session closed. Could not verify final transcript sync.',
+          error: [error, 'Session closed. Could not verify final transcript sync.'].filter(Boolean).join(' '),
         }),
       });
     }
