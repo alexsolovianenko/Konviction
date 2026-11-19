@@ -14,15 +14,16 @@ try { repo = new SQLiteRepository(process.env.SQLITE_PATH || 'data/capture.sqlit
 catch { console.error('Voice capture unavailable: SQLite storage could not be opened.'); }
 const { browserTrading } = await import('../server/browser-trading.mjs');
 const { configureSettlementCallbacks, pollSettlementCallbacks } = await import('../server/settlement-callbacks.mjs');
+const twilioEnabled = process.env.TWILIO_ENABLED === "true";
 let phone;
-if (repo && process.env.PHONE_PUBLIC_ORIGIN) {
+if (twilioEnabled && repo && process.env.PHONE_PUBLIC_ORIGIN) {
   const { createPhoneServer } = await import('../server/phone-server.mjs');
   phone = createPhoneServer(repo);
   phone.listen(Number(process.env.PHONE_PORT || 8788), '127.0.0.1');
   await once(phone, 'listening');
 }
 let polling = false;
-const callbacks = repo && setInterval(async () => {
+const callbacks = twilioEnabled && repo ? setInterval(async () => {
   if (polling) return;
   polling = true;
   try {
@@ -32,10 +33,10 @@ const callbacks = repo && setInterval(async () => {
     });
   } catch { console.error('Settlement callback check unavailable.'); }
   finally { polling = false; }
-}, 30000);
+}, 30000) : undefined;
 callbacks?.unref();
 const capture = repo ? createApi({
-  trading: browserTrading(repo, {settlementCallback: configureSettlementCallbacks}), repo, apiKey: process.env.ELEVENLABS_API_KEY, agentId: process.env.ELEVENLABS_AGENT_ID,
+  trading: browserTrading(repo, {settlementCallback: twilioEnabled ? configureSettlementCallbacks : undefined}), repo, apiKey: process.env.ELEVENLABS_API_KEY, agentId: process.env.ELEVENLABS_AGENT_ID,
   async lookupInstrument(symbol) {
     const match = /^GEMI-([A-Z0-9_.-]+)-[A-Z0-9_.]+$/i.exec(symbol);
     if (!match) return false;
