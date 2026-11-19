@@ -4,7 +4,7 @@
     {
       "name": "search_markets",
       "type": "client",
-      "description": "Call silently. Use returned events as data. Never read a list or give examples unless the caller asks. When selection is ambiguous use clarification_question alone. Search prediction markets and sort the matching events. Use the returned event ticker and its contract symbol together.",
+      "description": "Call silently. Use returned events as data. Never read a list or give examples unless the caller asks. Use clarification_question as a hint. Ground one short question in the selected topic or matching results and ask only for the detail still missing. Search prediction markets and sort the matching events. Use the returned event ticker and its contract symbol together.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,
