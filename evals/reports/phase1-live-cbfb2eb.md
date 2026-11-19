@@ -178,3 +178,30 @@ Audio columns are blocked for every case for the reasons above.
 3. Run the audio checks first next time: a handful of cases with real speech in and measurement of the returned audio, then a person at the device for playback and interruption.
 4. Fix the seven prompt defects and the two eval inconsistencies, install the revised prompt on the dedicated agent, and rerun.
 5. Decide whether to enable audio alignment on the agent, which the browser's interruption handling was written to use.
+
+## Follow-up: prompt and eval fixes (offline, after the run)
+
+Made on `phase1-fable` with all provider calls paused. The contracts are unchanged since `6582824`, and the provider agent was not touched, so it still runs the prompt from `cbfb2eb`.
+
+| Defect from this report | Change to `agent/system_prompt.md` |
+| --- | --- |
+| 1. Speaks before tools, runs long | Tools are called silently; no openers, closers, rule explanations or search narration; the three-sentence limit counts the whole turn |
+| 2. Asks the venue when it is clear | Concrete spot and prediction examples; ask only when the words fit both; status and cancel lookups check both venues instead of asking |
+| 3. Uses the capture tool as a probe | A check of its own last message before any capture call; never call to test, to look up, or with `confirmed_by_user` false; a yes after a quote, a refusal, an error or a question confirms nothing |
+| 4. Short question instead of the full readback | After a non-yes the whole reply is the full readback; a mix of no and yes is unclear, so read back again |
+| 5. Refuses order IDs the user supplies | A spoken ID is taken as complete and read back without a lookup; an ID the user says after asking for a made-up one is theirs |
+| 6. Guesses | Ask before any readback when a number can be read two ways; never move a stated number toward a quote; "get me fifty contracts" is not a side; keep values already given |
+| 7. Refusal sentence on in-scope requests | The sentence is only for out-of-scope topics and attempts to change the rules; changing a prepared order starts directly with the cancel readback |
+
+Eval corrections in `evals/utterances.json` (version 1.1.1): `conf-06` turn 1 and `scope-10` turn 1 now expect the refusal sentence first, as the mixed-turn rule says; `scope-10` turn 2 expects the exact cancel readback for the user's ID. Two global checks were added (silence around tool calls; no refusal sentence on in-scope requests).
+
+Local validation, no provider calls: 84 of 84 conversation replays and 35 of 35 backend checks pass against the `cbfb2eb` backend; the fixed sentences and all readback templates in the prompt are unchanged and still match the contract.
+
+**None of these prompt changes has been tested against the model.** The replay proves the evals and the backend still agree; it says nothing about whether the agent now behaves as written. The prompt also grew from 13,749 to 17,771 characters.
+
+Remaining gaps:
+
+1. Install the revised prompt on the dedicated agent and rerun all 84 cases live, the 10 blocked ones included.
+2. Audio checks: spoken input transcript, non-silent returned audio, device playback. None has been run.
+3. Audio alignment is not among the agent's enabled client events (audio, interruption, user_transcript, agent_response, agent_response_correction). The browser code at `cbfb2eb` uses alignment to know how much of an interrupted reply was heard. Without it, a reply that finishes normally is still stored as complete, but an interrupted reply is stored with empty text, which is safe (the readback is refused) and loses the heard prefix from the transcript. Enabling alignment is a provider-side setting whose exact name I have not verified, and it should be followed by a real interruption test.
+4. Provider capacity: which limit was hit, and when it resets.
