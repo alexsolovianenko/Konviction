@@ -153,3 +153,15 @@
 .voice-panel time { margin-inline-start: .75rem; }
 .voice-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (min-width: 800px) { .voice-panel .panels { grid-template-columns: 1fr 1fr; } }
+
+.voice-workspace { max-width: 88rem; margin: auto; padding: clamp(1rem, 3vw, 3rem); }
+.focused-voice { padding: clamp(1rem, 3vw, 2.5rem); }
+.voice-panel header a { color: var(--primary); text-decoration: underline; }
+.focused-voice h1 { font-size: clamp(2rem, 4vw, 3rem); font-weight: 650; margin-block: 1rem .25rem; }
+.focused-voice .panels { align-items: start; border-top: 1px solid var(--border); padding-top: 1.25rem; }
+.focused-voice .history-panels { order: -1; }
+.focused-voice .panels > * { min-width: 0; }
+.focused-voice details { padding-block: .6rem; border-bottom: 1px solid var(--border); }
+.focused-voice summary { cursor: pointer; }
+.lookup-history { margin-top: 1.25rem; }
+.lookup-history pre { max-height: 23rem; overflow: auto; padding: .75rem; background: var(--background); font-size: .8rem; }

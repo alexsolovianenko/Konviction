@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMarketTools } from './useMarketTools';
 import { Voice, initial } from '../voice';
 
-export function Dashboard() {
+export function Dashboard({ focused = false }: { focused?: boolean } = {}) {
   const market = useMarketTools();
   const [query, setQuery] = useState('');
   const [view, setView] = useState(initial);
@@ -20,9 +20,9 @@ export function Dashboard() {
     };
   }, [voice]);
   return (
-    <section className="voice-panel panel">
+    <section className={focused ? "voice-panel panel focused-voice" : "voice-panel panel"}>
       <header>
-        <h2>Browser voice</h2>
+        {focused ? <><a href="/">← Full console</a><h1>Talk to the market</h1></> : <><h2>Browser voice</h2><a href="/voice">Open focused voice page →</a></>}
         <p>Explore Gemini Sandbox prediction contracts and capture an intent by voice.</p>
       </header>
       <section aria-label="Voice controls" className="controls">
@@ -41,7 +41,8 @@ export function Dashboard() {
       </section>
       <div className="panels">
         <section aria-label="Gemini market tools">
-          <h2>Search prediction markets</h2>
+          <h2>{focused ? 'Gemini Sandbox data' : 'Search prediction markets'}</h2>
+          {focused && !market.history.length && <p>Ask about a prediction market to see the lookup here, or search below.</p>}
           <form onSubmit={e => { e.preventDefault(); void market.run('search_markets', { query }); }}>
             <input aria-label="Market search" placeholder="Event, ticker, or category" value={query} onChange={e => setQuery(e.target.value)} />
             <button>Search markets</button>
@@ -59,6 +60,14 @@ export function Dashboard() {
               }).join(' · ')}</p>)}</div>}
             {market.result.as_of && <small>Gemini Sandbox · {market.result.as_of}</small>}
           </div>}
+          {focused && market.history.length > 0 && <section className="lookup-history">
+            <h3>Lookup history</h3>
+            {market.history.map(item => <details key={item.id}>
+              <summary>{item.name === 'search_markets' ? 'Market search' : 'Contract quote'} · {String(item.params['query'] || item.params['contract_symbol'] || 'All events')} · {item.result.ok ? 'Received' : 'Unavailable'}</summary>
+              <small>{item.received}</small>
+              <pre>{JSON.stringify({ request: item.params, response: item.result }, null, 2)}</pre>
+            </details>)}
+          </section>}
         </section>
         <div className="history-panels">
           <section>

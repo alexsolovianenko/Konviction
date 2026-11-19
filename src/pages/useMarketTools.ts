@@ -5,6 +5,7 @@ type Result = { ok: boolean; error?: string; events?: MarketEvent[]; title?: str
 export function useMarketTools() {
   const [result, setResult] = useState<Result>();
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<{ id: number; name: string; params: Record<string, unknown>; result: Result; received: string }[]>([]);
   const sequence = useRef(0);
   async function run(name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) {
     const id = ++sequence.current;
@@ -22,8 +23,10 @@ export function useMarketTools() {
     } catch (e) {
       value = { ok: false, error: e instanceof Error && e.message === 'Invalid market tool parameters.' ? e.message : 'Gemini Sandbox market data unavailable.' };
     }
+    const entry = { id, name, params, result: value, received: new Date().toISOString() };
+    setHistory(previous => [entry, ...previous].sort((a, b) => b.id - a.id).slice(0, 20));
     if (id === sequence.current) { setResult(value); setBusy(false); }
     return value;
   }
-  return { run, result, busy };
+  return { run, result, busy, history };
 }

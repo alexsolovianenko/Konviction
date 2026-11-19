@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as ApiPublicDashboardStateRouteImport } from './routes/api/public/dashboard-state'
 import { Route as ApiPublicElInitRouteImport } from './routes/api/public/el-init'
 import { Route as ApiPublicAgentToolsToolRouteImport } from './routes/api/public/agent-tools/$tool'
@@ -18,6 +19,11 @@ import { Route as ApiPublicMarketToolsToolRouteImport } from './routes/api/publi
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VoiceRoute = VoiceRouteImport.update({
+  id: '/voice',
+  path: '/voice',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicDashboardStateRoute = ApiPublicDashboardStateRouteImport.update({
@@ -44,6 +50,7 @@ const ApiPublicMarketToolsToolRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
@@ -59,6 +67,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
@@ -68,6 +77,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
     | '/api/public/agent-tools/$tool'
@@ -75,6 +85,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
     | '/api/public/agent-tools/$tool'
@@ -82,6 +93,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
     | '/api/public/agent-tools/$tool'
@@ -90,6 +102,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  VoiceRoute: typeof VoiceRoute
   ApiPublicDashboardStateRoute: typeof ApiPublicDashboardStateRoute
   ApiPublicElInitRoute: typeof ApiPublicElInitRoute
   ApiPublicAgentToolsToolRoute: typeof ApiPublicAgentToolsToolRoute
@@ -103,6 +116,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/voice': {
+      id: '/voice'
+      path: '/voice'
+      fullPath: '/voice'
+      preLoaderRoute: typeof VoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/dashboard-state': {
@@ -138,6 +158,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  VoiceRoute: VoiceRoute,
   ApiPublicDashboardStateRoute: ApiPublicDashboardStateRoute,
   ApiPublicElInitRoute: ApiPublicElInitRoute,
   ApiPublicAgentToolsToolRoute: ApiPublicAgentToolsToolRoute,
