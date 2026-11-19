@@ -69,7 +69,7 @@ export async function marketTool(name: string, params: URLSearchParams) {
       matches.sort((a, b) => compareMarketRanks(marketRank(order, a, a.contracts[0]!.expiry), marketRank(order, b, b.contracts[0]!.expiry), descending));
     }
     return Response.json({ ok: true, as_of, source: "Gemini Sandbox", query: filterQuery, topic: query,
-      ...(sort && { sort }), ...(minVolume !== null && { min_volume: minVolume }), ...(endingMinutes !== null && { ending_minutes: endingMinutes }),
+      ...(sort && { sort, say: matches.length ? "Sorted." : "No matching markets." }), ...(minVolume !== null && { min_volume: minVolume }), ...(endingMinutes !== null && { ending_minutes: endingMinutes }),
       events: matches.slice(0, 8), matched_events: matches.length });
   }
   const ticker = params.get("event_ticker")!;
