@@ -10,12 +10,20 @@ export async function marketTool(name: string, params: URLSearchParams) {
   if (name === "search_markets") {
     const { events, error } = await dashboardMarkets(true);
     if (error) return fail(error, 502);
-    const words = params.get("query")!.trim().toLowerCase().split(/\s+/);
+    const query = params.get("query")!.toLowerCase().replace(/\bbitcoin\b/g, "btc")
+      .replace(/\b(?:five|5)[ -]?(?:minutes?|mins?|m)\b/g, "05m").trim();
+    const words = query.split(/\s+/);
+    const fiveMinute = words.includes("05m");
+    const now = Date.now();
     const matches = events.flatMap(event => {
       const title = [event.title, event.category, event.ticker].join(" ").toLowerCase();
-      const contracts = event.contracts.filter(c => words.every(w => (title + " " + c.symbol + " " + c.label).toLowerCase().includes(w)));
+      const contracts = event.contracts.filter(c => (!fiveMinute || (c.status === "active" && c.market_state === "open" && Date.parse(c.expiry ?? "") > now)) && words.every(w => (title + " " + c.symbol + " " + c.label).toLowerCase().includes(w)));
       return contracts.length ? [{ ...event, contracts: contracts.slice(0, 8) }] : [];
     });
+    if (fiveMinute) {
+      const expiry = (e: typeof matches[number]) => Math.min(...e.contracts.map(c => Date.parse(c.expiry!)));
+      matches.sort((a, b) => expiry(a) - expiry(b));
+    }
     return Response.json({ ok: true, as_of: new Date().toISOString(), source: "Gemini Sandbox", events: matches.slice(0, 8), matched_events: matches.length });
   }
   const ticker = params.get("event_ticker")!;
