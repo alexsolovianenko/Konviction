@@ -1,0 +1,44 @@
+{
+  "type": "client",
+  "name": "prepare_sandbox_buy",
+  "description": "Prepare a Gemini Sandbox prediction buy proposal for private dashboard approval. This tool never submits an order.",
+  "expects_response": true,
+  "response_timeout_secs": 20,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "event_ticker": {
+        "type": "string",
+        "description": "Exact event ticker returned by search"
+      },
+      "contract_symbol": {
+        "type": "string",
+        "description": "Exact selected contract symbol"
+      },
+      "outcome": {
+        "type": "string",
+        "enum": [
+          "yes",
+          "no"
+        ]
+      },
+      "quantity": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "limit_price": {
+        "type": "number",
+        "minimum": 0.01,
+        "maximum": 0.99,
+        "description": "Maximum USD per contract"
+      }
+    },
+    "required": [
+      "event_ticker",
+      "contract_symbol",
+      "outcome",
+      "quantity",
+      "limit_price"
+    ]
+  }
+}
