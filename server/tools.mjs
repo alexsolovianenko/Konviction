@@ -2,6 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { api, requireRule, validIntent } from './contracts.mjs';
 
 const catalog = api['x-simulated-catalog'];
+const stopWords = new Set([
+  'market',
+  'markets',
+  'contract',
+  'contracts',
+  'price',
+  'prices',
+  'spot',
+  'prediction',
+  'predictions',
+  'gemini',
+  'the',
+  'and',
+  'for',
+]);
+const bounded = (text, max) => Array.from(text).slice(0, max).join('');
 const { yes_words, allowed_fillers } = api['x-confirmation-enforcement'].explicit_yes;
 const fold = (s) =>
   s
@@ -22,6 +38,12 @@ function reference(s) {
     )
     .replace(/[^a-z0-9]/g, '')
     .toUpperCase();
+}
+export function validateQueryParameters(path, parameters) {
+  if (path === '/tools/search_markets') requireRule(parameters.query.trim(), 'invalid_parameters');
+  if (path === '/tools/get_order_status' && parameters.order_id != null) {
+    requireRule(reference(parameters.order_id), 'invalid_parameters');
+  }
 }
 function decimalPlaces(value) {
   const [mantissa, exponent = '0'] = String(value).split('e');
@@ -98,10 +120,6 @@ export function runTool(repo, name, p, session, transcript, now) {
     utterance: p.utterance,
     status: 'captured',
   };
-  const save = (seq) => {
-    requireRule(validIntent(intent), 'invalid_parameters');
-    repo.insert(intent, seq);
-  };
   if (name === 'capture_order_intent' || name === 'capture_cancel_intent') {
     const cancel = name === 'capture_cancel_intent';
     intent.intent = cancel ? 'cancel_order' : 'place_order';
@@ -126,18 +144,22 @@ export function runTool(repo, name, p, session, transcript, now) {
     } else validateOrder(p, market);
 
     requireRule(p.confirmed_by_user, 'confirmation_required');
-    const confirmation = users.at(-1);
+    const readbackIndex = speech.findLastIndex((entry) => entry.role === 'agent');
+    const run = speech.slice(readbackIndex + 1);
+    const confirmation = run.at(-1);
     const received = confirmation && repo.receivedAt(session, confirmation.seq);
     const age = received == null ? Infinity : now - received;
-    const words = plain(confirmation?.text ?? '').split(' ');
+    const answer = run.map((entry) => entry.text).join(' ');
+    const words = plain(answer).split(' ');
     requireRule(
       age >= 0 &&
         age <= 120000 &&
+        !/[?？]/u.test(answer) &&
         words.some((w) => yes_words.includes(w)) &&
         words.every((w) => yes_words.includes(w) || allowed_fillers.includes(w)),
       'confirmation_missing',
     );
-    const readback = speech[speech.indexOf(confirmation) - 1];
+    const readback = speech[readbackIndex];
     requireRule(
       readback?.role === 'agent' &&
         (' ' + plain(readback.text) + ' ').includes(' say yes to confirm '),
@@ -146,7 +168,10 @@ export function runTool(repo, name, p, session, transcript, now) {
     requireRule(!readback.interrupted, 'readback_interrupted');
     requireRule(readbackMatches(readback.text, intent, target, cancel), 'readback_mismatch');
     requireRule(utteranceMatches, 'utterance_mismatch');
-    const used = records.find((row) => row.seq === confirmation.seq)?.intent;
+    // Late ASR fragments can extend an already consumed answer to the same readback.
+    const used = records.find(
+      (row) => row.seq >= run[0].seq && row.seq <= confirmation.seq,
+    )?.intent;
     if (used) {
       const fields = [
         'intent',
@@ -171,12 +196,18 @@ export function runTool(repo, name, p, session, transcript, now) {
       requireRule(!prior, 'cancel_already_captured', { existing_intent_id: prior?.id });
     }
     intent.confirmed_by_user = true;
-    save(confirmation.seq);
+    requireRule(validIntent(intent), 'invalid_parameters');
+    repo.insert(intent, confirmation.seq);
     return [201, captureResult(intent, false)];
   }
 
   const result = { ok: true, simulated: true, query_intent_id: intent.id };
-  if (!utteranceMatches) intent.utterance = users.at(-1)?.text ?? '';
+  if (name === 'get_orderbook') requireRule(market, 'unknown_instrument');
+  if (!utteranceMatches) {
+    const latestSpeech = users.findLast((entry) => plain(entry.text));
+    requireRule(latestSpeech, 'utterance_mismatch');
+    intent.utterance = bounded(latestSpeech.text, 2000);
+  }
   if (name === 'get_order_status') {
     intent.intent = 'order_status';
     intent.order_id =
@@ -209,13 +240,16 @@ export function runTool(repo, name, p, session, transcript, now) {
         cancel_captured: cancelled.has(id),
       }));
   } else if (name === 'search_markets') {
-    intent.instrument = p.query;
-    const terms = fold(p.query).match(/[\p{L}\d]{3,}/gu) ?? [];
+    intent.instrument = bounded(p.query.trim(), 64);
+    const words = fold(p.query).match(/[\p{L}\p{Nd}]+/gu) ?? [];
+    const terms = words.filter((word) => Array.from(word).length >= 3 && !stopWords.has(word));
     const results = catalog[p.venue]
-      .filter((item) =>
-        terms.every((term) =>
-          [item.title, item.instrument, ...item.aliases].some((s) => fold(s).includes(term)),
-        ),
+      .filter(
+        (item) =>
+          terms.length > 0 &&
+          terms.every((term) =>
+            [item.title, item.instrument, ...item.aliases].some((s) => fold(s).includes(term)),
+          ),
       )
       .slice(0, p.limit ?? 3)
       .map(({ aliases, yes_book, bids, asks, ...item }) =>
@@ -230,7 +264,6 @@ export function runTool(repo, name, p, session, transcript, now) {
       results,
     });
   } else {
-    requireRule(market, 'unknown_instrument');
     const book = market.yes_book ?? market;
     const bids = book.bids.slice(0, p.depth ?? 3),
       asks = book.asks.slice(0, p.depth ?? 3);
@@ -248,6 +281,7 @@ export function runTool(repo, name, p, session, transcript, now) {
         best_ask == null || best_bid == null ? null : Number((best_ask - best_bid).toFixed(2)),
     });
   }
-  save();
+  if (!validIntent(intent)) throw new Error('Derived audit record failed schema validation');
+  repo.insert(intent);
   return [200, result];
 }

@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { ApiError, api, requests, validList, uuid4, requireRule } from './contracts.mjs';
 import { SQLiteRepository } from './repository.mjs';
-import { runTool } from './tools.mjs';
+import { runTool, validateQueryParameters } from './tools.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 async function readBody(request) {
@@ -130,6 +130,7 @@ function handle(repo, session, path, method, body, key, now) {
   try {
     requireRule(!ended, 'session_ended');
     requireRule(cacheable && requests[path](body), 'invalid_parameters');
+    validateQueryParameters(path, body.parameters);
     const transcript = repo.transcript(session.id);
     requireRule(transcript.length >= body.last_transcript_seq, 'transcript_not_synced', {
       expected_seq: transcript.length + 1,

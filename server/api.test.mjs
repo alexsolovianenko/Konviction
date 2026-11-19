@@ -250,7 +250,7 @@ test('domain and transcript confirmation precedence; failed attempts never captu
   await reject({ confirmed_by_user: false }, 'confirmation_required');
   await reject({}, 'confirmation_missing');
   await s.append(s.entry('user', first.user), s.entry('user', 'yes'));
-  await reject({}, 'readback_missing');
+  await reject({}, 'confirmation_missing');
   await s.append(s.entry('agent', readback, { interrupted: true }), s.entry('user', 'yes'));
   await reject({}, 'readback_interrupted');
   await s.append(s.entry('agent', readback), s.entry('user', 'yes but make it two'));
@@ -343,18 +343,19 @@ test('concurrent submissions consume one confirmation and replay the same bytes'
   assert.equal(JSON.stringify(a.data), JSON.stringify(b.data));
   assert.equal((await s.list()).data.count, 1);
 });
-test('schema bounds on audit records and empty evidence fail without partial writes', async (t) => {
+test('bounds audit copies by Unicode code point and keeps the original speech', async (t) => {
   const app = await setup(t),
     s = await app.start();
-  const query = { venue, query: 'btc', utterance: 'bitcoin' };
-  code(await s.tool('search_markets', query), 400, 'invalid_parameters');
-  await s.append(s.entry('user', 'bitcoin'));
-  code(
-    await s.tool('search_markets', { ...query, query: 'x'.repeat(65) }),
-    400,
-    'invalid_parameters',
-  );
-  assert.equal((await s.list()).data.count, 0);
+  const query = { venue, query: 'bitcoin', utterance: 'absent from transcript' };
+  code(await s.tool('search_markets', query), 422, 'utterance_mismatch');
+  const speech = '🍁'.repeat(1999) + '問more';
+  await s.append(s.entry('user', speech), s.entry('user', '...'));
+  const search = '  ' + '𐐀'.repeat(65) + '  ';
+  assert.equal((await s.tool('search_markets', { ...query, query: search })).status, 200);
+  const [audit] = (await s.list()).data.intents;
+  assert.equal(audit.instrument, '𐐀'.repeat(64));
+  assert.equal(audit.utterance, '🍁'.repeat(1999) + '問');
+  assert.equal(app.repo.transcript(s.session_id)[0].text, speech);
 });
 test('readback retains decimal points, signed numbers and thousands separators', async (t) => {
   const app = await setup(t);
@@ -492,4 +493,71 @@ test('losing the committed capture response and retrying returns the original in
   const listed = (await s.list()).data;
   assert.equal(listed.count, 1);
   assert.deepEqual(retried.data.intent, listed.intents[0]);
+});
+
+for (const fixture of evals.backend_regressions) {
+  test('frozen backend regression ' + fixture.id, async (t) => {
+    const app = await setup(t),
+      s = await app.start();
+    for (const { role, text, age_seconds = 0, ...metadata } of fixture.transcript) {
+      const entry = s.entry(role, text, metadata);
+      entry.timestamp = new Date(Date.parse(entry.timestamp) - age_seconds * 1000).toISOString();
+      assert.equal((await s.append(entry)).status, 200);
+    }
+    app.advance((fixture.advance_server_clock_seconds ?? 0) * 1000);
+    const { status, data } = await s.tool(fixture.call.tool, fixture.call.args);
+    const { intents } = (await s.list()).data;
+    const audit = intents.find((i) => i.id === data.query_intent_id);
+    const transcript = app.repo.transcript(s.session_id);
+    const observed = {
+      status,
+      code: data.error?.code,
+      count: data.count,
+      instruments: data.results?.map((item) => item.instrument),
+      audit_instrument: audit?.instrument,
+      audit_order_id: audit?.order_id,
+      audit_utterance: audit?.utterance,
+      audit_utterance_length: audit && Array.from(audit.utterance).length,
+      transcript_text_length: transcript[0] && Array.from(transcript[0].text).length,
+      intents_stored: intents.length,
+    };
+    for (const [key, expected] of Object.entries(fixture.expect))
+      assert.deepEqual(observed[key], expected, key);
+  });
+}
+
+test('a late ASR fragment extending a consumed yes cannot create another capture', async (t) => {
+  const app = await setup(t),
+    s = await app.start();
+  await s.append(s.entry('user', first.user), s.entry('agent', readback), s.entry('user', 'yes'));
+  const firstCapture = await s.tool('capture_order_intent', place);
+  assert.equal(firstCapture.status, 201);
+  await s.append(
+    s.entry('tool', JSON.stringify(firstCapture.data), { tool_name: 'capture_order_intent' }),
+    s.entry('user', 'please'),
+  );
+  const duplicate = await s.tool('capture_order_intent', place);
+  assert.equal(duplicate.status, 200);
+  assert.equal(duplicate.data.intent.id, firstCapture.data.intent.id);
+  await s.append(s.entry('user', 'wait?'));
+  code(await s.tool('capture_order_intent', place), 422, 'confirmation_missing');
+  assert.equal((await s.list()).data.count, 1);
+});
+
+test('query parameter errors precede transcript sync and unknown book precedes missing speech', async (t) => {
+  const app = await setup(t),
+    s = await app.start();
+  const base = { venue, utterance: 'bitcoin' };
+  code(
+    await s.tool('search_markets', { ...base, query: '  ' }, randomUUID(), 1),
+    400,
+    'invalid_parameters',
+  );
+  code(
+    await s.tool('get_order_status', { ...base, order_id: '---' }, randomUUID(), 1),
+    400,
+    'invalid_parameters',
+  );
+  code(await s.tool('get_orderbook', { ...base, instrument: 'FAKE' }), 422, 'unknown_instrument');
+  assert.equal((await s.list()).data.count, 0);
 });
