@@ -275,6 +275,72 @@ describe("approval: the only order-submission path", () => {
   });
 });
 
+describe("Gemini order evidence", () => {
+  const ack = (data: unknown, status = 201) => ({ ok: status >= 200 && status < 300, status, text: "", data });
+  const approveWith = async (...responses: unknown[]) => {
+    const { s, id } = await (async () => {
+      const s = await startSession();
+      const r = (await run("proposals", order, s.session_token)) as any;
+      return { s, id: r.proposal.proposal_id as string };
+    })();
+    for (const r of responses) vi.mocked(gPrivate).mockResolvedValueOnce(r as any);
+    return (await run("approve", { proposal_id: id, pin: PIN }, s.session_token)) as any;
+  };
+
+  it("treats a fill without a Gemini order id as unknown and keeps it reserved", async () => {
+    const r = await approveWith(ack({ status: "filled", filledQuantity: "1", remainingQuantity: "0" }));
+    expect(r).toMatchObject({ outcome_summary: "PENDING_UNKNOWN", order_id: null, filled_quantity: null });
+    expect(r.say).not.toMatch(/filled:/i);
+    expect(await store.committedUsd()).toBeGreaterThan(0.3);
+    expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
+  it("refuses evidence for a different contract, side, outcome or size", async () => {
+    for (const wrong of [{ symbol: "GEMI-OTHER-X" }, { side: "sell" }, { outcome: "no" }, { quantity: "5" }]) {
+      store = memoryStore();
+      const r = await approveWith(ack({ orderId: "9", status: "filled", filledQuantity: "1", remainingQuantity: "0", ...wrong }));
+      expect(r.outcome_summary).toBe("PENDING_UNKNOWN");
+      expect(r.order_id).toBeNull();
+    }
+  });
+
+  it("refuses inconsistent fill figures", async () => {
+    for (const bad of [
+      { filledQuantity: "2", remainingQuantity: "0" },
+      { filledQuantity: "1", remainingQuantity: "1" },
+      { filledQuantity: "1", remainingQuantity: "0", avgExecutionPrice: "0.45" },
+    ]) {
+      store = memoryStore();
+      const r = await approveWith(ack({ orderId: "9", status: "filled", ...bad }));
+      expect(r).toMatchObject({ outcome_summary: "PENDING_UNKNOWN", filled_quantity: null, avg_price: null });
+    }
+  });
+
+  it("an open acknowledgement is resolved from order history, never assumed", async () => {
+    const r = await approveWith(
+      ack({ orderId: "77", status: "open", filledQuantity: "0", remainingQuantity: "1" }),
+      ack({ orders: [{ orderId: "77", symbol: order.contract_symbol, side: "buy", outcome: "yes", status: "filled", filledQuantity: "1", remainingQuantity: "0", avgExecutionPrice: "0.30" }] }, 200),
+    );
+    expect(r).toMatchObject({ outcome_summary: "FILLED", order_id: "77", filled_quantity: 1 });
+    expect(vi.mocked(gPrivate).mock.calls.at(-1)?.[0]).toBe("/v1/prediction-markets/orders/history");
+  });
+
+  it("an open order missing from history stays unknown and reserved", async () => {
+    const r = await approveWith(
+      ack({ orderId: "78", status: "open", filledQuantity: "0", remainingQuantity: "1" }),
+      ack({ orders: [] }, 200),
+    );
+    expect(r).toMatchObject({ outcome_summary: "PENDING_UNKNOWN", order_id: "78" });
+    expect(await store.committedUsd()).toBeGreaterThan(0.3);
+  });
+
+  it("a refused redirect is unknown, not a rejection", async () => {
+    const r = await approveWith({ ok: false, status: 307, text: "", data: null, error: "Gemini returned a redirect; refusing to follow it." });
+    expect(r.outcome_summary).toBe("PENDING_UNKNOWN");
+    expect(await store.committedUsd()).toBeGreaterThan(0.3);
+  });
+});
+
 it("prepares a budget buy within per-order and quantity limits without submitting", async () => {
   vi.stubEnv("MAX_ORDER_USD", "25");
   vi.stubEnv("MAX_QUANTITY", "100");
