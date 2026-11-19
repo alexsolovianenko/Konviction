@@ -1,28 +1,22 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, LockKeyhole } from "lucide-react";
-import { PIN_PATTERN, tradingRequest, type Proposal, type Availability } from "../browserTrading";
+import { ArrowUpRight } from "lucide-react";
+import { tradingRequest, type Proposal, type Availability } from "../browserTrading";
 import { cents, usd } from "../lib/format";
 
 export function TradeApproval({
   proposal,
   availability,
   message,
-  approve,
-  pair,
   remainderQuantity,
   retry,
 }: {
   proposal: Proposal | null;
   availability: Availability | null;
   message: string;
-  approve: (id: string, pin: string) => Promise<void>;
   remainderQuantity?: number | null;
   retry?: () => Promise<unknown>;
-  pair?: (pin: string) => Promise<boolean>;
 }) {
   const [status, setStatus] = useState<Availability | null>(null);
-  const [pin, setPin] = useState("");
-  const [pending, setPending] = useState(false);
   const [expired, setExpired] = useState(false);
   useEffect(() => {
     let live = true;
@@ -34,7 +28,6 @@ export function TradeApproval({
     };
   }, []);
   useEffect(() => {
-    setPin("");
     setExpired(false);
     if (!proposal) return;
     const timer = setTimeout(
@@ -44,11 +37,10 @@ export function TradeApproval({
     return () => clearTimeout(timer);
   }, [proposal]);
   const config = availability ?? status;
-  const pairing = !!(config?.voice_confirmation_supported && !config?.voice_authorized && pair);
-  const voiceReady = !!(config?.voice_confirmation_supported && config?.voice_authorized && proposal?.voice_readback);
+  const voiceReady = !!((config?.call_confirmation_supported || (config?.voice_confirmation_supported && config.voice_authorized)) && proposal?.voice_readback);
   let approvalStatus = config?.message ?? "Checking sandbox trading availability…";
   if (proposal && config?.execution_enabled) {
-    approvalStatus = pending ? "Submitting sandbox order…" : expired ? "Approval expired" : voiceReady ? "Awaiting spoken confirmation" : "Awaiting your private approval";
+    approvalStatus = expired ? "Approval expired" : voiceReady ? "Awaiting spoken confirmation" : "Call confirmation unavailable";
   }
   return (
     <section
@@ -100,52 +92,7 @@ export function TradeApproval({
             <p className="text-sm text-warning">Proposal expired. Ask for a fresh quote.</p>
           ) : voiceReady && config?.execution_enabled ? (
             <p className="border-t border-border pt-3 text-sm text-muted-foreground">Say “confirm” after hearing the order terms.</p>
-          ) : (
-            config?.execution_enabled && (
-              <form
-                className="border-t border-border pt-4"
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  if (pending || !PIN_PATTERN.test(pin)) return;
-                  if (Date.parse(proposal.expires_at) <= Date.now()) {
-                    setExpired(true);
-                    return;
-                  }
-                  setPending(true);
-                  setPin("");
-                  try {
-                    if (pairing && pair) await pair(pin);
-                    else await approve(proposal.proposal_id, pin);
-                  } finally {
-                    setPending(false);
-                  }
-                }}
-              >
-                <p className="flex items-start gap-2 text-sm text-muted-foreground">
-                  <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  {pairing ? "Pair this browser once to confirm sandbox orders by voice." : "Enter your private PIN and approve to send this order to Gemini Sandbox."}
-                </p>
-                <div className="mt-3 flex flex-wrap items-end gap-2">
-                  <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
-                    {pairing ? "Device pairing PIN" : "Private approval PIN"}
-                    <input
-                      className="field tracking-[0.3em]"
-                      type="password"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      pattern="[0-9]{4,8}"
-                      maxLength={8}
-                      value={pin}
-                      onChange={(e) => setPin(e.target.value)}
-                    />
-                  </label>
-                  <button className="btn btn-primary" disabled={pending || !PIN_PATTERN.test(pin)}>
-                    {pending ? "Submitting…" : pairing ? "Pair this browser" : "Approve sandbox buy"}
-                  </button>
-                </div>
-              </form>
-            )
-          )}
+          ) : null}
         </div>
       )}
       {message && (

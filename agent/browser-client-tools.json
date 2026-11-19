@@ -140,7 +140,7 @@
     {
       "type": "client",
       "name": "confirm_sandbox_buy",
-      "description": "Submit the current sandbox proposal on a paired device only after the caller explicitly answers the exact, fully spoken proposal readback with confirm or yes. The browser and service verify the saved proposal and transcript. Speak only the returned say field.",
+      "description": "Use only when prepare names confirm_sandbox_buy as its confirmation_tool. Submit after the caller explicitly answers the exact, fully spoken proposal readback with confirm or yes. The browser and service verify the saved proposal and transcript. Speak only the returned say field.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 35,

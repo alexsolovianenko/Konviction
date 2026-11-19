@@ -464,33 +464,21 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
   expect(requests.at(-1)).toBe('/api/public/market-tools/get_orderbook?event_ticker=E&contract_symbol=C&outcome=no&side=buy&quantity=4&limit_price=0.62');
 });
 
-it('shows a voice proposal and accepts its private approval only from the dashboard',async()=>{
-  const f=fixture(),sdk=await f.begin();
-  const proposal={proposal_id:'id',title:'Event',contract_label:'Threshold',instrument_symbol:'C',outcome:'yes',quantity:2,limit_price:.4,quote_price:.39,notional_usd:.8,est_fee_usd:.04,expires_at:new Date(Date.now()+60000).toISOString(),readback:'Buy 2 YES contracts at up to 40 cents.'};
-  const calls:{path:string;init:RequestInit}[]=[];
-  f.fetchMock.mockImplementation(async(path,init)=>{
-    calls.push({path,init});return Response.json(path.endsWith('/proposals')?{ok:true,proposal,availability:{execution_enabled:true,message:'Sandbox enabled'}}:{ok:true,say:'Filled 2 contracts.',outcome_summary:'FILLED',order_id:'exchange-123',exchange_status:'filled'});
-  });
-  expect(Object.keys(sdk.clientTools)).not.toContain('approve');
-  let spoken='';
-  await act(async()=>{spoken=await sdk.clientTools['prepare_sandbox_buy']!({event_ticker:'E',contract_symbol:'C',outcome:'yes',quantity:2,limit_price:.4})});
-  expect(JSON.parse(spoken)).toMatchObject({quantity:2,outcome:'yes',say:'Ready for approval on screen.'});
-  expect(spoken).not.toContain(proposal.readback);
-  expect(screen.getByText(proposal.readback)).toBeInTheDocument();
-  expect(screen.getByText('Awaiting your private approval')).toBeInTheDocument();
-  expect(screen.getByRole('button',{name:'Approve sandbox buy'})).toBeDisabled();
-  expect(calls.map(c => c.path)).toEqual(['/api/trading/proposals']);
-  fireEvent.change(screen.getByLabelText('Private approval PIN'),{target:{value:'6739'}});
-  fireEvent.click(screen.getByRole('button',{name:'Approve sandbox buy'}));
-  expect(await screen.findByText(/Filled 2 contracts\./)).toHaveTextContent('Gemini Sandbox order exchange-123 · status filled · FILLED');
-  expect(screen.queryByText('Awaiting your private approval')).toBeNull();
-  expect(calls.map(c=>c.path)).toEqual(['/api/trading/proposals','/api/trading/approve']);
-  expect(JSON.parse(String(calls[1]!.init.body))).toEqual({proposal_id:'id',pin:'6739'});
-  expect(calls[1]!.init.headers).toMatchObject({Authorization:'Bearer private-1'});
-  expect(spoken).not.toContain('6739');
+it('shows the spoken readback and never offers typed trade approval', async () => {
+  const f = fixture(), sdk = await f.begin();
+  const readback = 'Buy two yes contracts at up to forty cents. Say confirm.';
+  const proposal = {proposal_id:'id',title:'Event',contract_label:'Threshold',outcome:'yes',quantity:2,limit_price:.4,quote_price:.39,notional_usd:.8,est_fee_usd:.04,
+    expires_at:new Date(Date.now()+60000).toISOString(),readback,voice_readback:readback};
+  f.fetchMock.mockResolvedValue(Response.json({ok:true,proposal,availability:{execution_enabled:true,voice_confirmation_supported:true,voice_authorized:true}}));
+  let reply = '';
+  await act(async () => {reply = await sdk.clientTools['prepare_sandbox_buy']!({event_ticker:'E',contract_symbol:'C',outcome:'yes',quantity:2});});
+  expect(JSON.parse(reply)).toMatchObject({confirmation_tool:'confirm_sandbox_buy',say:readback});
+  expect(screen.getByText('Awaiting spoken confirmation')).toBeVisible();
+  expect(screen.queryByLabelText('Private approval PIN')).toBeNull();
+  expect(screen.queryByRole('button',{name:'Approve sandbox buy'})).toBeNull();
 });
 
-it.each([false, true])('requests one fresh remainder proposal after approval (paired %s)', async (paired) => {
+it.each([false, true])('requests one fresh remainder proposal after spoken approval (retry by voice %s)', async (retryByVoice) => {
   const f = fixture(), sdk = await f.begin();
   const originalFetch = f.fetchMock.getMockImplementation()!;
   const requests: Record<string, unknown>[] = [];
@@ -503,14 +491,14 @@ it.each([false, true])('requests one fresh remainder proposal after approval (pa
       requests.push(JSON.parse(String(init.body)));
       const first = requests.length === 1;
       return Response.json({ok:true, availability:{message:'Enabled',execution_enabled:true,
-        voice_confirmation_supported:paired,voice_authorized:paired}, proposal:{
+        voice_confirmation_supported:true,voice_authorized:true}, proposal:{
         proposal_id:first ? 'first' : 'second',title:'Event',contract_label:'Option',instrument_symbol:'C',
         quantity:first ? 3 : 2, outcome:'no',limit_price:.4,quote_price:first ? .4 : .45,notional_usd:first ? 1.2 : .8,
         est_fee_usd:.05, expires_at:new Date(Date.now()+60000).toISOString(),readback:first ? readback : freshReadback,
-        ...(paired && {voice_readback:first ? readback : freshReadback}),
+        voice_readback:first ? readback : freshReadback,
       }});
     }
-    if (path.endsWith('/approve') || path.endsWith('/voice-confirm')) {
+    if (path.endsWith('/voice-confirm')) {
       approved.push(JSON.parse(String(init.body)).proposal_id);
       return Response.json({ok:true,outcome_summary:'PARTIAL', filled_quantity:1,
         say:'Filled 1 of 3 sandbox contracts. Ask to retry the remaining 2.', remainder_buy:remainder});
@@ -518,24 +506,19 @@ it.each([false, true])('requests one fresh remainder proposal after approval (pa
     return originalFetch(path, init);
   });
   await act(async () => { await sdk.clientTools['prepare_sandbox_buy']!({...remainder,quantity:undefined,budget_usd:1.3}); });
-  if (paired) {
-    act(() => {
-      sdk.onModeChange?.({mode:'speaking'});
-      sdk.onMessage?.({source:'ai',role:'agent',event_id:1,message:readback});
-      sdk.onModeChange?.({mode:'listening'});
-      sdk.onMessage?.({source:'user',role:'user',event_id:2,message:'Confirm'});
-    });
-    await act(async () => {
-      const result = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({}));
-      expect(result.say).toContain('remaining 2');
-    });
-  } else {
-    fireEvent.change(screen.getByLabelText('Private approval PIN'), {target:{value:'6739'}});
-    fireEvent.click(screen.getByRole('button',{name:'Approve sandbox buy'}));
-  }
+  act(() => {
+    sdk.onModeChange?.({mode:'speaking'});
+    sdk.onMessage?.({source:'ai',role:'agent',event_id:1,message:readback});
+    sdk.onModeChange?.({mode:'listening'});
+    sdk.onMessage?.({source:'user',role:'user',event_id:2,message:'Confirm'});
+  });
+  await act(async () => {
+    const result = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({}));
+    expect(result.say).toContain('remaining 2');
+  });
   const retryButton = await screen.findByRole('button',{name:'Prepare remaining 2 contracts'});
   expect(requests).toHaveLength(1);
-  if (paired) {
+  if (retryByVoice) {
     await act(async () => {
       const reply = JSON.parse(await sdk.clientTools['prepare_sandbox_remainder']!({quantity:99,limit_price:.99}));
       expect(reply.say).toBe(freshReadback);
@@ -544,7 +527,7 @@ it.each([false, true])('requests one fresh remainder proposal after approval (pa
   } else {
     fireEvent.click(retryButton);
     await screen.findByText(freshReadback);
-    expect(screen.getByRole('button',{name:'Approve sandbox buy'})).toBeDisabled();
+    expect(screen.getByText('Awaiting spoken confirmation')).toBeVisible();
   }
   expect(requests).toHaveLength(2);
   expect(requests[1]).toEqual(remainder);

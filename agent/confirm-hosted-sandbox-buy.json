@@ -1,0 +1,27 @@
+{
+  "type": "webhook",
+  "name": "confirm_hosted_sandbox_buy",
+  "description": "Only when a hosted proposal names this tool and the caller explicitly confirms its exact spoken readback, submit that proposal once. Copy its proposal_id silently. Speak the returned say field.",
+  "pre_tool_speech": "off",
+  "response_timeout_secs": 30,
+  "follow_redirects": false,
+  "api_schema": {
+    "url": "https://voice-to-predict-ebon.vercel.app/api/public/browser-trading/call-confirm",
+    "method": "POST",
+    "request_headers": {
+      "x-call-secret": { "secret_id": "REPLACE_WITH_ELEVENLABS_WORKSPACE_SECRET_ID" },
+      "x-trade-session-token": { "variable_name": "secret__trade_session_token" }
+    },
+    "request_body_schema": {
+      "type": "object",
+      "description": "Verify the provider's current voice call and the prepared order.",
+      "required": ["proposal_id", "conversation_id", "is_text_only", "history"],
+      "properties": {
+        "proposal_id": { "type": "string", "description": "Exact proposal_id from the latest successful hosted preparation." },
+        "conversation_id": { "type": "string", "dynamic_variable": "system__conversation_id" },
+        "is_text_only": { "type": "boolean", "dynamic_variable": "system__is_text_only" },
+        "history": { "type": "string", "dynamic_variable": "system__conversation_history" }
+      }
+    }
+  }
+}

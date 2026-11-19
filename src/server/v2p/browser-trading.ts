@@ -5,12 +5,13 @@
 //   GET  availability            public: is approval possible (names missing config, never values)
 //   POST session                 mint verified voice session + ElevenLabs signed URL
 //   POST proposals   (Bearer)    quote + save a BUY proposal bound to the session. Never submits.
-//   POST approve     (Bearer)    typed PIN + exact proposal id -> the ONLY order-submission path
+//   POST call-confirm            ElevenLabs webhook + session + spoken readback and confirmation
+//   POST order-result (Bearer)   poll the caller’s proposal without submitting
 //   POST end         (Bearer)    revoke the session
 //   POST portfolio               typed PIN -> sanitized Gemini open orders, positions, order history
 //
-// The language model can reach `proposals` only through the browser client tool; it never sees the
-// session token or the PIN, and no voice tool can call `approve`.
+// The ElevenLabs system injects the conversation history and call ID into its server webhook.
+import { spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { db, executionEnabled, logActivity } from "./db";
 import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
@@ -109,7 +110,7 @@ const defaultStore = () => hasSupabase() || !hasBlob() ? supabaseStore() : blobS
 export async function availability() {
   const missing: string[] = [];
   if (!hasCredentials()) missing.push("Gemini Sandbox credentials");
-  if (!pinConfigured()) missing.push("a 4-8 digit DEMO_PIN");
+  if (!env("ELEVENLABS_CALL_CONFIRM_SECRET")) missing.push("ElevenLabs call confirmation");
   if (!sessionConfigured()) missing.push("VOICE_SESSION_SECRET");
   const ledgerConfigured = hasSupabase() || hasBlob();
   if (!ledgerConfigured) missing.push("private order storage");
@@ -118,6 +119,9 @@ export async function availability() {
   return {
     ok: true,
     execution_enabled: missing.length === 0,
+    voice_authorized: false, // account access still requires separate authorization
+    voice_confirmation_supported: missing.length === 0,
+    call_confirmation_supported: missing.length === 0,
     message: missing.length ? "Approval unavailable. Configure " + missing.join(", ") + "." : "Sandbox approval is enabled.",
   };
 }
@@ -210,41 +214,80 @@ async function propose(store: Store, token: string | undefined, body) {
       await store.log("INTENT_PROPOSED", s.caller,
         `BUY ${terms.quantity} ${terms.outcome.toUpperCase()} ${terms.instrument_symbol} @ ≤${terms.limit_price}`,
         { code, proposal_id: id, channel: "browser", notional: terms.notional_usd, fee: terms.est_fee_usd, quote: terms.quote_price });
-      return json({ ok: true, proposal: { ...terms, readback, proposal_id: id }, availability: await availability() });
+      return json({ ok: true, proposal: { ...terms, readback, voice_readback: s.cid ? spokenProposal(terms) : undefined, proposal_id: id }, availability: await availability() });
     },
   );
   const { detail, ...safe } = await response.json();
   return safe;
 }
 
-async function approve(store: Store, token: string | undefined, body) {
+function validateProposalId(id: unknown) {
+  if (typeof id !== "string" || !UUID.test(id)) bad();
+}
+
+async function ownedIntent(store: Store, id: string, s) {
+  const row = await store.getIntent(id);
+  if (!row || row.caller !== s.caller || row.conversation_id !== s.cid)
+    throw new TradeError("UNKNOWN_PROPOSAL", "Proposal unavailable for this call.", 404);
+  return row;
+}
+
+async function recordedResult(store: Store, row) {
+  const order = await store.getOrderByIntent(row.id);
+  if (order) {
+    const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
+    return {
+      ok: order.outcome_summary !== "EXCHANGE_REJECTED", outcome_summary: order.outcome_summary,
+      order_id: order.gemini_order_id, exchange_status: order.exchange_status, filled_quantity: order.filled_qty,
+      remaining_quantity: order.remaining_qty, avg_price: order.avg_price,
+      ...(remainder && { remainder_buy: remainder }),
+      say: order.filled_qty == null ? "Final fill unavailable. Check order history." :
+        `Recorded ${order.filled_qty} of ${row.quantity} contracts filled${order.avg_price == null ? "" : " at an average of " + Math.round(Number(order.avg_price) * 100) + "¢"}.` +
+        (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
+    };
+  }
+  if (row.status === "EXECUTING" || (row.status === "PROPOSED" && Date.parse(row.expires_at) > Date.now()))
+    return { ok: true, status: row.status };
+  return { ok: false, error: "INACTIVE", status: row.status, message: "Proposal closed. Ask for a fresh quote." };
+}
+
+function confirmedInCall(history: unknown, row): boolean {
+  if (typeof history !== "string") return false;
+  try {
+    const { entries } = JSON.parse(history);
+    if (!Array.isArray(entries)) return false;
+    let steps = 0;
+    const expected = spokenProposal(row);
+    const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    for (const turn of entries) {
+      for (const result of turn.role === "tool" ? turn.tool_results ?? [] : []) {
+        if (!["prepare_sandbox_buy", "prepare_sandbox_remainder"].includes(result.tool_name)) continue;
+        const data = typeof result.result_value === "string" ? JSON.parse(result.result_value) : result.result_value;
+        steps = data?.ok && data.proposal_id === row.id ? 1 : 0;
+      }
+      if (typeof turn.message !== "string" || !turn.message.trim()) continue;
+      if (turn.role === "tool") continue;
+      if (turn.role === "agent" && steps === 1 && !turn.interrupted && normalize(turn.message.replace(/^\[(?:neutral|slow)\]\s*/i, "")) === normalize(expected)) steps = 2;
+      else if (turn.role === "user" && steps === 2 && /^(?:confirm|yes|yes[, ]+confirm)[.!]?$/i.test(turn.message.trim())) steps = 3;
+      else steps = 0;
+    }
+    return steps === 3;
+  } catch { return false; }
+}
+
+async function callConfirm(store: Store, token: string | undefined, body) {
   const s = await requireSession(store, token);
-  if (!keysAre(body, ["proposal_id", "pin"]) || typeof body.proposal_id !== "string" || !UUID.test(body.proposal_id)) bad();
+  if (!keysAre(body, ["proposal_id", "conversation_id", "is_text_only", "history"])) bad();
+  validateProposalId(body.proposal_id);
+  if (!s.cid || s.cid !== body.conversation_id || body.is_text_only !== false)
+    throw new TradeError("CALL_REQUIRED", "Confirm in the active voice call.", 403);
+  const row = await ownedIntent(store, body.proposal_id, s);
+  if (!confirmedInCall(body.history, row))
+    throw new TradeError("CONFIRMATION_REQUIRED", "Read the order and wait for the caller to say confirm.");
   const config = await availability();
   if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
-  await requirePin(store, body.pin, s.caller);
-
-  const it = await store.claim(body.proposal_id, s.caller);
-  if (!it) {
-    const row = await store.getIntent(body.proposal_id);
-    if (!row || row.caller !== s.caller) throw new TradeError("UNKNOWN_PROPOSAL", "Proposal unavailable for this voice session.", 404);
-    const order = ["EXECUTING", "DONE", "FAILED"].includes(row.status) ? await store.getOrderByIntent(row.id) : null;
-    if (order) {
-      const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
-      // Replay: report the recorded Gemini result; never submit a second order.
-      return {
-        ok: order.outcome_summary !== "EXCHANGE_REJECTED", replayed: true, outcome_summary: order.outcome_summary,
-        order_id: order.gemini_order_id, exchange_status: order.exchange_status, filled_quantity: order.filled_qty,
-        remaining_quantity: order.remaining_qty, avg_price: order.avg_price,
-        ...(remainder && { remainder_buy: remainder }),
-        say: order.filled_qty == null ? "Final fill unavailable. Check order history." :
-          `Recorded ${order.filled_qty} of ${row.quantity} contracts filled${order.avg_price == null ? "" : " at an average of " + Math.round(Number(order.avg_price) * 100) + "¢"}.` +
-          (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
-      };
-    }
-    if (row.status === "EXECUTING") throw new TradeError("IN_PROGRESS", "Approval already received. Check open trades before doing anything else.");
-    throw new TradeError("INACTIVE", "This proposal was replaced, rejected or expired. Ask for a fresh quote.");
-  }
+  const it = await store.claim(row.id, s.caller);
+  if (!it) return { ...await recordedResult(store, await ownedIntent(store, row.id, s)), replayed: true };
 
   // Re-check limits on the stored proposal, then the shared daily ledger (this intent is now EXECUTING
   // and reserved; every concurrent claim that reads after ours sees our reservation).
@@ -258,7 +301,7 @@ async function approve(store: Store, token: string | undefined, body) {
   const dayErr = dailyCapError(committed, Number(it.notional_usd) + Number(it.est_fee_usd));
   if (dayErr) { await store.setIntentStatus(it.id, "REJECTED"); throw new TradeError("CAP_EXCEEDED", dayErr); }
 
-  await store.log("INTENT_APPROVED", s.caller, `${it.code}: approved with typed PIN in the browser`, { proposal_id: it.id });
+  await store.log("INTENT_APPROVED", s.caller, `${it.code}: confirmed in the voice call`, { proposal_id: it.id });
   const response = await executeTrade(it, s.caller, {
     finish: (status: string) => store.setIntentStatus(it.id, status),
     log: store.log,
@@ -306,7 +349,7 @@ async function portfolio(store: Store, body) {
 // ------------------------------------------------------------------ HTTP
 
 export async function runBrowserTrading(
-  { action, method, token, body }: { action: string; method: string; token?: string; body?: unknown },
+  { action, method, token, body, callSecret }: { action: string; method: string; token?: string; body?: unknown; callSecret?: string },
   store: Store = defaultStore(),
   fetchImpl?: typeof fetch,
 ) {
@@ -315,7 +358,16 @@ export async function runBrowserTrading(
   switch (action) {
     case "session": return startSession(store, fetchImpl);
     case "proposals": return propose(store, token, body);
-    case "approve": return approve(store, token, body);
+    case "call-confirm":
+      if (!await secretEqual(callSecret ?? "", env("ELEVENLABS_CALL_CONFIRM_SECRET") ?? ""))
+        throw new TradeError("UNAUTHORIZED", "Call confirmation unavailable.", 401);
+      return callConfirm(store, token, body);
+    case "order-result": {
+      const s = await requireSession(store, token);
+      if (!keysAre(body, ["proposal_id"])) bad();
+      validateProposalId(body.proposal_id);
+      return recordedResult(store, await ownedIntent(store, body.proposal_id, s));
+    }
     case "end": return endSession(store, token);
     case "portfolio": return portfolio(store, body);
     default: throw new TradeError("NOT_FOUND", "Not found.", 404);
@@ -327,12 +379,15 @@ const reply = (status: number, body: unknown) =>
 
 export async function handleBrowserTrading(req: Request, action: string): Promise<Response> {
   try {
+    const callSecret = req.headers.get("x-call-secret") ?? "";
+    if (action === "call-confirm" && !await secretEqual(callSecret, env("ELEVENLABS_CALL_CONFIRM_SECRET") ?? ""))
+      return reply(401, { ok: false, error: "UNAUTHORIZED", message: "Call confirmation unavailable." });
     let body: unknown = {};
     if (req.method === "POST") {
       // JSON only: blocks cross-site form posts. Auth is a Bearer token kept in memory, never a cookie.
       if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) return reply(415, { ok: false, error: "JSON_REQUIRED", message: "JSON required." });
       const text = await req.text();
-      if (text.length > 4096) return reply(413, { ok: false, error: "TOO_LARGE", message: "Request too large." });
+      if (text.length > (action === "call-confirm" ? 131072 : 4096)) return reply(413, { ok: false, error: "TOO_LARGE", message: "Request too large." });
       try { body = text ? JSON.parse(text) : {}; } catch { return reply(400, { ok: false, error: "BAD_INPUT", message: "Invalid JSON." }); }
     }
     if (action === "session" && req.method === "POST" && !hasSupabase() && !hasBlob()) {
@@ -341,14 +396,14 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
       if ("error" in signed) throw new TradeError("ELEVENLABS_UNAVAILABLE", signed.error, 502);
       return reply(200, { ok: true, voice_only: true, signed_url: signed.signed_url });
     }
-    const token = /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
-    return reply(200, await runBrowserTrading({ action, method: req.method, token, body }));
+    const token = action === "call-confirm" ? req.headers.get("x-trade-session-token") ?? undefined : /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
+    return reply(200, await runBrowserTrading({ action, method: req.method, token, body, callSecret }));
   } catch (e) {
     if (e instanceof TradeError) return reply(e.status, { ok: false, error: e.code, message: e.message });
     console.error(JSON.stringify({ event: "browser_trading_error", action, error_name: (e as Error)?.name ?? null }));
     return reply(503, {
       ok: false, error: "SERVICE_UNAVAILABLE",
-      message: action === "approve" ? "Approval result unknown. Check open trades before trying again." : "Trading service unavailable.",
+      message: action === "call-confirm" ? "Approval result unknown. Check open trades before trying again." : "Trading service unavailable.",
     });
   }
 }

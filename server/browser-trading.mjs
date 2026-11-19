@@ -21,7 +21,6 @@ const bad = () => {
 export function availability(voiceAuthorized = false) {
   const missing = [];
   if (!hasCredentials()) missing.push("Gemini sandbox account credentials");
-  if (!voiceAuthorized && !/^\d{4,8}$/.test(process.env.DEMO_PIN ?? "")) missing.push("a 4–8 digit server DEMO_PIN");
   if (process.env.EXECUTION_ENABLED !== "true") missing.push("EXECUTION_ENABLED=true");
   return {
     ok: true,
@@ -137,35 +136,30 @@ export function browserTrading(repo) {
       // Preserve existing quantity fingerprints and distinguish equal numeric dollar amounts.
       const fingerprint = JSON.stringify(keys.map((k) => k === "budget_usd" ? { budget_usd: body[k] } : body[k]));
       const replay = store.replay(owner, key, fingerprint);
-      const present = (proposal) => ({ ok: true, proposal, availability: config });
+      const present = (proposal) => ({ ok: true, proposal, availability: { ...config, voice_authorized: true } });
       if (replay) return present(replay);
       const response = await prepareTrade(
         { ...body, instrument_symbol: body.contract_symbol, side: "buy" },
         (terms) => {
           sessionOwner(repo, token);
-          if (device && terms.title && terms.contract_label &&
-              ![terms.title, terms.contract_label].some(name => name === terms.instrument_symbol || name === terms.event_ticker || /GEMI-[A-Z0-9._-]+/i.test(name))) {
-            terms.voice_readback = spokenProposal(terms);
-          }
+          if (!terms.title || !terms.contract_label ||
+              [terms.title, terms.contract_label].some(name => name === terms.instrument_symbol || name === terms.event_ticker || /GEMI-[A-Z0-9._-]+/i.test(name)))
+            throw new TradeError("BAD_INPUT", "A human-readable contract name is required for spoken confirmation.", 409);
+          terms.voice_readback = spokenProposal(terms);
           const proposal = store.propose(owner, key, fingerprint, terms, LIMITS.maxDailyUsd,
-            terms.voice_readback ? id => devices.bind(id, owner, device) : undefined);
+            id => devices.bind(id, owner));
           return Response.json(present(proposal));
         },
       );
       const { detail, ...safe } = await response.json();
       return safe;
     }
-    const voice = path === "voice-confirm";
-    if ((!voice && path !== "approve") || !keysAre(body, ["proposal_id", voice ? "confirmation_seq" : "pin"]) ||
-        !uuid.test(body.proposal_id)) bad();
+    if (path !== "voice-confirm") throw new TradeError("NOT_FOUND", "Unknown trading action.", 404);
+    if (!keysAre(body, ["proposal_id", "confirmation_seq"]) || !uuid.test(body.proposal_id) ||
+        !Number.isSafeInteger(body.confirmation_seq) || body.confirmation_seq <= 0) bad();
     if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
-    if (voice) {
-      if (!device) throw new TradeError("DEVICE_REQUIRED", "Pair this browser to approve by voice.", 403);
-      if (!Number.isSafeInteger(body.confirmation_seq) || body.confirmation_seq <= 0) bad();
-
-    } else requirePin(store, body.pin);
-    const claim = store.claim(owner, body.proposal_id, LIMITS, voice
-      ? () => devices.confirm(body.proposal_id, owner, device, body.confirmation_seq) : undefined);
+    const claim = store.claim(owner, body.proposal_id, LIMITS,
+      () => devices.confirm(body.proposal_id, owner, body.confirmation_seq));
     if (claim.result) return claim.result;
     const id = body.proposal_id;
     const audit = (kind, detail) => store.audit(id, kind, detail);

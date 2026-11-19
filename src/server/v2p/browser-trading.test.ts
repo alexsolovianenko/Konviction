@@ -51,8 +51,17 @@ function quote(price: string) {
 }
 const propose = (t: string, key = randomUUID(), body: object = input) =>
   run({ method: "POST", path: "proposals", token: t, key, body });
-const approve = (t: string, id: string, p = pin) =>
-  run({ method: "POST", path: "approve", token: t, body: { proposal_id: id, pin: p } });
+function approve(t: string, id: string, answer = "confirm") {
+  const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
+  const row = repo.db.prepare("SELECT terms FROM browser_proposals WHERE owner=? AND id=?").get(owner, id);
+  let seq = repo.db.prepare("SELECT confirmation_seq FROM browser_voice_approvals WHERE owner=? AND proposal=?").get(owner, id)?.confirmation_seq;
+  if (!seq) {
+    seq = (repo.transcript(owner).at(-1)?.seq ?? 0) + 2;
+    repo.append(owner, { seq: seq - 1, role: "agent", text: row ? JSON.parse(row.terms).voice_readback : "" }, Date.now());
+    repo.append(owner, { seq, role: "user", text: answer }, Date.now());
+  }
+  return run({ method: "POST", path: "voice-confirm", token: t, body: { proposal_id: id, confirmation_seq: seq } });
+}
 beforeEach(() => {
   vi.stubEnv("EXECUTION_ENABLED", "true");
   vi.stubEnv("DEMO_PIN", pin);
@@ -104,11 +113,11 @@ it("stores exact fresh terms, deduplicates proposals, rejects changed parameters
   expect(gPrivate).not.toHaveBeenCalled();
 });
 
-it("requires owner, separate PIN and enabled execution; moved asks preserve the signed IOC limit", async () => {
+it("requires owner, spoken confirmation and enabled execution; moved asks preserve the signed IOC limit", async () => {
   const t = token(),
     id = (await propose(t)).proposal.proposal_id;
   await expect(approve(token(), id)).rejects.toMatchObject({ code: "UNKNOWN_PROPOSAL" });
-  await expect(approve(t, id, "0000")).rejects.toMatchObject({ code: "WRONG_PIN" });
+  await expect(approve(t, id, "maybe")).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
   vi.stubEnv("EXECUTION_ENABLED", "false");
   await expect(approve(t, id)).rejects.toMatchObject({ code: "EXECUTION_DISABLED" });
   vi.stubEnv("EXECUTION_ENABLED", "true");
@@ -130,7 +139,7 @@ it("releases the cancelled share of the SQLite reservation for a separately appr
   const retry = await propose(t, randomUUID(), result.remainder_buy);
   expect(retry.proposal).toMatchObject({quantity:1,limit_price:.4,quote_price:.45});
   expect(gPrivate).toHaveBeenCalledTimes(1);
-  await expect(approve(t, retry.proposal.proposal_id, "0000")).rejects.toMatchObject({code:"WRONG_PIN"});
+  await expect(approve(t, retry.proposal.proposal_id, "no")).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
   expect(gPrivate).toHaveBeenCalledTimes(1);
 });
 
@@ -231,15 +240,12 @@ it("bounds a burst of independent account approvals at the configured dollar cap
   expect(gPrivate).toHaveBeenCalledTimes(2);
 });
 
-it("locks repeated incorrect PINs across sessions and disables approval without a configured PIN", async () => {
-  const t = token(),
-    id = (await propose(t)).proposal.proposal_id;
-  for (let i = 0; i < 3; i++)
-    await expect(approve(t, id, "0000")).rejects.toMatchObject({ code: "WRONG_PIN" });
-  await expect(approve(t, id)).rejects.toMatchObject({ code: "LOCKED" });
-  vi.stubEnv("DEMO_PIN", "");
-  await expect(approve(t, id)).rejects.toMatchObject({ code: "EXECUTION_DISABLED" });
+it("keeps typed order submission disabled and accepts explicit speech with no configured PIN", async () => {
+  const t = token(), { proposal } = await propose(t);
+  await expect(run({ method:"POST", path:"approve", token:t, body:{proposal_id:proposal.proposal_id, pin} })).rejects.toMatchObject({ code: "NOT_FOUND" });
   expect(gPrivate).not.toHaveBeenCalled();
+  vi.stubEnv("DEMO_PIN", "");
+  expect(await approve(t, proposal.proposal_id)).toMatchObject({ok:true,outcome_summary:"FILLED"});
 });
 
 it("sizes a dollar budget in whole contracts including rounded fees and binds replay to the sizing unit", async () => {
@@ -269,8 +275,8 @@ async function paired() {
   return { host, deviceCookie: cookie };
 }
 
-it("executes one sandbox buy only after the paired browser hears its fresh readback and confirms", async () => {
-  const device = await paired();
+it("executes one local sandbox buy only after the unpaired call hears its fresh readback and confirms", async () => {
+  const device = {host:"localhost:5173"};
   const t = token();
   const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
   const { proposal } = await run({ ...device, token:t, method:"POST", path:"proposals", key:randomUUID(), body:input });
@@ -294,9 +300,6 @@ it("executes one sandbox buy only after the paired browser hears its fresh readb
   await expect(confirm(8)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
   entry(9,"agent","[neutral] " + proposal.voice_readback);
   entry(10,"user","Confirm.");
-  await expect(confirm(10, {host:device.host})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
-  await expect(confirm(10, await paired())).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
-  await expect(confirm(10, {...device,host:"localhost:5173"})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
   expect(gPrivate).not.toHaveBeenCalled();
   const responses = await Promise.allSettled([confirm(10),confirm(10)]);
   expect(responses[0]).toMatchObject({ status:"fulfilled", value:{ok:true,outcome_summary:"FILLED"} });

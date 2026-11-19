@@ -45,15 +45,16 @@ export class TrustedDevices {
     return this.db.prepare("SELECT digest FROM browser_devices WHERE digest=? AND expires>?").get(digest, Date.now())?.digest;
   }
 
-  bind(id, owner, device) {
+  bind(id, owner) {
     const seq = this.db.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM transcript WHERE session=?").get(owner).seq;
-    this.db.prepare("INSERT INTO browser_voice_approvals(proposal,device,min_seq,owner) VALUES (?,?,?,?)").run(id, device, seq, owner);
+    // Older SQLite files require the device column. New approvals are scoped to the voice session.
+    this.db.prepare("INSERT INTO browser_voice_approvals(proposal,device,min_seq,owner) VALUES (?,?,?,?)").run(id, owner, seq, owner);
   }
 
-  confirm(id, owner, device, seq) {
+  confirm(id, owner, seq) {
     const row = this.db.prepare(`SELECT a.*, p.terms FROM browser_voice_approvals a JOIN browser_proposals p ON p.id=a.proposal
-      WHERE a.proposal=? AND a.owner=? AND a.device=?`).get(id, owner, device);
-    if (!row) throw new TradeError("DEVICE_REQUIRED", "Prepare this order on your paired device.", 403);
+      WHERE a.proposal=? AND a.owner=?`).get(id, owner);
+    if (!row) throw new TradeError("CONFIRMATION_REQUIRED", "Prepare this order again in the active voice session.", 409);
     if (row.confirmation_seq === seq) return;
     const entries = this.repo.transcript(owner).filter(entry => entry.role !== "tool");
     const answer = entries.at(-1);

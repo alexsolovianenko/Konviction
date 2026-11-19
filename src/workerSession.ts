@@ -34,7 +34,7 @@ const captureUnavailable = JSON.stringify({
     code: 'not_available',
     message: 'Saving intents is not available here.',
     agent_hint:
-      'Say saving intents is not available here. For a sandbox buy use prepare_sandbox_buy; the user approves it on screen. Do not say anything was saved or placed.',
+      'Say saving intents is not available here. For a sandbox buy use prepare_sandbox_buy; read the order and wait for spoken confirmation. Do not say anything was saved or placed.',
   },
 });
 

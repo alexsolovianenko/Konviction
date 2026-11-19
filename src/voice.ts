@@ -338,6 +338,7 @@ export class Voice {
       const conversation = await Conversation.startSession({
         signedUrl: credentials.signed_url,
         connectionType: 'websocket',
+        dynamicVariables: {secret__trade_session_token: workerTrading ? (credentials.session_token || 'quotes-only') : 'local'},
         clientTools: {
           ...session.tools,
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
@@ -392,11 +393,13 @@ export class Voice {
       return JSON.stringify({ok:false, error, say});
     }
     const { quantity, outcome } = result.proposal;
-    const paired = result.availability.voice_authorized && result.availability.voice_confirmation_supported;
+    const canConfirm = result.availability.call_confirmation_supported || (result.availability.voice_authorized && result.availability.voice_confirmation_supported);
     const say = !result.availability.execution_enabled ? 'Approval is unavailable.'
-      : paired && result.proposal.voice_readback ? result.proposal.voice_readback
-      : 'Ready for approval on screen.';
-    return JSON.stringify({ok:true, quantity, outcome, say});
+      : canConfirm && result.proposal.voice_readback ? result.proposal.voice_readback
+      : 'Call confirmation unavailable.';
+    const confirmationTool = workerTrading ? 'confirm_hosted_sandbox_buy' : 'confirm_sandbox_buy';
+    return JSON.stringify({ok:true, quantity, outcome, say, confirmation_tool:confirmationTool,
+      ...(workerTrading && {proposal_id:result.proposal.proposal_id})});
   }
 
   async prepareRemainderOnScreen() {
@@ -429,6 +432,8 @@ export class Voice {
       this.currentProposal = result.proposal ?? null;
       this.proposalRequest = result.proposal ? {...params} : null;
       this.update({remainderQuantity:this.remainder?.quantity ?? null, proposal:this.currentProposal, availability:result.availability ?? null, tradeMessage:result.message ?? ''});
+      if (workerTrading && result.proposal?.voice_readback)
+        void this.watchOrderResult(session, result.proposal);
       return result;
     } finally {
       this.preparing = false;
@@ -462,8 +467,9 @@ export class Voice {
     const proposal = this.currentProposal;
     if (!this.active || !session) return {ok:false, say:'Session ended.'};
     if (!proposal) return {ok:false, say:'No pending proposal.'};
-    if (!(session instanceof LocalSession) || !proposal.voice_readback)
-      return {ok:false, say:'Approve the order on screen.'};
+    if (!(session instanceof LocalSession))
+      return {ok:false, confirmation_tool:'confirm_hosted_sandbox_buy', proposal_id:proposal.proposal_id, say:'', action:'Use the hosted confirmation tool for this proposal.'};
+    if (!proposal.voice_readback) return {ok:false, say:'Call confirmation unavailable.'};
     if (this.preparing || this.approving) return {ok:false, say:'Checking your order.'};
     this.approving = true;
     try {
@@ -541,18 +547,23 @@ export class Voice {
     this.update({remainderQuantity:this.remainder?.quantity ?? null, tradeMessage:(result.say ?? result.message ?? '') + exchange, ...(clear && {proposal:null})});
   }
 
-  async approve(proposalId: string,pin: string) {
-    const session = this.session;
-    if (!session || !this.active || this.approving || this.preparing || this.currentProposal?.proposal_id !== proposalId) return;
-    this.approving = true;
-    try {
-      const result = await tradingRequest('approve',{proposal_id:proposalId,pin},session.credentials.session_token);
-      if (session !== this.session) return;
-      this.showExchangeResult(result);
-      if (this.remainder) this.conversation?.sendContextualUpdate?.(
-        "Typed approval result: " + result.say + " Wait for the caller to request a remainder proposal.");
-    } finally {
-      this.approving = false;
+  private async watchOrderResult(session: WorkerSession | LocalSession, proposal: Proposal) {
+    const until = Date.parse(proposal.expires_at) + 45000;
+    const current = () => this.active && this.session === session && this.currentProposal === proposal;
+    while (current() && Date.now() < until) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (!current()) return;
+      const result = await tradingRequest('order-result', {proposal_id:proposal.proposal_id}, session.credentials.session_token);
+      if (!current()) return;
+      if (result.outcome_summary) {
+        this.showExchangeResult(result);
+        return;
+      }
+      if (['INACTIVE','EXPIRED','SUPERSEDED','UNKNOWN_PROPOSAL','UNAUTHORIZED','LOCKED'].includes(result.error)) {
+        this.currentProposal = null;
+        this.update({proposal:null, tradeMessage:result.message ?? 'Request a fresh quote.'});
+        return;
+      }
     }
   }
 

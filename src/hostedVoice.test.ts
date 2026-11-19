@@ -1,0 +1,42 @@
+import {expect, it, vi} from 'vitest';
+import {Voice} from './voice';
+import {tradingRequest} from './browserTrading';
+
+const {start, trade} = vi.hoisted(() => ({start:vi.fn(), trade:vi.fn()}));
+vi.mock('@elevenlabs/client', () => ({Conversation:{startSession:start}}));
+vi.mock('./browserTrading', () => ({workerTrading:true, tradingRequest:trade}));
+
+it('routes hosted confirmations to the call and reads the recorded exchange result', async () => {
+  vi.useFakeTimers();
+  const original = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[]})}});
+  const update = vi.fn();
+  const voice = new Voice(update, vi.fn());
+  const readback = 'Buy one yes contract. Say confirm.';
+  const credentials = {signed_url:'wss://mock.test/?conversation_id=conv_1', session_token:'test-session', session_id:'1'};
+  trade.mockImplementation(async (path:string) => {
+    if(path === 'session') return {ok:true,...credentials};
+    if(path === 'proposals') return {ok:true, availability:{execution_enabled:true,call_confirmation_supported:true,voice_authorized:false},
+      proposal:{proposal_id:'proposal-1',voice_readback:readback,expires_at:new Date(Date.now()+60_000).toISOString()}};
+    if(path === 'order-result') return {ok:true,outcome_summary:'FILLED',order_id:'order-1',say:'One contract filled.'};
+    return {ok:true};
+  });
+  start.mockResolvedValue({endSession:vi.fn()});
+  try {
+    await voice.start();
+    const opts = start.mock.calls[0]![0];
+    expect(opts.dynamicVariables.secret__trade_session_token).toBe(credentials.session_token);
+    const reply = JSON.parse(await opts.clientTools.prepare_sandbox_buy({quantity:1}));
+    expect(reply).toMatchObject({proposal_id:'proposal-1', confirmation_tool:'confirm_hosted_sandbox_buy',say:readback});
+    expect(JSON.stringify(reply)).not.toContain(credentials.session_token);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(tradingRequest).toHaveBeenCalledWith('order-result',{proposal_id:'proposal-1'},credentials.session_token);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({proposal:null,tradeMessage:expect.stringContaining('One contract filled.')}));
+    expect(trade.mock.calls.map(([path])=>path)).toEqual(['session','proposals','order-result']);
+  } finally {
+    await voice.stop();
+    if(original) Object.defineProperty(navigator,'mediaDevices',original);
+    else Reflect.deleteProperty(navigator,'mediaDevices');
+    vi.useRealTimers();
+  }
+});

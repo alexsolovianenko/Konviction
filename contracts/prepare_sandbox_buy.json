@@ -1,7 +1,7 @@
 {
   "type": "client",
   "name": "prepare_sandbox_buy",
-  "description": "Prepare a sandbox buy for typed PIN approval. Send exactly one of quantity or budget_usd. The server sizes dollar budgets.",
+  "description": "Prepare a sandbox buy for spoken confirmation. Send exactly one of quantity or budget_usd. The server sizes dollar budgets.",
   "expects_response": true,
   "response_timeout_secs": 20,
   "parameters": {

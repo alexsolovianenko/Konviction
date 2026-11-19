@@ -5,6 +5,7 @@ export type Availability = {
   message: string;
   voice_confirmation_supported?: boolean;
   voice_authorized?: boolean;
+  call_confirmation_supported?: boolean;
 };
 export type Proposal = {
   proposal_id: string;
@@ -25,7 +26,7 @@ export const workerTrading = import.meta.env["VITE_WORKER_TRADING"] === true;
 export const PIN_PATTERN = /^\d{4,8}$/;
 
 export async function tradingRequest(
-  path: "availability" | "session" | "proposals" | "approve" | "end" | "portfolio" | "pair" | "voice-confirm",
+  path: "availability" | "session" | "proposals" | "order-result" | "end" | "portfolio" | "pair" | "voice-confirm",
   body?: object,
   token?: string,
   options: { keepalive?: boolean; idempotencyKey?: string } = {},
@@ -41,7 +42,7 @@ export async function tradingRequest(
         ...(token && { Authorization: "Bearer " + token }),
       },
       ...(body && { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout((path === "approve" || path === "voice-confirm") ? 30000 : 18000),
+      signal: AbortSignal.timeout((path === "voice-confirm") ? 30000 : 18000),
     });
     const result = await response.json();
     if (typeof result?.ok === "boolean") return { ...result, message: result.message ?? result.error?.message };
@@ -51,7 +52,7 @@ export async function tradingRequest(
   return {
     ok: false,
     message:
-      (path === "approve" || path === "voice-confirm")
+      (path === "voice-confirm")
         ? "Approval result unavailable. Check open trades before trying again."
         : "Sandbox trading service unavailable.",
   };

@@ -143,8 +143,6 @@ export function PredictionPanel() {
         message={view.tradeMessage}
         remainderQuantity={view.remainderQuantity}
         retry={() => voice.prepareRemainderOnScreen()}
-        pair={(pin) => voice.pairDevice({pin})}
-        approve={(id, pin) => voice.approve(id, pin)}
       />}
     </section>
   );
