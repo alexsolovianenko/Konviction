@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://call-to-predict.local/contracts/intent.schema.json",
   "title": "CapturedIntent",
-  "description": "Capture record for the Gemini browser voice demo. An intent is a record of what the user asked for. It is never an order: nothing is sent to Gemini and `status` is always `captured`. Orders are prediction contracts only: place_order, cancel_order and order_status intents always have venue gemini_prediction. Only a market_query audit intent may carry gemini_spot, which is read-only context. The backend mints `id` and `created_at`; every other field comes from a validated tool call (see contracts/tools.json and contracts/api.yaml). Contract revision 2.0.0.",
+  "description": "Capture record for the Gemini prediction market voice assistant. An intent is a record of what the user asked for, stored for later approval. It is never an order: capturing sends nothing to Gemini and `status` is always `captured`. Orders are prediction contracts only: place_order, cancel_order and order_status intents always have venue gemini_prediction. market_query intents and venue gemini_spot are legacy: earlier revisions and the legacy test mode wrote them, the live application does not. The backend mints `id` and `created_at`; every other field comes from a validated tool call (see contracts/tools.json and contracts/api.yaml). Contract revision 3.0.0.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -44,12 +44,12 @@
     "venue": {
       "type": "string",
       "enum": ["gemini_prediction", "gemini_spot"],
-      "description": "gemini_prediction for every place_order, cancel_order and order_status intent. gemini_spot appears only on market_query audit intents for read-only spot lookups. Never null."
+      "description": "gemini_prediction for every place_order, cancel_order and order_status intent. gemini_spot appears only on legacy market_query rows. Never null."
     },
     "instrument": {
       "type": "string",
       "maxLength": 64,
-      "description": "place_order: a prediction contract ticker from the simulated catalog, upper case, such as FED-CUT-DEC26. market_query: the resolved instrument for get_orderbook (a contract ticker or a spot pair), or, for search_markets, the search text trimmed and cut to its first 64 characters. cancel_order and order_status: the contract instrument when known, otherwise the empty string (order identified by reference only)."
+      "description": "place_order: the prediction contract's symbol exactly as search_markets returned it (events[].contracts[].symbol). cancel_order and order_status: the contract symbol when known, otherwise the empty string (order identified by reference only). market_query (legacy): the resolved instrument or the first 64 characters of the search text."
     },
     "side": {
       "type": ["string", "null"],
@@ -107,7 +107,7 @@
           },
           "instrument": {
             "minLength": 1,
-            "pattern": "^[A-Z0-9][A-Z0-9-]*$"
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
           },
           "side": {
             "type": "string",
