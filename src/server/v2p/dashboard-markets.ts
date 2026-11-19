@@ -46,8 +46,8 @@ export function dashboardMarketsFrom(data: unknown): MarketEvent[] | null {
 
 let cache: { at: number; value: MarketsSnapshot } | undefined;
 
-export async function dashboardMarkets(): Promise<MarketsSnapshot> {
-  if (cache && Date.now() - cache.at < 15_000) return cache.value;
+export async function dashboardMarkets(fresh = false): Promise<MarketsSnapshot> {
+  if (!fresh && cache && Date.now() - cache.at < 15_000) return cache.value;
   const result = await gPublic("/v1/prediction-markets/events", { status: "active", limit: 100 });
   const events = result.ok ? dashboardMarketsFrom(result.data) : null;
   const value: MarketsSnapshot = {

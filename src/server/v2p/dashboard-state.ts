@@ -8,7 +8,7 @@ import { anchorPending, receiptAddress, receiptBalanceSol } from "./receipts";
 import { corsHeaders, env, json, LIMITS, maskPhone, num } from "./util";
 
 // Bump on every backend change so the deployed revision can be checked read-only from the dashboard feed.
-export const BACKEND_REVISION = "2026-11-19.2-gemini-fetch-workers-fix";
+export const BACKEND_REVISION = "2026-11-19.3-browser-voice-approval";
 
 let live: { at: number; value: unknown } | null = null;
 

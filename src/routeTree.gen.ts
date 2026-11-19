@@ -10,13 +10,27 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as OpenTradesRouteImport } from './routes/open-trades'
+import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as ApiPublicDashboardStateRouteImport } from './routes/api/public/dashboard-state'
 import { Route as ApiPublicElInitRouteImport } from './routes/api/public/el-init'
 import { Route as ApiPublicAgentToolsToolRouteImport } from './routes/api/public/agent-tools/$tool'
+import { Route as ApiPublicBrowserTradingActionRouteImport } from './routes/api/public/browser-trading/$action'
+import { Route as ApiPublicMarketToolsToolRouteImport } from './routes/api/public/market-tools/$tool'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OpenTradesRoute = OpenTradesRouteImport.update({
+  id: '/open-trades',
+  path: '/open-trades',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VoiceRoute = VoiceRouteImport.update({
+  id: '/voice',
+  path: '/voice',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicDashboardStateRoute = ApiPublicDashboardStateRouteImport.update({
@@ -34,52 +48,92 @@ const ApiPublicAgentToolsToolRoute = ApiPublicAgentToolsToolRouteImport.update({
   path: '/api/public/agent-tools/$tool',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicBrowserTradingActionRoute =
+  ApiPublicBrowserTradingActionRouteImport.update({
+    id: '/api/public/browser-trading/$action',
+    path: '/api/public/browser-trading/$action',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicMarketToolsToolRoute =
+  ApiPublicMarketToolsToolRouteImport.update({
+    id: '/api/public/market-tools/$tool',
+    path: '/api/public/market-tools/$tool',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/open-trades': typeof OpenTradesRoute
+  '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
+  '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
+  '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/open-trades': typeof OpenTradesRoute
+  '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
+  '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
+  '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/open-trades': typeof OpenTradesRoute
+  '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/el-init': typeof ApiPublicElInitRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
+  '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
+  '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/open-trades'
+    | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
     | '/api/public/agent-tools/$tool'
+    | '/api/public/browser-trading/$action'
+    | '/api/public/market-tools/$tool'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/open-trades'
+    | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
     | '/api/public/agent-tools/$tool'
+    | '/api/public/browser-trading/$action'
+    | '/api/public/market-tools/$tool'
   id:
     | '__root__'
     | '/'
+    | '/open-trades'
+    | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/el-init'
     | '/api/public/agent-tools/$tool'
+    | '/api/public/browser-trading/$action'
+    | '/api/public/market-tools/$tool'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  OpenTradesRoute: typeof OpenTradesRoute
+  VoiceRoute: typeof VoiceRoute
   ApiPublicDashboardStateRoute: typeof ApiPublicDashboardStateRoute
   ApiPublicElInitRoute: typeof ApiPublicElInitRoute
   ApiPublicAgentToolsToolRoute: typeof ApiPublicAgentToolsToolRoute
+  ApiPublicBrowserTradingActionRoute: typeof ApiPublicBrowserTradingActionRoute
+  ApiPublicMarketToolsToolRoute: typeof ApiPublicMarketToolsToolRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -89,6 +143,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/open-trades': {
+      id: '/open-trades'
+      path: '/open-trades'
+      fullPath: '/open-trades'
+      preLoaderRoute: typeof OpenTradesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/voice': {
+      id: '/voice'
+      path: '/voice'
+      fullPath: '/voice'
+      preLoaderRoute: typeof VoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/dashboard-state': {
@@ -112,14 +180,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAgentToolsToolRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/browser-trading/$action': {
+      id: '/api/public/browser-trading/$action'
+      path: '/api/public/browser-trading/$action'
+      fullPath: '/api/public/browser-trading/$action'
+      preLoaderRoute: typeof ApiPublicBrowserTradingActionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/market-tools/$tool': {
+      id: '/api/public/market-tools/$tool'
+      path: '/api/public/market-tools/$tool'
+      fullPath: '/api/public/market-tools/$tool'
+      preLoaderRoute: typeof ApiPublicMarketToolsToolRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  OpenTradesRoute: OpenTradesRoute,
+  VoiceRoute: VoiceRoute,
   ApiPublicDashboardStateRoute: ApiPublicDashboardStateRoute,
   ApiPublicElInitRoute: ApiPublicElInitRoute,
   ApiPublicAgentToolsToolRoute: ApiPublicAgentToolsToolRoute,
+  ApiPublicBrowserTradingActionRoute: ApiPublicBrowserTradingActionRoute,
+  ApiPublicMarketToolsToolRoute: ApiPublicMarketToolsToolRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

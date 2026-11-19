@@ -7,6 +7,7 @@ if (!/^https:\/\//.test(base)) {
   process.exit(2);
 }
 const secret = process.env.TOOL_SHARED_SECRET ?? "";
+const EXPECTED_REVISION = "2026-11-19.3-browser-voice-approval";
 const results = [];
 const record = (name, pass, detail) => {
   results.push({ name, pass });
@@ -39,8 +40,24 @@ if (dash.json) {
   console.log(`      environment=${dash.json.environment}  execution_enabled=${dash.json.execution_enabled}`);
   console.log(`      gemini configured=${a.configured}  terms_accepted=${a.terms_accepted}  usd_available=${a.usd_available}`);
   if (a.balance_error || a.terms_error) console.log(`      gemini errors: ${a.balance_error ?? ""} ${a.terms_error ?? ""}`);
-  record("execution is disabled", dash.json.execution_enabled === false, `execution_enabled=${dash.json.execution_enabled}`);
+  // Informational: the team decides whether execution is on (orders still need typed-PIN approval).
+  console.log(`      execution_enabled=${dash.json.execution_enabled} (team setting; not a pass/fail check)`);
+  record("integrated backend deployed", dash.json.backend_revision === EXPECTED_REVISION,
+    `backend_revision=${dash.json.backend_revision ?? "none"} (expected ${EXPECTED_REVISION})`);
 }
+
+// Browser voice integration — all read-only. Never calls proposals, approve or execute_trade.
+const page = await fetch(base + "/voice", { redirect: "manual" });
+const html = await page.text();
+record("/voice page served", page.status === 200 && html.includes("Voice workspace"), `HTTP ${page.status}`);
+const sm = await call("/api/public/market-tools/search_markets?query=btc");
+record("search_markets returns Gemini Sandbox events", sm.status === 200 && sm.json?.ok === true && sm.json?.source === "Gemini Sandbox",
+  `HTTP ${sm.status} events=${sm.json?.events?.length ?? 0} ${sm.json?.error ?? ""}`);
+const av = await call("/api/public/browser-trading/availability");
+record("approval availability reported", av.status === 200 && typeof av.json?.execution_enabled === "boolean",
+  `approval_enabled=${av.json?.execution_enabled} — ${av.json?.message ?? ""}`);
+const anonApprove = await call("/api/public/browser-trading/approve", { body: { proposal_id: "00000000-0000-4000-8000-000000000000", pin: "0000" } });
+record("approve without a verified session is refused", anonApprove.status === 401, `HTTP ${anonApprove.status} ${anonApprove.json?.error ?? ""}`);
 
 // 2. Tools reject unauthenticated calls.
 const anon = await call("/api/public/agent-tools/find_market", { body: { query: "bitcoin" } });
