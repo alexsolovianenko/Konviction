@@ -17,7 +17,8 @@ const empty = (): State => ({ version: 1, guards: {}, intents: {}, orders: {} })
 
 const backend = {
   async read() {
-    const blob = await get(path, { access: "private", useCache: false });
+    // A compressed response can have a weak ETag, which cannot authorize an ifMatch write.
+    const blob = await get(path, { access: "private", useCache: false, headers: { "Accept-Encoding": "identity" } });
     if (!blob) return null;
     if (blob.statusCode !== 200 || !blob.blob.etag) throw new Error("Ledger read unavailable");
     const state = await new Response(blob.stream).json() as State;
