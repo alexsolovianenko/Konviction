@@ -12,7 +12,7 @@ import { db, executionEnabled, logActivity } from "./db";
 import { createReceipt } from "./receipts";
 import {
   cents, corsHeaders, envStr, feeEstimate, hashPhone, json, localHour, LIMITS, num,
-  randomCode, round2, safeEqual, speakTime, toolAuthorized, usd,
+  randomCode, round2, secretEqual, speakTime, toolAuthorized, usd,
 } from "./util";
 
 // deno-lint-ignore no-explicit-any
@@ -27,6 +27,14 @@ function conversationOf(b: Body): string | null {
   return c && !c.startsWith("{{") ? c : null;
 }
 const err = (code: string, message: string, extra: Body = {}) => json({ ok: false, error: code, message, ...extra });
+
+// Any field that could carry the PIN is dropped before logging (the activity table feeds the public dashboard).
+const SECRET_FIELDS = /pin|passcode|secret|password|token/i;
+function redact(b: Body): Body {
+  const out: Body = {};
+  for (const [k, v] of Object.entries(b ?? {})) out[k] = SECRET_FIELDS.test(k) ? "[redacted]" : v;
+  return out;
+}
 
 // ---------------------------------------------------------------- find_market
 
@@ -267,6 +275,12 @@ async function executeTrade(b: Body) {
   const code = String(b.intent_code ?? "").toUpperCase().trim();
   const pin = String(b.pin ?? b.spoken_pin ?? "").replace(/\D/g, "");
   if (!code) return err("BAD_INPUT", "intent_code is required");
+  // Approval must come from the same ElevenLabs conversation that prepared the trade.
+  // conversation_id is an ElevenLabs system dynamic variable, so the LLM cannot set it.
+  const conversationId = conversationOf(b);
+  if (!conversationId) {
+    return err("UNVERIFIED_CALLER", "This request isn't tied to a live call, so nothing was placed.");
+  }
 
   if (!(await executionEnabled())) {
     return err("EXECUTION_DISABLED", "Trading is switched off right now. Nothing was placed.");
@@ -278,7 +292,7 @@ async function executeTrade(b: Body) {
     return err("LOCKED", "Too many wrong PINs. Trading is locked for this caller for 15 minutes. Nothing was placed.");
   }
   const expectedPin = envStr("DEMO_PIN");
-  if (!expectedPin || !safeEqual(pin, expectedPin)) {
+  if (!/^\d{4,8}$/.test(expectedPin) || !(await secretEqual(pin, expectedPin))) {
     const failures = (cRow?.pin_failures ?? 0) + 1;
     const lock = failures >= 3 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
     await db.from("callers").upsert({ phone: caller, pin_failures: lock ? 0 : failures, locked_until: lock });
@@ -290,7 +304,8 @@ async function executeTrade(b: Body) {
   // Atomic single use: PROPOSED -> EXECUTING exactly once, only if unexpired and for this caller.
   const { data: claimed, error: claimErr } = await db.from("intents")
     .update({ status: "EXECUTING", updated_at: new Date().toISOString() })
-    .eq("code", code).eq("caller", caller).eq("status", "PROPOSED").gt("expires_at", new Date().toISOString())
+    .eq("code", code).eq("caller", caller).eq("conversation_id", conversationId)
+    .eq("status", "PROPOSED").gt("expires_at", new Date().toISOString())
     .select("*");
   if (claimErr || !claimed || claimed.length !== 1) {
     await db.from("intents").update({ status: "EXPIRED" }).eq("code", code).eq("status", "PROPOSED").lte("expires_at", new Date().toISOString());
@@ -383,7 +398,9 @@ async function executeTrade(b: Body) {
   const say: Record<string, string> = {
     FILLED: `Filled: ${filledQty} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}.`,
     PARTIAL: `Partly filled: ${filledQty} of ${it.quantity} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}. The rest was cancelled, not filled.`,
-    NOT_FILLED: `Gemini accepted the order but nothing filled at that price, so it was cancelled. No money was spent and no position was opened.`,
+    NOT_FILLED: String(o?.status ?? "").toLowerCase() === "cancelled"
+      ? `Gemini accepted the order but nothing filled at that price, so it was cancelled. No money was spent and no position was opened.`
+      : `Gemini accepted the order${o?.orderId ? ` (order ${o.orderId})` : ""} but reports nothing filled yet (status: ${o?.status ?? "unknown"}). Do NOT say it filled or was cancelled; offer to check the portfolio.`,
     PENDING_UNKNOWN: `Gemini didn't answer in time, so the result is unknown. Do NOT say it filled or failed. Say you'll check, and the caller can ask for their portfolio in a minute.`,
     EXCHANGE_REJECTED: `Gemini rejected the order, so nothing was placed.`,
   };
@@ -447,7 +464,7 @@ async function getPortfolio(_b: Body) {
 
 export async function handleAgentTools(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (!toolAuthorized(req)) return json({ ok: false, error: "UNAUTHORIZED" }, 401);
+  if (!(await toolAuthorized(req))) return json({ ok: false, error: "UNAUTHORIZED" }, 401);
   const tool = new URL(req.url).pathname.split("/").filter(Boolean).pop();
   let body: Body = {};
   try { body = await req.json(); } catch { /* empty body ok */ }
@@ -464,7 +481,7 @@ export async function handleAgentTools(req: Request): Promise<Response> {
     const out = await res.clone().json().catch(() => null);
     await logActivity("TOOL_" + tool.toUpperCase(), callerOf(body),
       `${tool} → ${out?.error ?? out?.outcome_summary ?? (out?.ok ? "ok" : "?")} (${Date.now() - started} ms)`,
-      { input: { ...body, pin: body.pin ? "••••" : undefined }, output: out });
+      { input: redact(body), output: out });
     return res;
   } catch (e) {
     console.error(e);

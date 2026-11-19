@@ -16,9 +16,13 @@ export async function getSetting<T>(key: string, fallback: T): Promise<T> {
   return (data?.value as T) ?? fallback;
 }
 
+/**
+ * Fail closed: orders are sent only when the EXECUTION_ENABLED secret is explicitly "true"
+ * AND the settings kill switch is not false. A missing or misspelled secret disables trading.
+ */
 export async function executionEnabled(): Promise<boolean> {
-  if ((env("EXECUTION_ENABLED") ?? "true").toLowerCase() === "false") return false;
-  return (await getSetting<boolean>("execution_enabled", true)) !== false;
+  if ((env("EXECUTION_ENABLED") ?? "").trim().toLowerCase() !== "true") return false;
+  return (await getSetting<boolean>("execution_enabled", false)) === true;
 }
 
 export async function touchCaller(phone: string): Promise<{ returning: boolean; callCount: number }> {

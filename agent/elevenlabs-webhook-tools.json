@@ -1,0 +1,91 @@
+{
+  "_readme": "ElevenLabs webhook (server) tools for Voice-to-Predict. POST each entry of `tools` to https://api.elevenlabs.io/v1/convai/tools as {\"tool_config\": <entry>}, after replacing __BASE_URL__ with the deployed app origin and __TOOL_SECRET_ID__ with the id of the ElevenLabs workspace secret that holds TOOL_SHARED_SECRET. caller and conversation_id come from ElevenLabs system dynamic variables, never from the LLM. The PIN is the only spoken credential and the backend redacts it from logs.",
+  "tools": [
+    {
+      "type": "webhook",
+      "name": "find_market",
+      "description": "Search open Gemini Sandbox prediction contracts. Call this before preparing any buy. Returns up to 4 matches with instrument_symbol, event_ticker and live YES/NO prices.",
+      "response_timeout_secs": 20,
+      "api_schema": {
+        "url": "__BASE_URL__/api/public/agent-tools/find_market",
+        "method": "POST",
+        "request_headers": { "X-Tool-Secret": { "secret_id": "__TOOL_SECRET_ID__" } },
+        "request_body_schema": {
+          "type": "object",
+          "required": ["query"],
+          "properties": {
+            "query": { "type": "string", "description": "What the caller wants to bet on, in their words, e.g. 'Bitcoin above 97,000 at 4 PM'." },
+            "expiry_hint": { "type": "string", "description": "Optional time words the caller used, e.g. 'today 4pm' or 'next'." },
+            "caller": { "type": "string", "dynamic_variable": "system__caller_id" },
+            "conversation_id": { "type": "string", "dynamic_variable": "system__conversation_id" }
+          }
+        }
+      }
+    },
+    {
+      "type": "webhook",
+      "name": "prepare_trade",
+      "description": "Price and save a trade proposal (nothing is sent to the exchange). Use instrument_symbol and event_ticker exactly as returned by find_market or get_portfolio. Give either budget_usd or quantity. Read the returned readback to the caller word for word, then ask for their PIN.",
+      "response_timeout_secs": 20,
+      "api_schema": {
+        "url": "__BASE_URL__/api/public/agent-tools/prepare_trade",
+        "method": "POST",
+        "request_headers": { "X-Tool-Secret": { "secret_id": "__TOOL_SECRET_ID__" } },
+        "request_body_schema": {
+          "type": "object",
+          "required": ["side", "outcome", "instrument_symbol", "event_ticker"],
+          "properties": {
+            "side": { "type": "string", "enum": ["buy", "sell"], "description": "buy or sell." },
+            "outcome": { "type": "string", "enum": ["yes", "no"], "description": "The outcome the caller is betting on." },
+            "instrument_symbol": { "type": "string", "description": "Exact instrument_symbol from find_market or get_portfolio." },
+            "event_ticker": { "type": "string", "description": "Exact event_ticker from find_market or get_portfolio." },
+            "budget_usd": { "type": "number", "description": "Dollar amount the caller wants to spend (buys only). Omit if they gave a contract count." },
+            "quantity": { "type": "number", "description": "Number of contracts, if the caller gave a count instead of dollars." },
+            "max_price": { "type": "number", "description": "Optional price cap per contract in dollars (0.47 = 47 cents), only if the caller stated one." },
+            "caller": { "type": "string", "dynamic_variable": "system__caller_id" },
+            "conversation_id": { "type": "string", "dynamic_variable": "system__conversation_id" }
+          }
+        }
+      }
+    },
+    {
+      "type": "webhook",
+      "name": "execute_trade",
+      "description": "Send the prepared order to Gemini Sandbox. Call ONLY after you read the readback and the caller explicitly said yes and spoke their PIN in this same call. Report exactly the returned `say` text. Never claim a fill unless outcome_summary is FILLED or PARTIAL.",
+      "response_timeout_secs": 30,
+      "api_schema": {
+        "url": "__BASE_URL__/api/public/agent-tools/execute_trade",
+        "method": "POST",
+        "request_headers": { "X-Tool-Secret": { "secret_id": "__TOOL_SECRET_ID__" } },
+        "request_body_schema": {
+          "type": "object",
+          "required": ["intent_code", "pin"],
+          "properties": {
+            "intent_code": { "type": "string", "description": "intent_code returned by prepare_trade." },
+            "pin": { "type": "string", "description": "The digits of the PIN the caller just spoke. Never repeat it aloud." },
+            "caller": { "type": "string", "dynamic_variable": "system__caller_id" },
+            "conversation_id": { "type": "string", "dynamic_variable": "system__conversation_id" }
+          }
+        }
+      }
+    },
+    {
+      "type": "webhook",
+      "name": "get_portfolio",
+      "description": "Read positions, open orders, recent settlements and cash from Gemini Sandbox. Only speak numbers present in the result.",
+      "response_timeout_secs": 20,
+      "api_schema": {
+        "url": "__BASE_URL__/api/public/agent-tools/get_portfolio",
+        "method": "POST",
+        "request_headers": { "X-Tool-Secret": { "secret_id": "__TOOL_SECRET_ID__" } },
+        "request_body_schema": {
+          "type": "object",
+          "properties": {
+            "caller": { "type": "string", "dynamic_variable": "system__caller_id" },
+            "conversation_id": { "type": "string", "dynamic_variable": "system__conversation_id" }
+          }
+        }
+      }
+    }
+  ]
+}

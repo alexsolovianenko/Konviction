@@ -144,7 +144,11 @@ export async function gPrivate(
 ): Promise<GeminiResult> {
   const method = opts.method ?? "POST";
   const r = await signedOnce(method, path, fields, opts.query ?? {});
-  if (isInvalidNonce(r)) return signedOnce(method, path, fields, opts.query ?? {});
+  if (isInvalidNonce(r)) {
+    // Nonces are whole seconds; a same-second retry would reuse the rejected nonce. Wait for the next second.
+    await new Promise((res) => setTimeout(res, 1100 - (Date.now() % 1000)));
+    return signedOnce(method, path, fields, opts.query ?? {});
+  }
   return r;
 }
 
