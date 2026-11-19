@@ -69,7 +69,7 @@ export async function fetchSignedUrl(fetchImpl: typeof fetch = fetch): Promise<S
     const res = await fetchImpl(url, { headers: { "xi-api-key": apiKey, Accept: "application/json" }, redirect: "manual", signal: ctrl.signal });
     if (!res.ok) {
       console.error(JSON.stringify({ event: "elevenlabs_signed_url_failed", status: res.status }));
-      return { error: "ElevenLabs is unavailable right now." };
+      return { error: res.status === 404 ? "ElevenLabs cannot find this agent with the configured key (HTTP 404)." : `ElevenLabs rejected the signed URL request (HTTP ${res.status}).` };
     }
     const data = await res.json();
     const signed = new URL(String(data?.signed_url ?? ""));

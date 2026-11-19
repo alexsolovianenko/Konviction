@@ -40,6 +40,8 @@ const captureUnavailable = JSON.stringify({
 
 export async function startCredentials(): Promise<Credentials> {
   const result = await tradingRequest('session', {});
+  if (result.ok && result.voice_only === true && typeof result.signed_url === 'string')
+    return { session_id: '', session_token: '', signed_url: result.signed_url };
   if (!result.ok || typeof result.signed_url !== 'string' || typeof result.session_token !== 'string')
     throw new Error(result.message || 'Voice service unavailable');
   return { session_id: result.session_id, session_token: result.session_token, signed_url: result.signed_url };
@@ -83,6 +85,7 @@ export class Session {
     if (this.closed) return;
     this.closed = true;
     // Revoke the server session so it can no longer approve anything.
+    if (!this.credentials.session_token) return;
     await tradingRequest('end', {}, this.credentials.session_token, { keepalive: true });
   }
 }

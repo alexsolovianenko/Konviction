@@ -45,3 +45,11 @@ Local HTTP operations all return JSON with cache-control no-store:
 | POST /api/trading/portfolio | Local account PIN in JSON pin field | Allowlisted account fields from sandbox active orders, positions and order history, with per-feed errors |
 
 Open Account at /dashboard to see order history and positions. The former /open-trades address redirects there. A paired browser can read its sandbox account directly. An unpaired local browser can enter the account PIN, which the UI clears after use. The local service locks PIN checks for 15 minutes after three consecutive incorrect attempts. Only same-origin loopback clients can use browser trading. The standalone public worker serves none of these local endpoints and its public dashboard omits private account data. The legacy Supabase phone integration has separate credentials and an independent database execution switch.
+
+### Vercel
+
+Use Node 24 and npm. `npm run build:vercel` creates the static site and Node function in `.vercel/output`. Vercel serves the UI and the public API from the same origin. The local launcher uses SQLite. The hosted trading routes use David’s Supabase ledger and require a private on-screen PIN.
+
+Set the production secrets in the Vercel project. Browsing markets uses public Gemini Sandbox data. Voice requires ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID from the same workspace. Private orders also require SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VOICE_SESSION_SECRET (at least 32 random characters), GEMINI_API_KEY, GEMINI_API_SECRET, and DEMO_PIN. Use the existing database with the schema in drizzle/migrations. Sandbox execution requires EXECUTION_ENABLED and the database execution switch. Redeploy after changing variables.
+
+For a rejected call, run `npm run voice:doctor -- <conversation-id>` with the server environment. Omit the ID to inspect the latest call. The command reads ElevenLabs metadata without starting a call or placing an order.

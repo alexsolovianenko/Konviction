@@ -280,7 +280,7 @@ it("shows the labelled chart and the full PIN approval for the same contract", a
   // Polling for the chart never touches a trading route.
   expect(
     fetchMock.mock.calls.every((call) =>
-      String(call[0]).startsWith("/api/public/market-tools/get_orderbook?"),
+      /^\/api\/public\/market-tools\/(get_orderbook|get_settlement_index)\?/.test(String(call[0])),
     ),
   ).toBe(true);
 });

@@ -42,38 +42,28 @@ export function AppShell({ children }: { children: ReactNode }) {
   const active = (to: string) => (to === "/" ? ["/", "/voice"].includes(path) : path.startsWith(to));
   return (
     <VoiceProvider>
-      <div data-voice-home={home} className="min-h-dvh lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)]">
-        <aside className="sticky top-0 hidden h-dvh flex-col border-r border-border bg-sidebar px-2 py-3 lg:flex">
-          <Link to="/" className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-semibold hover:bg-raised">
-            <span className="grid size-5 place-items-center rounded bg-primary text-primary-foreground">
-              <AudioLines className="size-3.5" aria-hidden />
-            </span>
-            Voice-to-Predict
+      <div data-voice-home={home} className="min-h-dvh">
+        <header className="workspace-bar">
+          <Link to="/" className="workspace-brand">
+            <AudioLines aria-hidden="true" /> Voice-to-Predict
           </Link>
-          <nav aria-label="Primary" className="mt-4 flex flex-col gap-px">
+          <nav aria-label="Primary" className="workspace-dock">
             {nav.map(({ to, label, icon: Icon }) => (
-              <Link
-                key={to}
-                to={to}
-                aria-current={active(to) ? "page" : undefined}
-                className={"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-raised " + (active(to) ? "bg-raised font-medium text-foreground" : "text-subtle")}
-              >
-                <Icon className="size-4 text-muted-foreground" aria-hidden /> {label}
+              <Link key={to} to={to} aria-current={active(to) ? "page" : undefined}>
+                <Icon size={18} aria-hidden="true" />{label}
               </Link>
             ))}
           </nav>
-          <div className="mt-auto space-y-1 px-2 text-xs text-muted-foreground">
+          <div className="workspace-feed">
+            <span>Gemini Sandbox · test funds</span>
             <ClientOnly><FeedStatus /></ClientOnly>
-            <p>Gemini Sandbox · test funds</p>
           </div>
-        </aside>
+        </header>
 
         <div className="flex min-w-0 flex-col">
-          {!home && <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
-            <div className="flex h-12 items-center gap-3 px-4 lg:px-8">
-              <Link to="/" aria-label="Voice-to-Predict home" className="grid size-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground lg:hidden">
-                <AudioLines className="size-4" aria-hidden />
-              </Link>
+          {!home && <header className="relative z-20">
+            <div className="voice-status-strip">
+
               <div className="min-w-0 flex-1"><StatusBubble /></div>
             </div>
           </header>}
@@ -83,19 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         </div>
 
-        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-border bg-sidebar pb-[env(safe-area-inset-bottom)] lg:hidden">
-          {nav.map(({ to, label, icon: Icon }) => (
-            <Link
-              key={to}
-              to={to}
-              aria-current={active(to) ? "page" : undefined}
-              className={"flex min-w-0 flex-col items-center gap-1 px-1 py-2 text-[11px] font-medium " + (active(to) ? "text-foreground" : "text-muted-foreground")}
-            >
-              <Icon className={"size-5 " + (active(to) ? "text-accent-foreground" : "")} aria-hidden />
-              <span className="truncate">{label}</span>
-            </Link>
-          ))}
-        </nav>
+
       </div>
     </VoiceProvider>
   );

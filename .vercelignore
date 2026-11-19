@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+data/
+*.sqlite*
+*.db
+*.key
+*.pem
+.git/
+.lovable/
+.wrangler/
+.dev.vars
+dist/
+.output/

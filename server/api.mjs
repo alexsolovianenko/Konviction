@@ -34,10 +34,14 @@ async function sign(repo, { apiKey, agentId, upstream, clock }) {
       redirect: 'error',
       signal: AbortSignal.timeout(8000),
     });
-    if (!response.ok) throw new Error();
+    if (!response.ok) throw new ApiError('elevenlabs_unavailable', {
+      message: response.status === 404 ? 'ElevenLabs cannot find this agent with the configured key (HTTP 404).' :
+        `ElevenLabs rejected the signed URL request (HTTP ${response.status}).`,
+    });
     signed = (await response.json()).signed_url;
     if (new URL(signed).protocol !== 'wss:') throw new Error();
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError('elevenlabs_unavailable');
   }
   const now = clock(),

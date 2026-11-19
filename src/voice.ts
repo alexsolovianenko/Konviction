@@ -43,7 +43,7 @@ export const initial: VoiceView = {
 
 function voiceError(message: string, fallback = message) {
   return /(?:the )?ai agent you are trying to reach is not available/i.test(message)
-    ? "ElevenLabs could not start this call. Check the workspace’s remaining voice credits and agent availability."
+    ? "ElevenLabs reported that the agent is unavailable."
     : fallback;
 }
 
@@ -88,6 +88,9 @@ export class Voice {
     const update = (patch: Partial<VoiceView>) => {
       if (current()) this.update(patch);
     };
+    let stage = 'Microphone';
+    let callId = '';
+    const report = (message: string) => [stage, message, callId].filter(Boolean).join(' · ');
     update({ ...initial, status: 'Requesting microphone' });
     try {
       if (!navigator.mediaDevices?.getUserMedia)
@@ -96,7 +99,11 @@ export class Voice {
       stream.getTracks().forEach((track) => track.stop());
       if (!current()) return;
       update({ status: 'Connecting' });
+      stage = 'Voice credentials';
       const credentials = await startCredentials();
+      stage = 'ElevenLabs connection';
+      const signedId = new URL(credentials.signed_url).searchParams.get('conversation_id');
+      if (signedId && /^conv_[A-Za-z0-9_-]+$/.test(signedId)) callId = signedId;
       const session = new Session(
         credentials,
         (entries) => update({ entries }),
@@ -185,6 +192,8 @@ export class Voice {
       const callbacks: Callbacks = {
         onConnect: ({ conversationId }) => {
           if (!current()) return;
+          stage = 'Voice session';
+          callId = conversationId;
           session.conversationId = conversationId;
           session.sync();
           update({ status: 'Listening' });
@@ -281,12 +290,15 @@ export class Voice {
           }
         },
         onDisconnect: (details) => {
-          if (current())
-            void this.stop(
-              providerError || (details.reason === 'error' ? voiceError(details.message, 'Connection lost. Start voice to reconnect.') : ''),
-            );
+          if (!current()) return;
+          if (details.reason === 'user') { void this.stop(); return; }
+          const code = details.closeCode ?? details.context?.code;
+          const reason = details.closeReason || details.context?.reason;
+          const failed = Boolean(providerError) || details.reason === 'error' || (code !== undefined && code >= 3000);
+          const message = providerError || reason || (details.reason === 'error' ? details.message : 'Connection closed.');
+          void this.stop(failed ? report([voiceError(message), code].filter(Boolean).join(' · ')) : '');
         },
-        onError: (message) => { providerError = voiceError(message); update({error:providerError}); },
+        onError: (message) => { providerError = voiceError(message); update({error:report(providerError)}); },
       };
       const { Conversation } = await import('@elevenlabs/client');
       if (!current()) return;
@@ -332,7 +344,7 @@ export class Voice {
         ['NotAllowedError', 'PermissionDeniedError', 'SecurityError'].includes(String(error.name));
       const message = error instanceof Error ? voiceError(error.message) : 'Voice connection failed.';
       await this.stop(
-        denied ? 'Microphone blocked. Allow access for this site and start voice again.' : message,
+        report(denied ? 'Microphone blocked. Allow access for this site and start voice again.' : message),
       );
     }
   }
@@ -340,6 +352,11 @@ export class Voice {
   async prepareBuy(params: Record<string, unknown>) {
     const session = this.session;
     if (!this.active || !session) return {ok:false, message:'Start voice to prepare a proposal.'};
+    if (!session.credentials.session_token) {
+      const message = 'Market quotes are available. The private order ledger is not configured.';
+      this.update({tradeMessage:message});
+      return {ok:false, message, say:'Order approval is unavailable.'};
+    }
     const result = await tradingRequest('proposals', params, session.credentials.session_token, {idempotencyKey:crypto.randomUUID()});
     if (session !== this.session) return {ok:false, message:'Session ended.'};
     this.currentProposal = result.proposal ?? null;
@@ -476,7 +493,7 @@ export class Voice {
         status: 'Idle',
         ...(session && { entries: [...session.entries], intents: session.captured }),
         ...(results.some((r) => r.status === 'rejected') && {
-          error: 'Session closed. Could not verify final transcript sync.',
+          error: [error, 'Could not verify final transcript sync.'].filter(Boolean).join(' '),
         }),
       });
     }

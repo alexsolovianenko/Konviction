@@ -106,7 +106,9 @@ export async function availability() {
   if (!hasCredentials()) missing.push("Gemini Sandbox credentials");
   if (!pinConfigured()) missing.push("a 4-8 digit DEMO_PIN");
   if (!sessionConfigured()) missing.push("VOICE_SESSION_SECRET");
-  const enabled = await executionEnabled().catch(() => false);
+  const ledgerConfigured = Boolean(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"));
+  if (!ledgerConfigured) missing.push("the private Supabase ledger");
+  const enabled = ledgerConfigured && await executionEnabled().catch(() => false);
   if (!enabled) missing.push("execution switched on (EXECUTION_ENABLED and settings)");
   return {
     ok: true,
@@ -320,6 +322,12 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
       const text = await req.text();
       if (text.length > 4096) return reply(413, { ok: false, error: "TOO_LARGE", message: "Request too large." });
       try { body = text ? JSON.parse(text) : {}; } catch { return reply(400, { ok: false, error: "BAD_INPUT", message: "Invalid JSON." }); }
+    }
+    if (action === "session" && req.method === "POST" && !(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"))) {
+      // Quotes use public markets. Only a ledger-backed session receives a trading bearer.
+      const signed = await fetchSignedUrl();
+      if ("error" in signed) throw new TradeError("ELEVENLABS_UNAVAILABLE", signed.error, 502);
+      return reply(200, { ok: true, voice_only: true, signed_url: signed.signed_url });
     }
     const token = /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
     return reply(200, await runBrowserTrading({ action, method: req.method, token, body }));
