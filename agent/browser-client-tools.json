@@ -4,7 +4,7 @@
     {
       "name": "search_markets",
       "type": "client",
-      "description": "Search prediction markets and sort the matching events. Use the returned event ticker and its contract symbol together.",
+      "description": "Call silently. Never say you will search. Search prediction markets and sort the matching events. Use the returned event ticker and its contract symbol together.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,

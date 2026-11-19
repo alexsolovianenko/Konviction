@@ -242,7 +242,7 @@ it('finds exact expiry and strike from the full listing when the title omits the
   expect(result.events[0].contracts.map((c:{symbol:string})=>c.symbol)).toEqual(['threshold-11']);
   expect((await search('SOL above $999 end of July 2099')).events).toEqual([]);
   expect((await search('SOL below $211 on July 31 2099')).events).toEqual([]);
-  expect((await search('SOL $211 at 5 pm on July 31 2099')).events[0].contracts).toHaveLength(1);
+  expect((await search('SOL at or above 211 dollars at 5 pm on July 31 2099')).events[0].contracts).toHaveLength(1);
   const ladder = await search('SOL hourly on July 31 2099');
   expect(ladder.events[0].matched_contracts).toBe(12);
   expect(fetchPage.mock.calls.length).toBe(5);

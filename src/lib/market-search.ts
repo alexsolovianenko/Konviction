@@ -67,6 +67,7 @@ export function marketSearch(raw: string, now: number) {
       " ",
     )
     .replace(/\bi (?:think|believe)\b/g, " ");
+  q = q.replace(/\bat or (above|below)\b/g, "$1").replace(/(\d)\s+dollars?\b/g, "$1");
   const today = easternCalendar(now);
   let date: { year?: number; month: number; day: number } | null = null;
   let clock: { hour: number; minute: number } | null = null;
