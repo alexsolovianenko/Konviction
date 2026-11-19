@@ -233,20 +233,24 @@ async function ownedIntent(store: Store, id: string, s) {
 }
 
 async function recordedResult(store: Store, row) {
+  if (row.status === "PROPOSED" && Date.parse(row.expires_at) > Date.now())
+    return { ok: true, status: row.status };
   const order = await store.getOrderByIntent(row.id);
   if (order) {
     const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
+    const say = order.outcome_summary === "EXCHANGE_REJECTED" ? "Gemini rejected the sandbox order." :
+      order.outcome_summary === "PENDING_UNKNOWN" || order.filled_qty == null ? "Gemini hasn't confirmed the final fill." :
+      `Filled ${order.filled_qty} of ${row.quantity} sandbox contracts${order.avg_price == null ? "" : " at an average of " + Math.round(Number(order.avg_price) * 100) + "¢"}.`;
     return {
       ok: order.outcome_summary !== "EXCHANGE_REJECTED", outcome_summary: order.outcome_summary,
       order_id: order.gemini_order_id, exchange_status: order.exchange_status, filled_quantity: order.filled_qty,
       remaining_quantity: order.remaining_qty, avg_price: order.avg_price,
       ...(remainder && { remainder_buy: remainder }),
-      say: order.filled_qty == null ? "Final fill unavailable. Check order history." :
-        `Recorded ${order.filled_qty} of ${row.quantity} contracts filled${order.avg_price == null ? "" : " at an average of " + Math.round(Number(order.avg_price) * 100) + "¢"}.` +
-        (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
+      voice_say: say,
+      say: say + (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
     };
   }
-  if (row.status === "EXECUTING" || (row.status === "PROPOSED" && Date.parse(row.expires_at) > Date.now()))
+  if (row.status === "EXECUTING")
     return { ok: true, status: row.status };
   return { ok: false, error: "INACTIVE", status: row.status, message: "Proposal closed. Ask for a fresh quote." };
 }
