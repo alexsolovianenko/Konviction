@@ -117,7 +117,7 @@ export function OverviewView() {
   const d = q.data;
   const { open, sheet } = useDrawer();
   return (
-    <div className="flex max-w-5xl flex-col gap-8">
+    <div className="console-account flex flex-col gap-4">
       <PageHeader
         title="Account"
         right={d?.phone_number && (
@@ -164,7 +164,7 @@ function AccountStrip({ d }: { d: DashboardState }) {
   const l = d.limits;
   const money = (n: number) => usd(n).replace(".00", "");
   return (
-    <section>
+    <section className="balance-card">
       <div className="text-sm text-muted-foreground">USD available</div>
       {a.configured ? (
         <div className="tnum mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">{usd(a.usd_available)}</div>
@@ -327,7 +327,7 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
   const state = (c: MarketContract) => [c.status, c.market_state].filter(Boolean).join(" · ") || "—";
 
   return (
-    <section aria-label="Gemini Sandbox market listings" className="min-w-0">
+    <section aria-label="Gemini Sandbox market listings" className="console-card">
       <div className="flex flex-wrap items-center gap-2 pb-3">
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -380,8 +380,8 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
                 {shown.map(({ event, contract }) => (
                   <tr key={`${event.ticker}-${contract.symbol}`}>
                     <td className="w-full max-w-0">
-                      <div className="truncate font-medium" title={contract.symbol}>{contract.label ?? contract.symbol}</div>
-                      <div className="truncate text-xs text-muted-foreground">{[event.title, event.category].filter(Boolean).join(" · ")}</div>
+                      <div className="truncate font-medium" title={event.title}>{event.title}</div>
+                      <div className="truncate text-xs text-muted-foreground">{[contract.label ?? contract.symbol, event.category].filter(Boolean).join(" · ")}</div>
                     </td>
                     <td className="num"><Price v={contract.buy.yes} tone="text-success" /></td>
                     <td className="num"><Price v={contract.sell.yes} tone="text-success" /></td>

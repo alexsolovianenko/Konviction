@@ -61,8 +61,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
 
         <div className="flex min-w-0 flex-col">
-          {!home && <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
-            <div className="flex h-12 items-center gap-3 px-4 lg:px-8">
+          {!home && <header className="relative z-20">
+            <div className="voice-status-strip">
 
               <div className="min-w-0 flex-1"><StatusBubble /></div>
             </div>

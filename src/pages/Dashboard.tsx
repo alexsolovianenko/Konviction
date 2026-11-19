@@ -28,9 +28,9 @@ function Workspace({ children }: { children?: ReactNode }) {
   const [query, setQuery] = useState('');
   const result = market.result;
   return (
-    <div className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_21rem] xl:gap-10">
-      <div className="flex min-w-0 flex-col gap-6">
-        <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="flex min-w-0 flex-col gap-4">
+        <header className="console-card console-hero flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <h1 className="text-2xl font-semibold tracking-tight">Prediction markets</h1>
           <section aria-label="Voice controls" className="flex items-center gap-3">
             <span role="status" className="tnum text-sm text-muted-foreground">
@@ -52,8 +52,8 @@ function Workspace({ children }: { children?: ReactNode }) {
         {children}
       </div>
 
-      <div className="flex min-w-0 flex-col gap-8 xl:sticky xl:top-20">
-        <section aria-label="Gemini market tools" className="min-w-0">
+      <div className="console-tools flex min-w-0 flex-col xl:sticky xl:top-4">
+        <section aria-label="Gemini market tools" className="console-card">
           <h2 className="border-b border-border pb-2 text-sm font-semibold">Search Gemini Sandbox</h2>
           <form
             className="mt-3 flex gap-2"
