@@ -568,7 +568,7 @@ it('ends the connection on a spoken goodbye and keeps order-status questions act
   expect(f.entries().some(entry => entry.text === 'Okay, I’m done. Thanks!')).toBe(true);
 });
 
-it('flushes audible terms and the caller confirmation before a paired sandbox buy', async () => {
+it.each([false,true])('flushes audible terms and ends only an idle post-order call (follow-up %s)', async followUp => {
   const f = fixture(), sdk = await f.begin();
   const baseFetch = f.fetchMock.getMockImplementation()!;
   const readback = 'Buy two YES Bitcoin contracts at forty cents? Say confirm.';
@@ -599,17 +599,26 @@ it('flushes audible terms and the caller confirmation before a paired sandbox bu
     sdk.onModeChange?.({mode:'listening'});
     sdk.onMessage?.({source:'user', role:'user', event_id:2, message:'Confirm'});
   });
-  await act(async () => {
-    const reply = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({proposal_id:'untrusted', confirmation_seq:77}));
-    expect(reply).toEqual({ok:true,say:'Filled 2 at 40 cents.'});
-    await sdk.clientTools['confirm_sandbox_buy']!({});
-  });
-  expect(submit).toHaveBeenCalledTimes(1);
-  expect(submit).toHaveBeenCalledWith(
-    {proposal_id:'pending',confirmation_seq:2},
-    [expect.objectContaining({role:'agent',text:readback}), expect.objectContaining({role:'user',text:'Confirm'})],
-    expect.objectContaining({Authorization:'Bearer private-1'}),
-  );
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      const reply = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({proposal_id:'untrusted', confirmation_seq:77}));
+      expect(reply).toEqual({ok:true,say:'Filled 2 at 40 cents.'});
+      await sdk.clientTools['confirm_sandbox_buy']!({});
+    });
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith(
+      {proposal_id:'pending',confirmation_seq:2},
+      [expect.objectContaining({role:'agent',text:readback}), expect.objectContaining({role:'user',text:'Confirm'})],
+      expect.objectContaining({Authorization:'Bearer private-1'}),
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+    expect(f.endSession).not.toHaveBeenCalled();
+    if (followUp) act(() => sdk.onMessage?.({source:'user',role:'user',event_id:3,message:'How many do I hold?'}));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+    expect(f.endSession).toHaveBeenCalledTimes(followUp ? 0 : 1);
+  } finally { vi.useRealTimers(); }
+
 });
 
 it('reads paired Gemini positions with the live session and keeps symbol IDs out of speech', async () => {

@@ -99,6 +99,14 @@ export class Voice {
   private preparing = false;
   private remainder: {quantity: number; limit_price: number; event_ticker: string; contract_symbol: string; outcome: string} | null = null;
   private proposalRequest: Record<string, unknown> | null = null;
+  private postOrderTimer: ReturnType<typeof setTimeout> | undefined;
+  private orderReported = false;
+  private agentSpeaking = false;
+  private postOrderIdle() {
+    clearTimeout(this.postOrderTimer);
+    if (this.orderReported && !this.agentSpeaking)
+      this.postOrderTimer = setTimeout(() => { void this.stop(); }, 10000);
+  }
   private finishSpeech: undefined | (() => void);
   constructor(
     private update: (patch: Partial<VoiceView>) => void,
@@ -280,7 +288,12 @@ export class Voice {
             }
           }
           speaking = mode === 'speaking';
+          this.agentSpeaking = speaking;
+          this.postOrderIdle();
           update({ status: speaking ? 'Speaking' : 'Listening' });
+        },
+        onVadScore: ({ vadScore }) => {
+          if (current() && this.orderReported && vadScore > 0.5) this.postOrderIdle();
         },
         onAudioAlignmentPlayback: (event) => {
           if (current() && event.event_id !== sealedResponse?.id)
@@ -322,6 +335,8 @@ export class Voice {
             update({ draft });
           } else {
             if (/[a-z0-9]/i.test(message)) {
+              this.orderReported = false;
+              this.postOrderIdle();
               confirmedThisTurn = false;
               preparedThisTurn = isSpokenConfirmation(message);
             }
@@ -595,6 +610,8 @@ export class Voice {
   }
 
   private showExchangeResult(result: Awaited<ReturnType<typeof tradingRequest>>) {
+    this.orderReported = true;
+    this.postOrderIdle();
     const exchange = result.order_id
       ? ` Gemini Sandbox order ${result.order_id} · status ${result.exchange_status ?? 'unknown'} · ${result.outcome_summary}.`
       : result.outcome_summary ? ` Result: ${result.outcome_summary}.` : '';
@@ -626,6 +643,9 @@ export class Voice {
 
   async stop(error = '') {
     if (!this.active) return;
+    this.orderReported = false;
+    this.agentSpeaking = false;
+    this.postOrderIdle();
     this.finishSpeech?.();
     const closing = ++this.attempt;
     this.remainder = null;
