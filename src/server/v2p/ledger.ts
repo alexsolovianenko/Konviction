@@ -19,22 +19,24 @@ export const supabaseLedger: Ledger = {
   async committedUsd({ excludeIntentId } = {}) {
     const [orders, executing] = await Promise.all([
       db.from("orders").select("intent_id,outcome_summary,filled_notional_usd")
-        .eq("side", "buy").gte("created_at", startOfUtcDay()),
+        .eq("side", "buy").or(`created_at.gte.${startOfUtcDay()},outcome_summary.eq.PENDING_UNKNOWN`),
       db.from("intents").select("id,notional_usd,est_fee_usd").eq("status", "EXECUTING").eq("side", "buy"),
     ]);
     if (orders.error || executing.error) return null;
     let total = 0;
+    const recordedIds = new Set();
     const unknownIds = [];
     for (const o of orders.data ?? []) {
+      recordedIds.add(o.intent_id);
       if (o.outcome_summary === "PENDING_UNKNOWN") unknownIds.push(o.intent_id);
       else total += Number(o.filled_notional_usd ?? 0);
     }
     if (unknownIds.length) {
       const { data, error } = await db.from("intents").select("id,notional_usd,est_fee_usd").in("id", unknownIds);
-      if (error) return null;
+      if (error || data?.length !== unknownIds.length) return null;
       for (const r of data ?? []) total += cost(r);
     }
-    for (const r of executing.data ?? []) if (r.id !== excludeIntentId) total += cost(r);
+    for (const r of executing.data ?? []) if (r.id !== excludeIntentId && !recordedIds.has(r.id)) total += cost(r);
     return round2(total);
   },
 };

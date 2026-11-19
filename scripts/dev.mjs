@@ -14,6 +14,7 @@ try { repo = new SQLiteRepository(process.env.SQLITE_PATH || 'data/capture.sqlit
 catch { console.error('Voice capture unavailable: SQLite storage could not be opened.'); }
 const { browserTrading } = await import('../server/browser-trading.mjs');
 const capture = repo ? createApi({
+  accountSummary: async () => (await import("../src/server/v2p/account-summary.ts")).liveAccount(),
   trading: browserTrading(repo), repo, apiKey: process.env.ELEVENLABS_API_KEY, agentId: process.env.ELEVENLABS_AGENT_ID,
   branchId: process.env.ELEVENLABS_BRANCH_ID,
   async lookupInstrument(symbol) {

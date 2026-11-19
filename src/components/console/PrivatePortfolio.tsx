@@ -1,70 +1,35 @@
 import { useEffect, useState } from "react";
-import { PIN_PATTERN, tradingRequest } from "../../browserTrading";
+import { workerTrading, tradingRequest } from "../../browserTrading";
 import { Empty, Panel } from "./ui";
 
 type Rows = { error?: string; rows: Record<string, string | number>[] };
 type Account = { as_of: string; orders: Rows; positions: Rows; history: Rows };
 export function PrivatePortfolio({ showPositions = true }: { showPositions?: boolean }) {
-  const [pin, setPin] = useState(""),
-    [busy, setBusy] = useState(false),
-    [message, setMessage] = useState(""),
-    [account, setAccount] = useState<Account | null>(null);
-  const [paired, setPaired] = useState(false);
+  const [message, setMessage] = useState("Loading order history…");
+  const [account, setAccount] = useState<Account | null>(null);
   useEffect(() => {
     let active = true;
-    tradingRequest("availability").then(result => {if (active) setPaired(result?.voice_authorized === true);});
-    return () => {active=false;};
+    async function load() {
+      const availability = await tradingRequest("availability");
+      if (!active) return;
+      if (!availability.ok || !availability.voice_authorized) {
+        setMessage(!availability.ok ? "Order history unavailable." : workerTrading
+          ? "Order history is available in the paired local app."
+          : "Pair this browser to see order history.");
+        return;
+      }
+      const result = await tradingRequest("portfolio", {});
+      if (!active) return;
+      if (result.ok) setAccount(result);
+      setMessage(result.ok ? "" : result.error === "DEVICE_REQUIRED"
+        ? "Pair this browser to see order history." : "Order history unavailable.");
+    }
+    void load();
+    return () => { active = false; };
   }, []);
   return (
     <div className="flex max-w-5xl flex-col gap-8">
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (busy) return;
-          setBusy(true);
-          setPin("");
-          setAccount(null);
-          setMessage("");
-          try {
-            const r = await tradingRequest("portfolio", paired ? {} : { pin });
-            if (r.ok) setAccount(r);
-            else {
-              if (r.error === "DEVICE_REQUIRED") setPaired(false);
-              setMessage(r.message ?? "Could not read the Gemini Sandbox account.");
-            }
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {!paired && <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
-          Approval PIN
-          <input
-            className="field tracking-[0.3em]"
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={8}
-            pattern="[0-9]{4,8}"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-          />
-        </label>}
-        <button className="btn btn-primary" disabled={busy || (!paired && !PIN_PATTERN.test(pin))}>
-          Read Gemini account
-        </button>
-        {busy && (
-          <p role="status" className="flex w-full items-center gap-2 text-sm text-muted-foreground">
-            <span className="spinner spinner-ink" aria-hidden /> Reading Gemini Sandbox…
-          </p>
-        )}
-        {message && (
-          <p role="alert" className="w-full text-sm text-destructive">
-            {message}
-          </p>
-        )}
-      </form>
+      {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
       {account && (
         <>
           <p className="tnum text-xs text-muted-foreground">Updated {new Date(account.as_of).toLocaleString()}</p>

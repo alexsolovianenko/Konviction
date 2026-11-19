@@ -83,6 +83,8 @@ const geminiOrderCalls = () => vi.mocked(gPrivate).mock.calls.filter(([p]) => p 
 
 beforeEach(() => {
   store = memoryStore();
+  vi.stubEnv("SUPABASE_URL", "https://test.invalid");
+  vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-only");
   vi.stubEnv("VOICE_SESSION_SECRET", SECRET);
   vi.stubEnv("ELEVENLABS_API_KEY", "xi-test-key");
   vi.stubEnv("ELEVENLABS_AGENT_ID", "agent_x");
@@ -264,6 +266,22 @@ describe("approval: the only order-submission path", () => {
     expect(r.outcome_summary).toBe("PENDING_UNKNOWN");
     expect(r.say).not.toMatch(/filled:/i);
     expect(await store.committedUsd()).toBeGreaterThan(0.3);
+  });
+
+  it("reports a cancelled IOC's partial fill and leaves the remainder unsubmitted", async () => {
+    const { s, id } = await proposed();
+    vi.mocked(gPrivate).mockResolvedValue({ ok: true, status: 201, text: "", data: { orderId: "1", status: "cancelled", filledQuantity: "0.25", remainingQuantity: "0.75" } });
+    const result = await run("approve", { proposal_id: id, pin: PIN }, s.session_token);
+    expect(result).toMatchObject({ outcome_summary: "PARTIAL", filled_quantity: 0.25, say: expect.stringContaining("0.25 of 1") });
+    expect(geminiOrderCalls()).toHaveLength(1);
+  });
+
+  it("explains a venue-reported liquidity rejection and leaves unknown depth unspecified", async () => {
+    const { s, id } = await proposed();
+    vi.mocked(gPrivate).mockResolvedValue({ ok: false, status: 400, text: "", data: { reason: "InsufficientLiquidity" } });
+    const result = await run("approve", { proposal_id: id, pin: PIN }, s.session_token);
+    expect(result).toMatchObject({ ok: false, outcome_summary: "EXCHANGE_REJECTED", say: expect.stringContaining("fresh quote"), voice_say: "Insufficient liquidity at that price." });
+    expect(geminiOrderCalls()).toHaveLength(1);
   });
 
   it("never claims a fill when Gemini reports zero filled quantity", async () => {

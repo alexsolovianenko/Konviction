@@ -1,3 +1,4 @@
+import { spokenProposal } from "./spoken-proposal.mjs";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { prepareTrade, executeTrade, isValidBuySize } from "../src/server/v2p/trade-engine.ts";
 import { gPrivate, hasCredentials } from "../src/server/v2p/gemini.ts";
@@ -144,7 +145,7 @@ export function browserTrading(repo) {
           sessionOwner(repo, token);
           if (device && terms.title && terms.contract_label &&
               ![terms.title, terms.contract_label].some(name => name === terms.instrument_symbol || name === terms.event_ticker || /GEMI-[A-Z0-9._-]+/i.test(name))) {
-            terms.voice_readback = `Buy ${terms.quantity} ${terms.outcome.toUpperCase()} on ${terms.title}, ${terms.contract_label}, at up to ${Math.round(100 * terms.limit_price)} cents each. About $${(terms.notional_usd + terms.est_fee_usd).toFixed(2)} at risk including estimated fees, $${terms.quantity} payout if all fill and win. Say confirm.`;
+            terms.voice_readback = spokenProposal(terms);
           }
           const proposal = store.propose(owner, key, fingerprint, terms, LIMITS.maxDailyUsd,
             terms.voice_readback ? id => devices.bind(id, owner, device) : undefined);

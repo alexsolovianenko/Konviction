@@ -64,7 +64,7 @@ export class TrustedDevices {
     if (row.confirmation_seq !== null || !received || Date.now() - received > 30000 || received > Date.now() ||
         answer?.role !== "user" || answer.seq !== seq || !/^(?:confirm|yes|yes[, ]+confirm)[.!]?$/i.test(answer.text.trim()) ||
         readback?.role !== "agent" || readback.seq <= row.min_seq || readback.interrupted ||
-        normalize(readback.text) !== normalize(terms.voice_readback))
+        normalize(readback.text.replace(/^\[(?:neutral|slow)\]\s*/i, "")) !== normalize(terms.voice_readback))
       throw new TradeError("CONFIRMATION_REQUIRED", "Listen to the complete order and say confirm.", 409);
     const updated = this.db.prepare("UPDATE OR IGNORE browser_voice_approvals SET confirmation_seq=? WHERE proposal=? AND confirmation_seq IS NULL").run(seq, id);
     if (updated.changes !== 1) throw new TradeError("CONFIRMATION_USED", "That confirmation has already been used.");

@@ -48,7 +48,7 @@ Open Account at /dashboard to see order history and positions. The former /open-
 
 ### Vercel
 
-Use Node 24 and npm. `npm run build:vercel` creates the static site and Node function in `.vercel/output`. Vercel serves the UI and the public API from the same origin. The local launcher uses SQLite. The hosted trading routes use David’s Supabase ledger and require a private on-screen PIN.
+Use Node 24 and npm. `npm run build:vercel` creates the static site and Node function in `.vercel/output`. Vercel serves the UI and the public API from the same origin. The local launcher uses SQLite. Hosted trading uses the configured Supabase ledger or a linked private Vercel Blob store. Approving a hosted order requires the private on-screen PIN. Use one trading ledger per Gemini sandbox account so confirmations and spending limits share the same history.
 
 Set the production secrets in the Vercel project. Browsing markets uses public Gemini Sandbox data. Voice requires ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID from the same workspace. Set ELEVENLABS_BRANCH_ID to the branchId in the agent link to follow that branch’s latest published version. Private orders also require SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VOICE_SESSION_SECRET (at least 32 random characters), GEMINI_API_KEY, GEMINI_API_SECRET, and DEMO_PIN. Use the existing database with the schema in drizzle/migrations. Sandbox execution requires EXECUTION_ENABLED and the database execution switch. Redeploy after changing variables.
 

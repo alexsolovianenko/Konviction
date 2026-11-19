@@ -448,7 +448,7 @@
       "expects_response": true,
       "response_timeout_secs": 15,
       "writes_intent": null,
-      "description": "Get a fresh Gemini Sandbox quote for one prediction contract: its buy and sell prices for yes and no in dollars per contract, any of which may be null. It is a quote, not a depth book. event_ticker is the event's ticker and contract_symbol is the contract's symbol, both copied exactly from a search_markets result in this conversation.",
+      "description": "Get a fresh Gemini Sandbox quote for one prediction contract: its buy and sell prices for yes and no in dollars per contract, any of which may be null. displayed_buy_quantity_at_ask gives the observed contract quantity at each matching best buy price, or null if unknown. event_ticker is the event's ticker and contract_symbol is the contract's symbol, both copied exactly from a search_markets result in this conversation.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,

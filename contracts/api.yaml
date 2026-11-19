@@ -1123,7 +1123,7 @@ x-market-data:
           items: { $ref: "#/x-market-data/schemas/MarketEvent" }
   get_orderbook:
     request: "GET /api/public/market-tools/get_orderbook?event_ticker={event_ticker}&contract_symbol={contract_symbol}"
-    note: "Despite its name it returns a quote for one contract, not a depth book. There are no levels and no sizes."
+    note: "Returns a single contract quote and displayed quantities from matching best levels in the public sandbox book."
     parameters:
       type: object
       additionalProperties: false
@@ -1135,7 +1135,7 @@ x-market-data:
       - "The server reads that one event fresh from the sandbox and returns the contract whose symbol equals contract_symbol."
     result:
       type: object
-      required: [ok, source, as_of, event_ticker, title, contract]
+      required: [ok, source, as_of, event_ticker, title, contract, displayed_buy_quantity_at_ask]
       properties:
         ok: { const: true }
         source: { const: "Gemini Sandbox" }
@@ -1143,6 +1143,13 @@ x-market-data:
         event_ticker: { type: string }
         title: { type: string, description: "Event title." }
         contract: { $ref: "#/x-market-data/schemas/MarketContract" }
+        displayed_buy_quantity_at_ask:
+          type: object
+          required: [yes, no]
+          description: "Contracts displayed at each quoted ask. Missing or divergent observations return null. The size can change before an order arrives."
+          properties:
+            yes: { type: [number, "null"] }
+            no: { type: [number, "null"] }
   schemas:
     MarketEvent:
       type: object

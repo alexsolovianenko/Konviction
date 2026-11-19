@@ -124,11 +124,15 @@ export function gPublic(path: string, query: Record<string, string | number | un
   return url ? doFetch(url, { method: "GET", headers: { Accept: "application/json" } }) : Promise.resolve(invalidOrigin());
 }
 
+let signedQueue = Promise.resolve();
+let lastSignedSecond = 0;
+
 async function signedOnce(
   method: "GET" | "POST",
   path: string,
   fields: Record<string, unknown>,
   query: Record<string, string | number | undefined>,
+  nonceCollision = false,
 ): Promise<GeminiResult> {
   const url = sandboxUrl(path, query);
   if (!url) return invalidOrigin();
@@ -137,7 +141,14 @@ async function signedOnce(
   if (!apiKey || !secret) {
     return { ok: false, status: 0, data: null, text: "", error: "GEMINI_API_KEY / GEMINI_API_SECRET not configured" };
   }
-  const payloadJson = JSON.stringify({ ...fields, request: path, nonce: Math.floor(Date.now() / 1000) });
+  const now = Date.now();
+  // On a collision another client may already own this second. Reserve the next
+  // second, while staying inside Gemini’s time-based authentication window.
+  const advance = nonceCollision ? 1 : 0;
+  const delay = (lastSignedSecond + 1 - advance) * 1000 - now;
+  if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+  lastSignedSecond = Math.max(lastSignedSecond + 1, Math.floor(Date.now() / 1000) + advance);
+  const payloadJson = JSON.stringify({ ...fields, request: path, nonce: lastSignedSecond });
   const payload = b64(payloadJson);
   const sig = toHex(await crypto.subtle.sign("HMAC", await hmacKey(secret), new TextEncoder().encode(payload)));
 
@@ -175,13 +186,14 @@ export async function gPrivate(
   opts: { method?: "GET" | "POST"; query?: Record<string, string | number | undefined> } = {},
 ): Promise<GeminiResult> {
   const method = opts.method ?? "POST";
-  const r = await signedOnce(method, path, fields, opts.query ?? {});
-  if (isInvalidNonce(r)) {
-    // Nonces are whole seconds; a same-second retry would reuse the rejected nonce. Wait for the next second.
-    await new Promise((res) => setTimeout(res, 1100 - (Date.now() % 1000)));
-    return signedOnce(method, path, fields, opts.query ?? {});
-  }
-  return r;
+  const send = async () => {
+    const request = (collision = false) => signedOnce(method, path, fields, opts.query ?? {}, collision);
+    const result = await request();
+    return isInvalidNonce(result) ? request(/has not increased/i.test(result.data?.message ?? "")) : result;
+  };
+  const result = signedQueue.then(send);
+  signedQueue = result.then(() => {}, () => {});
+  return result;
 }
 
 // ---------- typed-ish helpers ----------

@@ -127,7 +127,6 @@ export function OverviewView() {
       />
       {d ? <AccountStrip d={d} /> : <Waiting q={q} />}
       <Panel title="Gemini order history">
-        <p className="mb-4 text-sm text-muted-foreground">Check whether Gemini received or filled an order.</p>
         <PrivatePortfolio showPositions={!d?.account.configured || Boolean(d.account.positions_error)} />
       </Panel>
       {d && (
@@ -159,8 +158,6 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: Re
 // Balance first, then account facts as a plain property list.
 function AccountStrip({ d }: { d: DashboardState }) {
   const a = d.account;
-  const l = d.limits;
-  const money = (n: number) => usd(n).replace(".00", "");
   return (
     <section className="balance-card">
       <div className="text-sm text-muted-foreground">USD available</div>
@@ -178,7 +175,6 @@ function AccountStrip({ d }: { d: DashboardState }) {
           </>
         )}
         <Stat label="Phone execution" value={d.execution_enabled ? "On" : "Off"} />
-        <Stat label="Limits" value={`${money(l.maxOrderUsd)} per order · ${money(l.maxDailyUsd)} per day · max ${cents(l.maxLimitPrice)}`} />
       </dl>
     </section>
   );

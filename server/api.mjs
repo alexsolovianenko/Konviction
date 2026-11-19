@@ -183,7 +183,7 @@ function handle(repo, session, path, method, body, key, now, market, legacyMarke
   return result;
 }
 
-export function createApi({ trading, repo, apiKey, agentId, branchId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
+export function createApi({ accountSummary, trading, repo, apiKey, agentId, branchId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
   return createServer(async (req, res) => {
     function reply([status, body]) {
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -191,6 +191,10 @@ export function createApi({ trading, repo, apiKey, agentId, branchId, lookupInst
     }
     try {
       const url = new URL(req.url, 'http://localhost');
+      if (accountSummary && url.pathname === '/internal/account-summary' && req.method === 'GET' &&
+          req.headers.host === '127.0.0.1:' + req.socket.localPort && !req.headers.origin) {
+        return reply([200, await accountSummary()]);
+      }
       const path = url.pathname.slice(4);
       if (trading && path.startsWith('/trading/')) {
         const host = req.headers.host ?? '';

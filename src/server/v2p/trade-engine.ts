@@ -53,14 +53,14 @@ export async function prepareTrade(b: Body, saveProposal) {
   if (error || !event)
     return err(
       "MARKET_DATA_UNAVAILABLE",
-      "Couldn't get a fresh quote from Gemini. Nothing was prepared.",
+      "Gemini’s quote is unavailable. Request a fresh quote before preparing an order.",
       { detail: error },
     );
   const c = findContract(event, symbol);
   if (!c || event.ticker !== eventTicker)
     return err("BAD_INPUT", "That contract isn't in this event. Call find_market again.");
   if (!contractTradable(c) || !c.status || !c.marketState)
-    return err("CONTRACT_NOT_OPEN", "That contract isn't open for trading.");
+    return err("CONTRACT_NOT_OPEN", "This contract is unavailable for immediate trading. Look for an open contract.");
   const comboError = await comboEligibility(event, c);
   if (comboError) return err("COMBO_UNAVAILABLE", comboError);
   const expiryIso = c.expiryDate ?? event.expiryDate ?? null;
@@ -75,13 +75,13 @@ export async function prepareTrade(b: Body, saveProposal) {
     if (minutesLeft < minMinutes) {
       return err(
         "TOO_CLOSE_TO_EXPIRY",
-        `This contract closes in under ${minMinutes} ${minMinutes === 1 ? 'minute' : 'minutes'}. Offer the next one.`,
+        `This contract closes in under ${minMinutes} ${minMinutes === 1 ? 'minute' : 'minutes'}. Choose another open window.`,
       );
     }
     if (q.buy === null)
       return err(
         "NO_LIQUIDITY",
-        "Nobody is selling this outcome right now, so a buy can't fill. Offer another contract.",
+        "Gemini shows no buy price for this outcome. Check for a fresh quote or choose another contract.",
       );
     quotePrice = q.buy;
     limit =
@@ -91,7 +91,7 @@ export async function prepareTrade(b: Body, saveProposal) {
     if (limit < q.buy) {
       return err(
         "PRICE_ABOVE_YOUR_MAX",
-        `The current price is ${cents(q.buy)}, above the caller's maximum of ${cents(limit)}. An order at that price would not fill now. Ask if they want to pay up to ${cents(Math.min(round2(q.buy + 0.01), LIMITS.maxLimitPrice))}.`,
+        `The ask is ${cents(q.buy)} and the order limit is ${cents(limit)}. Wait for an ask within your limit or request a new quote.`,
         { current_price: q.buy },
       );
     }
@@ -147,6 +147,9 @@ export async function prepareTrade(b: Body, saveProposal) {
 
   if (!Number.isFinite(quantity) || quantity < 1)
     return err("CAP_EXCEEDED", "That amount is too small to buy even one contract at this price.");
+  const minimum = num(c.quantityMinimum);
+  if (minimum !== null && quantity < minimum)
+    return err("BELOW_CONTRACT_MINIMUM", `Gemini requires at least ${minimum} contracts for this market. Your order sizes to ${quantity}. Choose another contract or request a new size.`);
   if (quantity > LIMITS.maxQuantity)
     return err("CAP_EXCEEDED", `Demo limit is ${LIMITS.maxQuantity} contracts per order.`);
   const notional = round2(quantity * limit);
@@ -182,6 +185,25 @@ export async function prepareTrade(b: Body, saveProposal) {
   });
 }
 
+function rejectionMessage(data: Record<string, unknown> | null, status: number): string {
+  const reasons: Record<string, string> = {
+    InsufficientFunds: "Your available sandbox balance is too low. Check your balance and prepare a smaller order.",
+    InsufficientLiquidity: "Gemini reported insufficient liquidity at this price. Request a fresh quote before trying a smaller order.",
+    MarketNotOpen: "This contract is closed or paused. Select an open contract.",
+    InvalidQuantity: "Gemini rejected the contract quantity. Check the contract’s minimum and quantity increment.",
+    InvalidPrice: "Gemini rejected the limit price. Prepare a new order using a fresh quote.",
+    LimitPriceOffTick: "The limit price missed the contract’s price increment. Prepare a fresh quote.",
+    TERMS_NOT_ACCEPTED: "Accept the prediction market terms in your Gemini sandbox account before trying again.",
+    InvalidNonce: "Gemini rejected the request sequence. Refresh the account before preparing a new order.",
+    DuplicateOrder: "Gemini flagged a duplicate order. Check order history before placing another order.",
+  };
+  const reason = data?.reason ?? data?.error;
+  if (typeof reason === "string" && Object.hasOwn(reasons, reason)) return reasons[reason];
+  if (status === 429) return "Gemini rate-limited the order. Wait before requesting a fresh quote.";
+  if (status === 401 || status === 403) return "Gemini denied the order. Check the sandbox API key’s trading permissions.";
+  return "Gemini rejected the order without a recognized reason. Check the sandbox account’s permissions and contract status before retrying.";
+}
+
 export async function executeTrade(it, caller, { finish, log, receipt, saveOrder }) {
   const code = it.code;
   // Re-quote at execution time.
@@ -193,7 +215,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   }
   if (!contractTradable(c) || !c.status || !c.marketState) {
     await finish("REJECTED");
-    return err("CONTRACT_NOT_OPEN", "The contract closed. Nothing was placed.");
+    return err("CONTRACT_NOT_OPEN", "This contract is unavailable for immediate trading. Choose an open contract for a new proposal.");
   }
   const comboError = await comboEligibility(event, c);
   if (comboError) {
@@ -212,8 +234,12 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
       await finish("REJECTED");
       await log("PRICE_MOVED", caller, `${code}: ask now ${q.buy ?? "none"} vs limit ${limit}`);
       return err(
-        "PRICE_MOVED",
-        `The price moved${q.buy !== null ? ` to ${cents(q.buy)}` : " (no sellers now)"}. Nothing was placed. Offer to prepare a new trade at the new price.`,
+        q.buy === null ? "NO_LIQUIDITY" : "PRICE_MOVED",
+        q.buy === null
+          ? "The buy quote disappeared before submission. Request a fresh quote or choose another outcome."
+          : q.buy > limit + 1e-9
+            ? `The ask rose to ${cents(q.buy)}, above your ${cents(limit)} limit. Wait for a lower ask or confirm a new quote.`
+            : `The ask rose from ${cents(quoted)} to ${cents(q.buy)} before submission. Confirm a fresh quote to continue.`,
         { current_price: q.buy },
       );
     }
@@ -233,7 +259,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     Date.parse(c.expiryDate ?? event.expiryDate) - Date.now() < minBuyMinutesToExpiry(event.ticker) * 60000
   ) {
     await finish("REJECTED");
-    return err("TOO_CLOSE_TO_EXPIRY", "The contract is too close to expiry.");
+    return err("TOO_CLOSE_TO_EXPIRY", "The contract is too close to expiry. Choose a later open window and confirm a fresh quote.");
   }
   const callerHash = await hashPhone(caller);
   await receipt(it.id, code, "approval", {
@@ -269,13 +295,14 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   let summary: "FILLED" | "PARTIAL" | "NOT_FILLED" | "PENDING_UNKNOWN" | "EXCHANGE_REJECTED";
   // deno-lint-ignore no-explicit-any
   let o: any = placed.data;
-  if (placed.status === 0 || placed.status >= 500) {
+  if (placed.status === 0 || placed.status === 408 || placed.status >= 500) {
     summary = "PENDING_UNKNOWN";
   } else if (!placed.ok) {
     summary = "EXCHANGE_REJECTED";
   } else {
-    // If fill fields are missing, check order history once (by orderId) instead of guessing.
-    if (o?.orderId && o.filledQuantity === undefined) {
+    // The placement response can precede matching. Reconcile once by the exact order id.
+    const terminal = (order: any) => ["filled", "cancelled", "canceled", "closed"].includes(String(order?.status ?? "").toLowerCase());
+    if (o?.orderId && (num(o.filledQuantity) === null || (!terminal(o) && Number(o.filledQuantity) < it.quantity))) {
       await new Promise((r) => setTimeout(r, 1500));
       const h = await gPrivate("/v1/prediction-markets/orders/history", {
         symbol: it.instrument_symbol,
@@ -289,7 +316,8 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     }
     const filled = num(o?.filledQuantity) ?? 0;
     summary =
-      num(o?.filledQuantity) === null
+      num(o?.filledQuantity) === null || filled < 0 || filled > Number(it.quantity) + 1e-9 ||
+      (filled < it.quantity && !terminal(o))
         ? "PENDING_UNKNOWN"
         : filled <= 0
           ? "NOT_FILLED"
@@ -338,15 +366,31 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   });
 
   const fillFee = filledQty && avg ? feeEstimate(filledQty, avg) : null;
+  // IOC orders may finish as cancelled even after a complete fill. Report the
+  // exchange quantity first. A quote does not establish available depth.
+  const cancelled = ["cancelled", "canceled"].includes(String(o?.status ?? "").toLowerCase());
+  const rejection = rejectionMessage(placed.data, placed.status);
+  const voiceReasons: Record<string, string> = {
+    InsufficientFunds: "Insufficient sandbox balance.",
+    InsufficientLiquidity: "Insufficient liquidity at that price.",
+    MarketNotOpen: "Market closed or paused.",
+    InvalidQuantity: "Check the contract quantity.",
+    DuplicateOrder: "Check your existing order.",
+  };
+  const reason = placed.data?.reason ?? placed.data?.error;
+  const average = avg !== null ? ` at an average of ${cents(avg)}` : "";
   const say: Record<string, string> = {
-    FILLED: `Filled: ${filledQty} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}.`,
-    PARTIAL: `Partly filled: ${filledQty} of ${it.quantity} contracts${avg !== null ? ` at an average of ${cents(avg)}` : ""}. Gemini reports status ${o?.status ?? "unknown"}.`,
-    // Only say "cancelled" when Gemini itself reports it (david 8d1e9d4).
-    NOT_FILLED: String(o?.status ?? "").toLowerCase() === "cancelled"
-      ? `Gemini accepted the order but nothing filled at that price, so it was cancelled. No money was spent and no position was opened.`
-      : `Gemini accepted the order${o?.orderId ? ` (order ${o.orderId})` : ""} but reports nothing filled yet (status: ${o?.status ?? "unknown"}). Do not say it filled or was cancelled; check open orders.`,
-    PENDING_UNKNOWN: `Gemini did not confirm the fill status. Check open orders and recent order history before taking further action.`,
-    EXCHANGE_REJECTED: `Gemini rejected the order, so nothing was placed.`,
+    FILLED: `Filled ${filledQty} sandbox contracts${average}.`,
+    PARTIAL: `Filled ${filledQty} of ${it.quantity} sandbox contracts${average}. ${cancelled
+      ? "The exchange cancelled the remainder. Request a fresh quote for the unfilled amount."
+      : "Check order history for the remainder before placing another order."}`,
+    NOT_FILLED: cancelled
+      ? `Zero of ${it.quantity} contracts filled at your ${cents(limit)} limit. Gemini cancelled the immediate-or-cancel order. Request a fresh quote before trying again.`
+      : "Gemini reports zero fills so far. Check order history before placing another order.",
+    PENDING_UNKNOWN: filledQty !== null && filledQty > 0 && filledQty <= it.quantity
+      ? `Gemini reports ${filledQty} filled so far. Check order history for the final quantity before placing another order.`
+      : "Gemini has not confirmed the final fill. Check order history before placing another order.",
+    EXCHANGE_REJECTED: rejection,
   };
   return json({
     ok: summary !== "EXCHANGE_REJECTED",
@@ -358,6 +402,6 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     avg_price: avg,
     est_fee_usd: fillFee,
     say: say[summary],
-    exchange_error: placed.ok ? undefined : (placed.error ?? placed.text.slice(0, 300)),
+    ...(summary === "EXCHANGE_REJECTED" && { voice_say: typeof reason === "string" && Object.hasOwn(voiceReasons, reason) ? voiceReasons[reason] : "Rejected. Check order details." }),
   });
 }

@@ -12,6 +12,7 @@
 // The language model can reach `proposals` only through the browser client tool; it never sees the
 // session token or the PIN, and no voice tool can call `approve`.
 import { db, executionEnabled, logActivity } from "./db";
+import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
 import { gPrivate, hasCredentials } from "./gemini";
 import { prepareTrade, executeTrade, isValidBuySize } from "./trade-engine";
@@ -101,14 +102,18 @@ export function supabaseStore() {
 function pinConfigured() {
   return /^\d{4,8}$/.test(env("DEMO_PIN") ?? "");
 }
+const hasSupabase = () => Boolean(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"));
+const hasBlob = () => env("LOCAL_BROWSER_LEDGER") !== "sqlite" && Boolean(env("BLOB_READ_WRITE_TOKEN") || env("BLOB_STORE_ID"));
+const defaultStore = () => hasSupabase() || !hasBlob() ? supabaseStore() : blobStore();
+
 export async function availability() {
   const missing: string[] = [];
   if (!hasCredentials()) missing.push("Gemini Sandbox credentials");
   if (!pinConfigured()) missing.push("a 4-8 digit DEMO_PIN");
   if (!sessionConfigured()) missing.push("VOICE_SESSION_SECRET");
-  const ledgerConfigured = Boolean(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"));
-  if (!ledgerConfigured) missing.push("the private Supabase ledger");
-  const enabled = ledgerConfigured && await executionEnabled().catch(() => false);
+  const ledgerConfigured = hasSupabase() || hasBlob();
+  if (!ledgerConfigured) missing.push("private order storage");
+  const enabled = hasSupabase() ? await executionEnabled().catch(() => false) : hasBlob() && env("EXECUTION_ENABLED") === "true";
   if (!enabled) missing.push("execution switched on (EXECUTION_ENABLED and settings)");
   return {
     ok: true,
@@ -134,6 +139,7 @@ async function requireSession(store: Store, token: string | undefined) {
 async function requirePin(store: Store, pin: unknown, sessionKey: string | null) {
   if (!pinConfigured()) throw new TradeError("PIN_UNCONFIGURED", "Approval PIN is not configured on the server.", 503);
   if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) bad();
+  if (store.verifyPinAttempt) return store.verifyPinAttempt(sessionKey, await secretEqual(pin, env("DEMO_PIN") ?? ""));
   const nowMs = Date.now();
   const locked = (r) => r?.locked_until && Date.parse(r.locked_until) > nowMs;
   const global = await store.getGuard(GLOBAL_GUARD);
@@ -221,8 +227,7 @@ async function approve(store: Store, token: string | undefined, body) {
   if (!it) {
     const row = await store.getIntent(body.proposal_id);
     if (!row || row.caller !== s.caller) throw new TradeError("UNKNOWN_PROPOSAL", "Proposal unavailable for this voice session.", 404);
-    if (row.status === "EXECUTING") throw new TradeError("IN_PROGRESS", "Approval already received. Check open trades before doing anything else.");
-    const order = ["DONE", "FAILED"].includes(row.status) ? await store.getOrderByIntent(row.id) : null;
+    const order = ["EXECUTING", "DONE", "FAILED"].includes(row.status) ? await store.getOrderByIntent(row.id) : null;
     if (order) {
       // Replay: report the recorded Gemini result; never submit a second order.
       return {
@@ -232,6 +237,7 @@ async function approve(store: Store, token: string | undefined, body) {
         say: "This proposal was already approved. Showing the recorded Gemini result.",
       };
     }
+    if (row.status === "EXECUTING") throw new TradeError("IN_PROGRESS", "Approval already received. Check open trades before doing anything else.");
     throw new TradeError("INACTIVE", "This proposal was replaced, rejected or expired. Ask for a fresh quote.");
   }
 
@@ -295,7 +301,7 @@ async function portfolio(store: Store, body) {
 
 export async function runBrowserTrading(
   { action, method, token, body }: { action: string; method: string; token?: string; body?: unknown },
-  store: Store = supabaseStore(),
+  store: Store = defaultStore(),
   fetchImpl?: typeof fetch,
 ) {
   if (method === "GET" && action === "availability") return availability();
@@ -323,7 +329,7 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
       if (text.length > 4096) return reply(413, { ok: false, error: "TOO_LARGE", message: "Request too large." });
       try { body = text ? JSON.parse(text) : {}; } catch { return reply(400, { ok: false, error: "BAD_INPUT", message: "Invalid JSON." }); }
     }
-    if (action === "session" && req.method === "POST" && !(env("SUPABASE_URL") && env("SUPABASE_SERVICE_ROLE_KEY"))) {
+    if (action === "session" && req.method === "POST" && !hasSupabase() && !hasBlob()) {
       // Quotes use public markets. Only a ledger-backed session receives a trading bearer.
       const signed = await fetchSignedUrl();
       if ("error" in signed) throw new TradeError("ELEVENLABS_UNAVAILABLE", signed.error, 502);

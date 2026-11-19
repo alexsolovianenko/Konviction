@@ -5,6 +5,16 @@ import { settlementIndex } from "./settlement-index";
 
 import { normalizeMarketQuery, discoverCombos, fiveMinuteDiscovery, secondsUntil, payoutAtAsk } from "./prediction-discovery";
 
+// Gemini quotes its binary book on the YES side. A resting YES bid at p
+// supplies a NO buy at 1 - p. Only attach size if both snapshots agree.
+function displayedBuySize(level: { price?: unknown; amount?: unknown } | undefined, quote: number | null, complement: boolean) {
+  if (quote == null || !level) return null;
+  const price = Number(level.price);
+  const amount = Number(level.amount);
+  if (!(price > 0 && price < 1 && Number.isFinite(amount) && amount > 0)) return null;
+  return Math.abs((complement ? 1 - price : price) - quote) < 1e-9 ? amount : null;
+}
+
 export async function marketTool(name: string, params: URLSearchParams) {
   const fail = (error: string, status: number) => Response.json({ ok: false, error }, { status });
   const fields = name === "search_markets" ? ["query"] : name === "get_settlement_index" ? ["event_ticker"] : ["event_ticker", "contract_symbol"];
@@ -53,8 +63,13 @@ export async function marketTool(name: string, params: URLSearchParams) {
   if (!rawContract) return fail("Prediction contract unavailable for this event.", 404);
   const comboError = await comboEligibility(rawEvent, rawContract);
   if (comboError) return fail(comboError, 409);
+  const book = await gPublic("/v1/book/" + encodeURIComponent(symbol), { limit_bids: 1, limit_asks: 1 });
+  const displayed_buy_quantity_at_ask = {
+    yes: displayedBuySize(book.ok ? book.data?.asks?.[0] : undefined, contract.buy.yes, false),
+    no: displayedBuySize(book.ok ? book.data?.bids?.[0] : undefined, contract.buy.no, true),
+  };
   const now = Date.now();
   return Response.json({ ok: true, source: "Gemini Sandbox", as_of: new Date(now).toISOString(),
-    event_ticker: ticker, title: event.title, contract, seconds_to_expiry: secondsUntil(contract.expiry, now),
+    event_ticker: ticker, title: event.title, contract, displayed_buy_quantity_at_ask, seconds_to_expiry: secondsUntil(contract.expiry, now),
     payout_per_contract: { yes: payoutAtAsk(contract.buy.yes), no: payoutAtAsk(contract.buy.no) } });
 }

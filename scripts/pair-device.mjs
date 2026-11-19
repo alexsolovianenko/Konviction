@@ -9,7 +9,7 @@ for (const file of [".env", process.env.SERVER_ENV_FILE ?? "../UBC-Hackathon/.en
 const repo = new SQLiteRepository(process.env.SQLITE_PATH || "data/capture.sqlite");
 try {
   const code = new TrustedDevices(repo).issueCode();
-  const url = "http://127.0.0.1:5173/#pair=" + code;
+  const url = "http://localhost:5173/#pair=" + code;
   if (process.argv.includes("--open")) {
     execFileSync(process.platform === "darwin" ? "open" : "xdg-open", [url]);
   } else console.log(url);

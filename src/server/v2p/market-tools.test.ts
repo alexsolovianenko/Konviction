@@ -67,3 +67,22 @@ it('discovers native Gemini combos with required directions and leg results', as
   expect(get).toHaveBeenCalledWith(expect.objectContaining({pathname:'/v1/prediction-markets/combos'}),expect.objectContaining({method:'GET'}));
   expect(result.combos[0]).not.toHaveProperty('price');
 });
+
+it.each([
+  { asks: [{ price: '0.43', amount: '1.5' }], bids: [{ price: '0.21', amount: '5.0' }], expected: { yes: 1.5, no: 5 } },
+  { asks: [{ price: '0.44', amount: '8' }], bids: [], expected: { yes: null, no: null } },
+  { asks: [], bids: [{ price: '0.21', amount: 'invalid' }], expected: { yes: null, no: null } },
+  { asks: null, bids: null, expected: { yes: null, no: null } },
+])('reports only displayed size matching the quoted prices', async ({asks,bids,expected}) => {
+  const get = vi.fn(async (url: URL) => {
+    if (url.pathname === '/v1/book/C') {
+      expect(url.searchParams.get('limit_asks')).toBe('1');
+      expect(url.searchParams.get('limit_bids')).toBe('1');
+      return asks ? Response.json({asks,bids}) : new Response('', {status:503});
+    }
+    return Response.json({ticker:'E',title:'Event',contracts:[{instrumentSymbol:'C',prices:{buy:{yes:'.43',no:'.79'}}}]});
+  });
+  vi.stubGlobal('fetch',get);
+  const result = await (await marketTool('get_orderbook',new URLSearchParams({event_ticker:'E',contract_symbol:'C'}))).json();
+  expect(result).toMatchObject({ok:true, contract:{buy:{yes:.43,no:.79}}, displayed_buy_quantity_at_ask:expected});
+});

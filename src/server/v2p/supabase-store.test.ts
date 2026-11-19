@@ -9,7 +9,7 @@ function builder(table: string): any {
   const result = queue[table]?.shift() ?? { data: [], error: null };
   const log = (calls[table] ??= []);
   const b: any = {};
-  for (const m of ["select", "eq", "gte", "gt", "lte", "in", "order", "limit", "update", "insert", "upsert"]) {
+  for (const m of ["select", "eq", "or", "gte", "gt", "lte", "in", "order", "limit", "update", "insert", "upsert"]) {
     b[m] = (...args: unknown[]) => { log.push([m, ...args]); return b; };
   }
   b.maybeSingle = () => Promise.resolve(result);
@@ -57,11 +57,12 @@ it("ledger sums filled buys, reserves unknown outcomes and in-flight approvals",
     { intent_id: "c", outcome_summary: "PENDING_UNKNOWN", filled_notional_usd: 0 },
   ], error: null }];
   queue["intents"] = [
-    { data: [{ id: "x", notional_usd: 2, est_fee_usd: 0.1 }, { id: "self", notional_usd: 9, est_fee_usd: 1 }], error: null }, // EXECUTING
+    { data: [{ id: "x", notional_usd: 2, est_fee_usd: 0.1 }, { id: "c", notional_usd: 3, est_fee_usd: 0.2 }, { id: "self", notional_usd: 9, est_fee_usd: 1 }], error: null }, // EXECUTING
     { data: [{ id: "c", notional_usd: 3, est_fee_usd: 0.2 }], error: null }, // PENDING_UNKNOWN lookup
   ];
   expect(await supabaseLedger.committedUsd({ excludeIntentId: "self" })).toBe(6.8);
   expect(calls["orders"]).toContainEqual(["eq", "side", "buy"]);
+  expect(calls["orders"]).toContainEqual(["or", expect.stringContaining(",outcome_summary.eq.PENDING_UNKNOWN")]);
   expect(calls["intents"]).toContainEqual(["eq", "status", "EXECUTING"]);
 });
 

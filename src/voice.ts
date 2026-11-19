@@ -32,6 +32,20 @@ export type VoiceView = {
   draft: string;
   error: string;
 };
+const shortTradeIssue: Record<string, string> = {
+  NO_LIQUIDITY: 'No ask right now.',
+  NO_BID: 'No bid right now.',
+  PRICE_MOVED: 'Price changed. Requote?',
+  PRICE_ABOVE_YOUR_MAX: 'Ask exceeds your limit.',
+  TOO_CLOSE_TO_EXPIRY: 'Closing soon. Another window?',
+  CONTRACT_NOT_OPEN: 'Contract unavailable. Another window?',
+  MARKET_DATA_UNAVAILABLE: 'Fresh quote unavailable.',
+  BELOW_CONTRACT_MINIMUM: 'Below the contract minimum.',
+  CAP_EXCEEDED: 'Check the size on screen.',
+  INACTIVE: 'Request a fresh quote.',
+  EXPIRED: 'Quote expired. Requote?',
+};
+
 export const initial: VoiceView = {
   proposal:null, availability:null, tradeMessage:"", positionSnapshot:null,
   status: 'Idle',
@@ -310,7 +324,10 @@ export class Voice {
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,message:'Session ended.'});
             const result = await this.prepareBuy(params);
-            if (!result.ok) return JSON.stringify({ok:false, error:result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE'), say:'See the issue on screen.'});
+            if (!result.ok) {
+              const error = result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE');
+              return JSON.stringify({ok:false, error, say:shortTradeIssue[error] ?? 'See the issue on screen.'});
+            }
             const { quantity, outcome } = result.proposal;
             const paired = result.availability.voice_authorized && result.availability.voice_confirmation_supported;
             const say = !result.availability.execution_enabled ? 'Approval is unavailable.'
@@ -353,7 +370,7 @@ export class Voice {
     const session = this.session;
     if (!this.active || !session) return {ok:false, message:'Start voice to prepare a proposal.'};
     if (!session.credentials.session_token) {
-      const message = 'Market quotes are available. The private order ledger is not configured.';
+      const message = 'This session opened with quotes only. Restart voice to request trading access.';
       this.update({tradeMessage:message});
       return {ok:false, message, say:'Order approval is unavailable.'};
     }
@@ -404,20 +421,21 @@ export class Voice {
       if (result.outcome_summary) {
         this.showExchangeResult(result);
         const fills: Record<string, string> = {
-          FILLED: 'Filled in the sandbox.', PARTIAL: 'Partially filled in the sandbox.',
+          FILLED: 'Filled in the sandbox.', PARTIAL: `Sandbox filled ${result.filled_quantity} of ${proposal.quantity}.`,
           NOT_FILLED: 'No contracts filled.', PENDING_UNKNOWN: 'Fill status is pending.',
-          EXCHANGE_REJECTED: 'The sandbox rejected the order.',
+          EXCHANGE_REJECTED: result.voice_say ?? 'Rejected. Check order details.',
         };
         return {ok:result.ok, say:fills[result.outcome_summary] ?? 'Check the order on screen.'};
       }
       const code = typeof result.error === 'string' ? result.error : result.error?.code;
-      const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'CAP_EXCEEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);
+      const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'CAP_EXCEEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'NO_LIQUIDITY', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);
       if (terminal) this.currentProposal = null;
       this.update({tradeMessage:result.message ?? 'Check your proposal.', ...(terminal && {proposal:null})});
+      if (!code) return {ok:false, say:'Check order history before retrying.'};
       if (code === 'CONFIRMATION_REQUIRED') return {ok:false, say:proposal.voice_readback};
-      return {ok:false, say:'Check your proposal on screen.'};
+      return {ok:false, say:shortTradeIssue[code] ?? 'Check your proposal on screen.'};
     } catch {
-      return {ok:false, say:'Please confirm the proposal.'};
+      return {ok:false, say:'Check order history before retrying.'};
     } finally {
       this.approving = false;
     }

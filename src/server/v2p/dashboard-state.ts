@@ -1,52 +1,26 @@
 // @ts-nocheck -- mechanical port of the Deno edge-function code; logic kept verbatim.
 // Public read-only state for the judge dashboard. Polled every ~2.5 s.
 // Returns DB activity plus a live (cached 5 s) snapshot of the Gemini sandbox account.
-import { geminiReadError, getUsdAvailable, gPrivate, hasCredentials } from "./gemini";
+import { liveAccount } from "./account-summary";
 import { dashboardMarkets } from "./dashboard-markets";
 import { db, executionEnabled } from "./db";
 import { receiptAddress, receiptBalanceSol } from "./receipts";
-import { corsHeaders, env, json, LIMITS, maskPhone, num } from "./util";
+import { corsHeaders, env, json, LIMITS, maskPhone } from "./util";
 
 // Bump on every backend change so the deployed revision can be checked read-only from the dashboard feed.
 export const BACKEND_REVISION = "2026-11-19.3-browser-voice-approval";
 
-let live: { at: number; value: unknown } | null = null;
-
-async function liveAccount() {
-  if (live && Date.now() - live.at < 5000) return live.value;
-  if (!hasCredentials()) {
-    live = { at: Date.now(), value: { configured: false } };
-    return live.value;
+async function readLocalAccount() {
+  try {
+    const capturePort = env("CAPTURE_PORT");
+    if (!capturePort) return await liveAccount();
+    // Dashboard polling and voice trades share one signer in the local API process.
+    const response = await fetch("http://127.0.0.1:" + capturePort + "/internal/account-summary");
+    if (!response.ok) throw new Error("Account unavailable");
+    return await response.json();
+  } catch {
+    return { configured: true, terms_accepted: null, balance_error: "Gemini account data unavailable.", positions_error: "Gemini position data unavailable." };
   }
-  const [terms, bal, pos] = await Promise.all([
-    gPrivate("/v1/prediction-markets/terms/status", {}, { method: "GET" }),
-    getUsdAvailable(),
-    gPrivate("/v1/prediction-markets/positions"),
-  ]);
-  // deno-lint-ignore no-explicit-any
-  const rows = pos.data?.positions;
-  const validPositions = pos.ok && Array.isArray(rows) && rows.every(p =>
-    typeof p?.symbol === "string" && p.symbol && ["number", "string"].includes(typeof p.totalQuantity) && num(p.totalQuantity) !== null);
-  const positions = (validPositions ? rows : []).filter((p: any) => (num(p.totalQuantity) ?? 0) > 0).map((p: any) => ({
-    symbol: p.symbol, outcome: p.outcome, quantity: p.totalQuantity, on_hold: p.quantityOnHold, avg_price: p.avgPrice,
-    bid: p.prices?.sell?.[String(p.outcome).toLowerCase()] ?? null, market_value: p.marketValue ?? null,
-    unrealized_pnl: p.unrealizedPnl ?? null, event: p.contractMetadata?.eventName, contract: p.contractMetadata?.contractName,
-    contract_status: p.contractMetadata?.contractStatus, expiry: p.contractMetadata?.expiryDate, resolution_side: p.resolutionSide ?? null,
-  }));
-  live = {
-    at: Date.now(),
-    value: {
-      configured: true,
-      terms_accepted: terms.ok && typeof terms.data?.hasAcceptedLatest === "boolean" ? terms.data.hasAcceptedLatest : null,
-      terms_error: !terms.ok ? geminiReadError(terms) : typeof terms.data?.hasAcceptedLatest !== "boolean" ? "Gemini returned an unexpected terms response." : null,
-      usd_available: bal.usd,
-      balance_error: bal.error ?? null,
-      positions,
-      positions_error: !pos.ok ? geminiReadError(pos) : validPositions ? null : "Gemini returned an unexpected positions response.",
-
-    },
-  };
-  return live.value;
 }
 
 let solana: { at: number; value: unknown } | null = null;
@@ -78,7 +52,7 @@ export async function handleDashboardState(req: Request): Promise<Response> {
     rows("intents", "created_at", 25),
     rows("orders", "created_at", 25),
     rows("receipts", "created_at", 30),
-    !local ? {configured:false} : liveAccount().catch(() => ({ configured: true, terms_accepted: null, balance_error: "Gemini account data unavailable.", positions_error: "Gemini position data unavailable." })),
+    local ? readLocalAccount() : { configured: false },
     local && (configured || env("SOLANA_RECEIPT_SECRET_KEY")) ? solanaInfo().catch(() => null) : null,
     executionEnabled().catch(() => false),
     dashboardMarkets().catch(() => ({ events: [], error: "Gemini Sandbox markets unavailable." })),

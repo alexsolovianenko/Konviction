@@ -256,7 +256,7 @@ it("executes one sandbox buy only after the paired browser hears its fresh readb
   const t = token();
   const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
   const { proposal } = await run({ ...device, token:t, method:"POST", path:"proposals", key:randomUUID(), body:input });
-  expect(proposal.voice_readback).toBe(`Buy 2 YES on Example event, Option, at up to 40 cents each. About $${(proposal.notional_usd + proposal.est_fee_usd).toFixed(2)} at risk including estimated fees, $2 payout if all fill and win. Say confirm.`);
+  expect(proposal.voice_readback).toBe("Buy two yes on Example event, Option, up to forty cents each. Estimated risk eighty four cents including fees. Payout two dollars if all fill and win. Say confirm.");
   const confirm = (seq:number, credentials: Record<string,string> = device) =>
     run({ ...credentials, token:t, method:"POST", path:"voice-confirm", body:{proposal_id:proposal.proposal_id, confirmation_seq:seq} });
   const entry = (seq:number, role:string, text:string, interrupted = false, now = Date.now()) =>
@@ -265,7 +265,7 @@ it("executes one sandbox buy only after the paired browser hears its fresh readb
   entry(1,"agent",proposal.voice_readback,true);
   entry(2,"user","confirm");
   await expect(confirm(2)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
-  entry(3,"agent",proposal.voice_readback.replace("40 cents","4 cents"));
+  entry(3,"agent",proposal.voice_readback.replace("forty cents","four cents"));
   entry(4,"user","yes");
   await expect(confirm(4)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
   entry(5,"agent",proposal.voice_readback);
@@ -274,7 +274,7 @@ it("executes one sandbox buy only after the paired browser hears its fresh readb
   entry(7,"agent",proposal.voice_readback);
   entry(8,"user","confirm",false,Date.now()-31000);
   await expect(confirm(8)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
-  entry(9,"agent",proposal.voice_readback);
+  entry(9,"agent","[neutral] " + proposal.voice_readback);
   entry(10,"user","Confirm.");
   await expect(confirm(10, {host:device.host})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
   await expect(confirm(10, await paired())).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
