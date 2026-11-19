@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://call-to-predict.local/contracts/intent.schema.json",
   "title": "CapturedIntent",
-  "description": "Phase 1 capture record for the Gemini-only browser voice assistant. An intent is a record of what the user asked for. It is never an order: Phase 1 performs zero execution, nothing is sent to Gemini, and `status` is always `captured`. The backend mints `id` and `created_at`; every other field comes from a validated tool call (see contracts/tools.json and contracts/api.yaml).",
+  "description": "Phase 1 capture record for the Gemini-only browser voice assistant. An intent is a record of what the user asked for. It is never an order: Phase 1 performs zero execution, nothing is sent to Gemini, and `status` is always `captured`. The backend mints `id` and `created_at`; every other field comes from a validated tool call (see contracts/tools.json and contracts/api.yaml). Contract revision 1.1.0: field definitions and constraints are unchanged from 1.0.0; only description texts changed.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,7 +29,7 @@
     "session_id": {
       "type": "string",
       "format": "uuid",
-      "description": "Voice session that produced the intent. Minted by POST /voice/signed-url. The full timestamped transcript of the session is stored under the same session_id."
+      "description": "Voice session that produced the intent. Minted by POST /voice/signed-url. The full timestamped transcript of the session is stored under the same session_id. An identifier, not a credential."
     },
     "created_at": {
       "type": "string",
@@ -49,7 +49,7 @@
     "instrument": {
       "type": "string",
       "maxLength": 64,
-      "description": "place_order: an instrument from the simulated catalog, upper case (spot symbol such as BTCUSD, or prediction contract ticker such as FED-CUT-DEC26). market_query: the resolved instrument for get_orderbook, or the raw search text for search_markets. cancel_order and order_status: the instrument when known, otherwise the empty string (order identified by reference only)."
+      "description": "place_order: an instrument from the simulated catalog, upper case (spot symbol such as BTCUSD, or prediction contract ticker such as FED-CUT-DEC26). market_query: the resolved instrument for get_orderbook, or, for search_markets, the search text trimmed and cut to its first 64 characters. cancel_order and order_status: the instrument when known, otherwise the empty string (order identified by reference only)."
     },
     "side": {
       "type": ["string", "null"],
@@ -80,7 +80,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 2000,
-      "description": "Raw transcript of the user's own words that stated the request, verbatim from speech recognition, without paraphrase or correction."
+      "description": "Raw transcript of the user's own words that stated the request, verbatim from speech recognition, without paraphrase or correction. For place_order and cancel_order it is verified as a contiguous part of the user transcript. For order_status and market_query, when the supplied text is not found in the transcript, it is the latest non-empty user transcript entry cut to 2000 characters. It is never model-written or invented text; the full raw speech is kept in the session transcript."
     },
     "status": {
       "type": "string",

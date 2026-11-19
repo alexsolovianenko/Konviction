@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Call-to-Predict Phase 1 capture API
-  version: 1.0.0
+  version: 1.1.0
   summary: Gemini-only browser voice assistant. Capture only, zero execution.
   description: |
     Backend contract for Phase 1 of the browser voice assistant.
@@ -20,10 +20,14 @@ info:
 
     Cross-cutting behavior is specified in the `x-` sections at the end of this file:
     `x-session-lifecycle`, `x-confirmation-enforcement`, `x-idempotency`, `x-normalization`,
-    `x-utterance-check`, `x-validation-order`, `x-error-codes`, `x-capture-status-queries`,
-    `x-cancel-resolution` and `x-simulated-catalog`.
+    `x-utterance-check`, `x-audit-records`, `x-query-matching`, `x-validation-order`,
+    `x-error-codes`, `x-capture-status-queries`, `x-cancel-resolution`, `x-simulated-catalog` and
+    `x-revision`.
     Tool parameters and responses are also listed, per tool, in contracts/tools.json; the two files
     must agree and this file wins on HTTP details.
+
+    Revision 1.1.0 clarifies 1.0.0 without adding or removing an operation, a tool, a parameter or
+    an intent field. Every change is listed in `x-revision`.
 servers:
   - url: /api
     description: Same-origin application backend.
@@ -41,8 +45,10 @@ paths:
       summary: Start a voice session and get a signed URL for the private ElevenLabs agent WebSocket.
       description: |
         Mints a new `session_id` and an opaque `session_token`, then asks ElevenLabs for a signed
-        WebSocket URL for the private agent. The ElevenLabs API key and agent ID stay in server-side
-        configuration and are never returned. The browser passes `signed_url` to the ElevenLabs
+        WebSocket URL for the private agent. The ElevenLabs API key stays in server-side
+        configuration and is never returned, logged or placed in any response. The agent ID is not
+        returned as a field; the provider's signed URL may contain it, which is acceptable because
+        the agent requires authentication and the ID alone cannot open a conversation. The browser passes `signed_url` to the ElevenLabs
         client to open the conversation and uses `session_token` as the bearer token for every other
         endpoint. Each call creates a new session; a signed URL is single-conversation and
         short-lived, so request it immediately before connecting.
@@ -117,6 +123,16 @@ paths:
           unedited. Phase 1 has no typed input; a user entry is always spoken.
         - `role: agent` entries are the text the agent actually spoke. If the user interrupted the
           agent, post the truncated text that was spoken and set `interrupted: true`.
+        - Never fabricate speech. An entry holds only words that were actually spoken or heard.
+          When the heard part of an interrupted agent turn is unknown, post `text: ""` with
+          `interrupted: true`; do not post the full generated reply as if it had been spoken, and
+          do not mark a turn interrupted unless the provider reported an interruption or a
+          correction for it. A turn with no recognized user speech produces no user entry.
+        - The backend records its own receipt time for every entry, next to the entry. It is not
+          part of the entry and is used only for the 120-second confirmation window.
+        - Stored entries are raw. The backend stores `text` exactly as posted, never trims,
+          truncates, normalizes or rewrites it, and returns it unchanged. Normalization happens
+          only in memory, when comparing.
         - `role: tool` entries are posted after the tool returns, with `tool_name` and the result
           body serialized in `text`.
         - `final: true` ends the session (End Session button, or the conversation closed).
@@ -318,8 +334,10 @@ paths:
         Searches the place_order intents captured in the calling session for the given venue and
         returns them with `capture_status: captured` and whether a cancel has also been captured.
         It never reports exchange status: `execution` is always `none`. A reference the user
-        supplied that is not the id of a captured intent returns `count: 0`. Writes one
-        order_status intent as an audit record (`confirmed_by_user: false`).
+        supplied that is not the id of a captured intent returns `count: 0`. An `order_id` that is
+        not the id of a captured intent and normalizes to the empty string (for example "--") is
+        `400 invalid_parameters`. Writes one order_status intent as an audit record
+        (`confirmed_by_user: false`), see `x-audit-records`.
       security:
         - sessionToken: []
       parameters:
@@ -345,6 +363,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/SessionNotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 
   /tools/search_markets:
     post:
@@ -353,9 +372,9 @@ paths:
       summary: SIMULATED. Handler for client tool search_markets.
       description: |
         Case-insensitive search of `x-simulated-catalog` for the given venue over instrument, title
-        and aliases. A query matches an item when every query word of three or more letters is a
-        substring of the item's instrument, title or one of its aliases. Results keep catalog order.
-        Writes one market_query intent whose `instrument` is the raw `query` text.
+        and aliases, by the rules in `x-query-matching`. Results keep catalog order. Writes one
+        market_query intent whose `instrument` is the bounded form of `query` defined in
+        `x-audit-records`.
       security:
         - sessionToken: []
       parameters:
@@ -381,6 +400,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/SessionNotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 
   /tools/get_orderbook:
     post:
@@ -786,7 +806,7 @@ x-session-lifecycle:
   states: [created, active, ended]
   steps:
     - "Start Voice: the browser calls POST /voice/signed-url. The backend mints session_id (UUID v4) and session_token, stores the session in state created, and returns the signed URL."
-    - "The browser opens the ElevenLabs conversation with signed_url and keeps session_id and session_token in memory only (not localStorage, not the URL). The model is never given either value."
+    - "The browser opens the ElevenLabs conversation with signed_url and keeps session_id and session_token in memory only (not localStorage, not the URL). session_token is the only credential and is never given to the model: it appears in no tool parameter, tool result or transcript entry. session_id is an identifier, not a credential; the model never supplies it, but it does appear inside the intent returned by a capture tool, and the agent must not speak it."
     - "The first accepted POST /transcripts moves the session to active."
     - "During the session the browser posts transcript entries as turns finish, and each client tool wrapper flushes pending entries before it calls its handler."
     - "End Session, or the conversation closing for any reason, makes the browser post its remaining entries with final true. The session moves to ended."
@@ -801,19 +821,29 @@ x-session-lifecycle:
 x-confirmation-enforcement:
   summary: >
     A place_order or cancel_order intent is stored only when the stored transcript shows the agent
-    reading back these exact terms and the user answering with an explicit spoken yes, as the turn
-    directly before the capture call. confirmed_by_user true in the request is necessary and never
-    sufficient.
+    reading back these exact terms, uninterrupted, and the user answering with an unambiguous
+    spoken yes and nothing else, directly before the capture call. confirmed_by_user true in the
+    request is necessary and never sufficient. When in doubt the answer is no: the agent reads the
+    terms back again.
   definitions:
-    C: "The latest role user entry of the session at the time of the call."
-    R: "The entry directly before C when tool entries are ignored. It must be a role agent entry."
+    C: >
+      The confirmation: the trailing run of consecutive role user entries of the session at the
+      time of the call, ignoring tool entries. Speech recognition may deliver one spoken answer as
+      several entries, so the whole run is judged together. Its text is the entries' texts in seq
+      order joined by single spaces. Its seq is the seq of its last entry. Its time is the
+      moment the backend received its last entry, by the backend clock. The entry's own
+      `timestamp` is the browser clock; it is stored and shown but never used for this window,
+      so a browser clock that runs ahead or behind cannot reject or extend a confirmation.
+    R: >
+      The entry directly before the first entry of C when tool entries are ignored. It must be a
+      role agent entry.
   checks_in_order:
     - code: confirmation_required
       rule: "confirmed_by_user in the request is true."
     - code: confirmation_missing
-      rule: "C exists, its timestamp is at most 120 seconds before the backend receives the call, and C is an explicit yes (see explicit_yes)."
+      rule: "C exists, the backend received its last entry at most 120 seconds before it receives the call, and C as a whole is an explicit yes (see explicit_yes). Every entry of the run counts: a yes in one entry does not confirm when another entry of the run carries a question, a correction, a negation or any other content."
     - code: readback_missing
-      rule: "R exists, is a role agent entry, and its normalized text contains 'say yes to confirm'. A user entry between the readback and C breaks this rule, so a change request followed by a separate yes never confirms the old terms."
+      rule: "R exists, is a role agent entry, and its normalized text contains 'say yes to confirm'. Because C is the whole trailing run of user entries, any user speech after the readback is part of C; it cannot be skipped to reach an earlier readback."
     - code: readback_interrupted
       rule: "R.interrupted is not true. A readback the user cut off was not heard in full and confirms nothing."
     - code: readback_mismatch
@@ -821,15 +851,18 @@ x-confirmation-enforcement:
     - code: confirmation_already_used
       rule: "C has not already confirmed a different intent (see x-idempotency)."
   explicit_yes:
-    normalization: "Lower case, strip punctuation, collapse whitespace."
+    normalization: "Quote folding (x-normalization quote_characters), lower case, strip punctuation, collapse whitespace. The question check below runs before punctuation is stripped."
     rule: >
-      The entry must contain at least one yes word and every other word must be an allowed filler.
-      Anything else is not a confirmation, including a yes combined with a change ('yes but make it
-      ten'), a negation, a number, or a vague assent on its own ('okay', 'sure', 'sounds good').
+      All three must hold for the text of C. (1) No entry of C contains a question mark (U+003F
+      or U+FF1F): a question is not a confirmation, even 'yes?'. (2) At least one word is a yes
+      word. (3) Every other word is an allowed filler. Anything else is not a confirmation,
+      including a yes combined with a change ('yes but make it ten'), a negation in any position
+      ('no yes', 'yes no wait'), a number, or a vague assent on its own ('okay', 'sure',
+      'sounds good'). The lists are closed: a word that is on neither list fails the check.
     yes_words: ["yes", "yeah", "yep", "yup"]
-    allowed_fillers: ["please", "confirm", "confirmed", "i", "correct", "thats", "that", "is", "right", "go", "ahead", "do", "it", "thanks", "thank", "you", "sure", "absolutely", "definitely", "ok", "okay"]
-    examples_accept: ["Yes.", "yes please", "Yeah, that's right.", "Yes, confirm.", "yep go ahead"]
-    examples_reject: ["okay", "sure", "sounds good", "yes but make it ten", "yes, no wait", "I guess", "do it", "confirm"]
+    allowed_fillers: ["please", "confirm", "confirmed", "i", "correct", "thats", "that", "is", "right", "go", "ahead", "and", "do", "it", "thanks", "thank", "you", "sure", "absolutely", "definitely", "ok", "okay", "uh", "um", "er", "ah"]
+    examples_accept: ["Yes.", "yes please", "Yeah, that's right.", "Yes, confirm.", "yep go ahead", "um, yes", "Yes, go ahead and do it.", "entries ['um', 'yes']", "entries ['yes', 'yes please']"]
+    examples_reject: ["okay", "sure", "sounds good", "yes but make it ten", "yes, no wait", "I guess", "do it", "confirm", "Yes?", "yes, right?", "no yes", "entries ['yes', 'but make it two']", "entries ['no', 'yes']", "entries ['yes', 'actually no']", "entries ['yes', 'wait what was the price?']"]
   readback_templates:
     note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence."
     spot_order: "Confirming: {side} {quantity} {instrument} on Gemini spot at a limit of {limit_price} dollars. Say yes to confirm."
@@ -865,7 +898,7 @@ x-idempotency:
   summary: A retry never creates a second intent, and one spoken yes never confirms two different things.
   rules:
     - "Idempotency-Key: the first completed response for a (session_id, Idempotency-Key) pair is stored for the life of the session and replayed byte for byte on any later request with the same key and the same body. The same key with a different body is 409 idempotency_key_reused. Errors with code transcript_not_synced are not stored, so the wrapper can flush and retry with the same key."
-    - "Confirmation binding: each capture consumes its confirmation entry C, identified by (session_id, C.seq). A later capture call that resolves to the same C with identical normalized terms (intent, venue, instrument, side, quantity, limit_price, order_id) returns 200 with duplicate true and the original intent, whatever its Idempotency-Key. This covers the model calling the tool twice for one yes."
+    - "Confirmation binding: each capture consumes its confirmation C, identified by (session_id, seq of the last entry of C). A later capture call that resolves to the same C with identical normalized terms (intent, venue, instrument, side, quantity, limit_price, order_id) returns 200 with duplicate true and the original intent, whatever its Idempotency-Key. This covers the model calling the tool twice for one yes."
     - "The same C with different terms is 409 confirmation_already_used with existing_intent_id. A second, identical order needs its own readback and its own yes."
     - "cancel_order: at most one cancel intent per prepared order per session. A further cancel for the same target with a new confirmation is 409 cancel_already_captured with existing_intent_id."
     - "Query handlers honor Idempotency-Key replay as well, so a retried query writes one audit intent, not two."
@@ -893,6 +926,7 @@ x-normalization:
   order_reference:
     - "Reference normalization: upper case, spelled digits to digits ('one two three' to 123, 'oh' and 'zero' to 0), remove every character that is not a letter or digit. 'a b dash one two three four five' is AB12345."
     - "A user-supplied reference is stored in this normalized form and is accepted only if the same normalized string occurs in the normalized concatenation of the session's user entries."
+    - "A reference that normalizes to the empty string is not a reference. get_order_status answers 400 invalid_parameters; capture_cancel_intent answers 422 order_id_not_user_supplied. Nothing is stored in either case."
     - "The id of a captured intent is a UUID; it is compared exactly and stored in canonical lower-case hyphenated form."
   text_comparison:
     - "For utterance and yes checks: lower case, strip punctuation, collapse whitespace."
@@ -906,11 +940,53 @@ x-utterance-check:
   summary: utterance must be the user's own recorded words.
   rule: >
     Normalize the utterance and the concatenation, in seq order joined by single spaces, of all role
-    user entries of the session up to and including C. The utterance must be a contiguous substring
-    of that concatenation.
+    user entries of the session up to and including C (for query handlers: all role user entries
+    stored at the time of the call). The utterance must be a contiguous substring of that
+    concatenation and must not be empty after normalization.
   on_failure:
     capture_handlers: "422 utterance_mismatch. Nothing is stored. The agent calls again with the verbatim words; the same confirmation is still valid within its 120 seconds."
-    query_handlers: "No error. The stored audit intent uses the latest user entry text instead."
+    query_handlers: "If the session has at least one role user entry with non-empty normalized text, no error: the audit intent uses the latest such entry, bounded as in x-audit-records. If the session has none, there is no user speech to record: 422 utterance_mismatch, nothing is stored and no query result is returned. The supplied utterance is never stored as the user's words unless it was found in the transcript."
+
+x-audit-records:
+  summary: >
+    Every stored intent must validate against contracts/intent.schema.json. Fields of the
+    order_status and market_query audit intents are derived from the request and are bounded so
+    that a valid query request never fails because of its audit record. They are display copies;
+    the transcript is the evidence and is never altered.
+  derived_fields:
+    - "market_query from search_markets: instrument is the query with leading and trailing whitespace removed, cut to its first 64 characters (Unicode code points). The full query is still used for matching. A query that is empty after trimming is 400 invalid_parameters."
+    - "market_query from get_orderbook: instrument is the resolved catalog instrument."
+    - "order_status: instrument is the instrument filter or the empty string; side is the side filter or null; order_id is the id of the matching captured intent, or the normalized user reference, or null when no order_id was given."
+    - "utterance, when the supplied utterance was found in the transcript: the supplied utterance as given (at most 2000 characters by the request schema)."
+    - "utterance, fallback: the text of the latest role user entry with non-empty normalized text, cut to its first 2000 characters. Nothing is added, paraphrased or joined."
+  rules:
+    - "Bounding applies only to these derived fields of audit intents. Transcript entries keep their full raw text (up to 8000 characters) exactly as posted."
+    - "Bounding never applies to place_order or cancel_order intents. Their utterance is verified as a contiguous substring of the user transcript and a failure is utterance_mismatch."
+    - "No field is ever filled with invented or model-written speech. When there is no user speech, no audit intent is written and the query is refused (x-utterance-check)."
+    - "If a derived audit intent still fails schema validation, that is a server defect: 500, nothing stored. It is not reported as invalid_parameters."
+
+x-query-matching:
+  summary: Exact rules for search_markets. Deterministic, no fuzzy matching, no ranking.
+  steps:
+    - "Fold: Unicode NFKC, quote folding, lower case. Applied to the query and to each catalog instrument, title and alias."
+    - "Split the folded query into words: maximal runs of letters and digits. Every other character separates words, so 'BTC/USD' is btc and usd, and '150,000' is 150 and 000."
+    - "Drop stop words: market, markets, contract, contracts, price, prices, spot, prediction, predictions, gemini, the, and, for."
+    - "Drop words shorter than 3 characters."
+    - "If no word remains, nothing matches: count 0 and an empty results array. A query never matches the whole catalog by default."
+    - "An item of the given venue matches when every remaining word is a substring of at least one of its folded instrument, title or aliases. Different words may match different fields."
+    - "Results keep catalog order and are cut to limit (default 3). count is the number of results returned."
+  examples:
+    - { venue: gemini_spot, query: "bitcoin", results: [BTCUSD] }
+    - { venue: gemini_spot, query: "bitcoin spot price", results: [BTCUSD] }
+    - { venue: gemini_spot, query: "BTC/USD", results: [BTCUSD] }
+    - { venue: gemini_spot, query: "bt", results: [] }
+    - { venue: gemini_spot, query: "the market", results: [] }
+    - { venue: gemini_spot, query: "dogecoin", results: [] }
+    - { venue: gemini_prediction, query: "recession market", results: [US-RECESSION-2027] }
+    - { venue: gemini_prediction, query: "fed cut contract", results: [FED-CUT-DEC26] }
+    - { venue: gemini_prediction, query: "bitcoin", results: [BTC-150K-2026, BTC-120K-2026] }
+    - { venue: gemini_prediction, query: "bitcoin 150,000", results: [BTC-150K-2026] }
+    - { venue: gemini_prediction, query: "bitcoin election", results: [] }
 
 x-validation-order:
   summary: Handlers return the first failing check, in this order, so error behavior is deterministic.
@@ -931,9 +1007,10 @@ x-validation-order:
     - "404 session_not_found"
     - "Idempotency-Key replay or 409 idempotency_key_reused"
     - "409 session_ended"
-    - "400 invalid_parameters"
+    - "400 invalid_parameters (includes a get_order_status order_id that normalizes to the empty string and a search_markets query that is empty after trimming)"
     - "409 transcript_not_synced"
     - "422 unknown_instrument (get_orderbook only)"
+    - "422 utterance_mismatch (only when the session has no user speech, see x-utterance-check)"
     - "200 result"
 
 x-error-codes:
@@ -960,7 +1037,7 @@ x-error-codes:
   readback_mismatch: { http: 422, agent_hint: "The terms changed since the readback. Read the current terms back and wait for a new yes." }
   confirmation_already_used: { http: 409, agent_hint: "That yes already confirmed another capture. Read the new terms back and wait for a new yes." }
   cancel_already_captured: { http: 409, agent_hint: "A cancel for that order is already prepared. Tell the user so." }
-  utterance_mismatch: { http: 422, agent_hint: "Call again with the user's exact words in utterance." }
+  utterance_mismatch: { http: 422, agent_hint: "Call again with the user's exact words in utterance. If the user has not said anything yet, wait for them to speak." }
   backend_unavailable: { http: null, agent_hint: "Produced by the wrapper. Say you could not reach the service and ask the user to try again. Do not say anything was prepared." }
   elevenlabs_unavailable: { http: 502, agent_hint: "Not returned to the agent." }
   voice_not_configured: { http: 503, agent_hint: "Not returned to the agent." }
@@ -974,7 +1051,8 @@ x-capture-status-queries:
     - "A status question about a reference the user supplied (an order ID that is not the id of a captured intent) returns count 0. The agent may repeat the reference and says it has no prepared order with that reference in this session and cannot see exchange status."
     - "Orders prepared in an earlier session are not visible. The answer is count 0."
     - "venue is required. When the user names no venue and no instrument the agent calls the tool once per venue, or asks which venue."
-    - "Each call writes one order_status audit intent with confirmed_by_user false, order_id set to the queried reference or null, instrument set to the filter or the empty string, and side set to the filter or null."
+    - "Each call writes one order_status audit intent with confirmed_by_user false, order_id set to the queried reference or null, instrument set to the filter or the empty string, and side set to the filter or null (x-audit-records)."
+    - "An order_id that is not the id of a captured intent and normalizes to the empty string is 400 invalid_parameters. The agent asks the user for the order ID instead of sending punctuation or filler."
 
 x-cancel-resolution:
   summary: How a cancel request becomes exactly one order_id. The agent never chooses between candidates and never invents or completes an ID.
@@ -1141,3 +1219,25 @@ x-simulated-catalog:
           - { price: 0.32, size: 180 }
           - { price: 0.33, size: 450 }
           - { price: 0.34, size: 850 }
+
+x-revision:
+  version: 1.1.0
+  supersedes: "1.0.0 (commit 856a0e4)"
+  compatibility: "No operation, tool, parameter, response field or intent field was added or removed. A 1.0.0 client works unchanged. The backend changes behavior in the cases below. The documented responses of get_order_status and search_markets gain 422 (utterance_mismatch when the session has no user speech)."
+  changes:
+    - id: A
+      title: "Confirmation is the whole trailing run of user entries"
+      detail: "C is now the trailing run of consecutive user entries, judged together, so speech recognition splitting one answer cannot hide a correction, negation or question, and cannot break a plain yes. A question mark anywhere in C rejects. Fillers and, uh, um, er, ah were added. Confirmation binding uses the seq of the last entry of C. The 120-second window is measured from the backend's receipt of the last entry of C, not from the browser timestamp."
+      backend_behavior_change: "entries ['um','yes'] and 'Yes, go ahead and do it.' now confirm; 'Yes?' no longer confirms; entries ['yes','but make it two'] and ['no','yes'] are confirmation_missing; a browser timestamp ahead of or behind the backend clock no longer affects the result."
+    - id: B
+      title: "Audit records are bounded and never fabricated"
+      detail: "New x-audit-records. search_markets stores the first 64 characters of the query as the audit instrument; a fallback utterance is cut to 2000 characters. With no user speech in the session a query handler answers 422 utterance_mismatch and stores nothing. Transcript entries are stored raw and are never trimmed or rewritten. An unknown interrupted agent turn is posted with empty text, never with the unspoken draft."
+      backend_behavior_change: "A 65 to 120 character query now succeeds. A fallback from a user entry over 2000 characters now succeeds. A query with no user entry is 422 utterance_mismatch instead of 400. A get_order_status order_id that normalizes to empty is specified as 400 invalid_parameters."
+    - id: C
+      title: "Query matching is specified exactly"
+      detail: "New x-query-matching: word splitting, stop words, the three-character minimum, and no match when no word remains."
+      backend_behavior_change: "'bt' now returns nothing instead of the whole catalog; 'recession market', 'fed cut market' and 'bitcoin spot' now match."
+    - id: D
+      title: "Identifier wording"
+      detail: "session_token is the only credential and never reaches the model. session_id is an identifier that appears inside returned intents. The signed URL may contain the agent ID. The API key is never returned."
+      backend_behavior_change: "None."
