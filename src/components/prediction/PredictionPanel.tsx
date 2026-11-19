@@ -6,6 +6,7 @@ import type { Lookup, MarketResult } from "../../pages/useMarketTools";
 import { useVoice } from "../voice/VoiceProvider";
 import { VoicePositions } from "../voice/VoicePositions";
 import { QuoteChart } from "./QuoteChart";
+import { SettlementIndexPanel } from "./SettlementIndexPanel";
 import { POLL_MS, useContractQuotes, type QuoteTarget } from "./useContractQuotes";
 
 const text = (value: unknown) => (typeof value === "string" && value ? value : null);
@@ -108,6 +109,7 @@ export function PredictionPanel() {
               </dd>
             </div>
           </dl>
+          <SettlementIndexPanel eventTicker={shown.eventTicker} />
           <section aria-label="Contract price chart" className="contract-chart min-w-0 rounded-xl border border-border bg-card p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="text-sm font-semibold">Contract prices</h3>

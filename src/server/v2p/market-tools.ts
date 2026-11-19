@@ -1,15 +1,17 @@
 import { dashboardMarkets, dashboardMarketsFrom } from "./dashboard-markets";
 import { comboEligibility } from "./native-combo";
 import { gPublic, geminiReadError, findContract, type GEvent } from "./gemini";
+import { settlementIndex } from "./settlement-index";
 
 import { normalizeMarketQuery, discoverCombos, fiveMinuteDiscovery, secondsUntil, payoutAtAsk } from "./prediction-discovery";
 
 export async function marketTool(name: string, params: URLSearchParams) {
   const fail = (error: string, status: number) => Response.json({ ok: false, error }, { status });
-  const fields = name === "search_markets" ? ["query"] : ["event_ticker", "contract_symbol"];
-  if (!["search_markets", "get_orderbook"].includes(name)) return fail("Unknown market tool.", 404);
+  const fields = name === "search_markets" ? ["query"] : name === "get_settlement_index" ? ["event_ticker"] : ["event_ticker", "contract_symbol"];
+  if (!["search_markets", "get_orderbook", "get_settlement_index"].includes(name)) return fail("Unknown market tool.", 404);
   if (Array.from(params.keys()).length !== fields.length || fields.some(k => !params.has(k) || params.get(k)!.length > 200))
     return fail("Invalid market tool parameters.", 400);
+  if (name === "get_settlement_index") return settlementIndex(params.get("event_ticker")!);
   if (name === "search_markets") {
     const query = normalizeMarketQuery(params.get("query")!);
     const assets = [...new Set(query.match(/\b(?:btc|eth|sol|xrp)\b/g) ?? [])];
