@@ -84,7 +84,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Voice-to-Predict" },
       { name: "description", content: "Live console for voice-driven prediction market trades." },
-      { name: "theme-color", content: "#07080c" },
+      { name: "theme-color", content: "#252525" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },

@@ -18,7 +18,7 @@ function OpenTrades() {
     <div className="flex max-w-5xl flex-col gap-8">
       <PageHeader
         title="Private trades"
-        lead="Enter the approval PIN to read private Gemini Sandbox orders, fills and positions. Data comes straight from Gemini."
+        lead="Unlock sandbox orders, fills, and positions with your approval PIN."
       />
       <form
         className="flex flex-wrap items-end gap-2"
