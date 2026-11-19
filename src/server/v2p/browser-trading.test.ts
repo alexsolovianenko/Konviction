@@ -319,7 +319,7 @@ it("executes one local sandbox buy only after the unpaired call hears its fresh 
   const t = token();
   const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
   const { proposal } = await run({ ...device, token:t, method:"POST", path:"proposals", key:randomUUID(), body:input });
-  expect(proposal.voice_readback).toBe("Example event, Option. Buy two yes up to forty cents. Confirm?");
+  expect(proposal.voice_readback).toBe("Buy two yes at forty cents. Confirm?");
   const confirm = (seq:number, credentials: Record<string,string> = device) =>
     run({ ...credentials, token:t, method:"POST", path:"voice-confirm", body:{proposal_id:proposal.proposal_id, confirmation_seq:seq} });
   const entry = (seq:number, role:string, text:string, interrupted = false, now = Date.now()) =>
