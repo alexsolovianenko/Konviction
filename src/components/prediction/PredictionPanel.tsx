@@ -46,6 +46,9 @@ export function selectTarget(
 /** Live contract chart plus the full typed-PIN purchase panel, driven by the voice session. */
 export function PredictionPanel() {
   const { voice, view, market } = useVoice();
+  const [outcome, setOutcome] = useState<"yes" | "no">("yes");
+  const [budget, setBudget] = useState("");
+  const [preparing, setPreparing] = useState(false);
   const selected = selectTarget(view.proposal, market.result, market.history);
   // Keep the last selection while unrelated lookups come and go; a proposal always overrides it.
   const [target, setTarget] = useState<QuoteTarget | null>(selected);
@@ -126,10 +129,21 @@ export function PredictionPanel() {
         </p>
       )}
       {shown && !view.proposal && (
-        <p className="text-sm text-muted-foreground">
-          To buy, say the outcome, a quantity or dollar budget, and your limit price. The order is
-          sent only after you type your PIN below.
-        </p>
+        <form aria-label="Prepare sandbox buy" className="flex flex-wrap items-end gap-3" onSubmit={async e => {
+          e.preventDefault();
+          const price = latest?.[outcome];
+          if (preparing || view.status === "Idle" || feed.status !== "live" || price == null || !(Number(budget) > 0)) return;
+          setPreparing(true);
+          try {
+            await voice.prepareBuy({event_ticker:shown.eventTicker, contract_symbol:shown.symbol, outcome, budget_usd:Number(budget), limit_price:price});
+          } finally { setPreparing(false); }
+        }}>
+          <label>Outcome<select className="field" value={outcome} onChange={e => setOutcome(e.target.value === "no" ? "no" : "yes")}><option value="yes">YES</option><option value="no">NO</option></select></label>
+          <label>Budget (USD)<input className="field" type="number" min="0.01" step="0.01" required value={budget} onChange={e => setBudget(e.target.value)} /></label>
+          <button className="btn btn-primary" disabled={preparing || !["Speaking","Listening"].includes(view.status) || feed.status !== "live" || latest?.[outcome] == null || !(Number(budget)>0)}>
+            {preparing ? "Preparing…" : "Preview sandbox buy"}
+          </button>
+        </form>
       )}
       <TradeApproval
         proposal={view.proposal}

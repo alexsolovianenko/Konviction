@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../components/voice/VoiceProvider';
 import { ActivityPanel } from '../components/voice/ActivityPanel';
-import { TradeApproval } from './TradeApproval';
+import { PredictionPanel } from '../components/prediction/PredictionPanel';
 
 export function Home() {
   const { voice, view, status, market } = useVoice();
@@ -38,7 +38,7 @@ export function Home() {
       </button>
       {!idle && <p className="voice-state" role="status">{status.label}</p>}
       {view.error && <p className="voice-state" role="alert">{view.error}</p>}
-      {(view.proposal || view.tradeMessage) && <TradeApproval proposal={view.proposal} availability={view.availability} message={view.tradeMessage} approve={(id,pin) => voice.approve(id,pin)} />}
+      <PredictionPanel />
       {(!idle || turns.length > 0 || view.draft) && <section className="voice-transcript" aria-label="Live transcript">
         <h2>Live transcript</h2>
         <ol ref={transcript} role="log" aria-live="polite">

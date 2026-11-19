@@ -250,9 +250,7 @@ export class Voice {
           ...session.tools,
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,message:'Session ended.'});
-            // The session token stays in the browser; the model only sees the tool result below.
-            const result = await tradingRequest('proposals',params,credentials.session_token,{idempotencyKey:crypto.randomUUID()});
-            update({ proposal:result.proposal ?? null, availability:result.availability ?? null, tradeMessage:result.message ?? '' });
+            const result = await this.prepareBuy(params);
             if (!result.ok) return JSON.stringify({ok:false, error:result.error?.code ?? (typeof result.error === 'string' ? result.error : 'PROPOSAL_UNAVAILABLE'), say:'See the issue on screen.'});
             const { quantity, outcome } = result.proposal;
             return JSON.stringify({ok:true, quantity, outcome, say:result.availability.execution_enabled
@@ -282,6 +280,15 @@ export class Voice {
         denied ? 'Microphone blocked. Allow access for this site and start voice again.' : message,
       );
     }
+  }
+
+  async prepareBuy(params: Record<string, unknown>) {
+    const session = this.session;
+    if (!this.active || !session) return {ok:false, message:'Start voice to prepare a proposal.'};
+    const result = await tradingRequest('proposals', params, session.credentials.session_token, {idempotencyKey:crypto.randomUUID()});
+    if (session !== this.session) return {ok:false, message:'Session ended.'};
+    this.update({proposal:result.proposal ?? null, availability:result.availability ?? null, tradeMessage:result.message ?? ''});
+    return result;
   }
 
   async approve(proposalId: string,pin: string) {
