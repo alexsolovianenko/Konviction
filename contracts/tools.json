@@ -1,12 +1,14 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "phase": 1,
   "description": "Exact client tools of the Gemini-only browser voice assistant. Phase 1 is capture only: no tool executes, routes or cancels anything on Gemini, and every query answer is SIMULATED. Exactly five tools exist. Each is registered on the ElevenLabs agent as a client tool and implemented in the browser as a thin wrapper that forwards to the backend handler POST /tools/{name} (contracts/api.yaml).",
   "conventions": {
     "llm_parameters": "The `parameters` object of each tool is everything the model supplies. Types are plain (no null unions). An optional parameter that is unknown is omitted; the wrapper sends it to the backend as null.",
     "wrapper_envelope": "The browser wrapper, never the model, adds session_id, last_transcript_seq and the Idempotency-Key header. Before forwarding, the wrapper flushes every pending transcript entry with POST /transcripts so the backend can check the readback and the spoken yes.",
     "wrapper_return": "The wrapper returns the backend JSON body to the model unchanged, serialized as a string, for success and for errors alike. On a network failure or timeout it retries once with the same Idempotency-Key, then returns {\"ok\":false,\"simulated\":true,\"error\":{\"code\":\"backend_unavailable\",\"message\":\"The capture service did not respond.\",\"agent_hint\":\"Say you could not reach the service and ask the user to try again. Do not say anything was prepared.\"}}.",
-    "utterance": "Every tool takes `utterance`: the user's own words that stated this request, copied verbatim from the conversation in spoken order, joined with single spaces when the request spanned several user turns. No paraphrase, no corrections, no agent words.",
+    "utterance": "Every tool takes `utterance`: the user's own words that stated this request, copied verbatim from the conversation as one unbroken stretch of user turns in spoken order, joined with single spaces when the request spanned several user turns. No paraphrase, no corrections, no agent words, no skipped user turn in the middle (api.yaml x-utterance-check requires a contiguous substring of the user transcript).",
+    "identifiers": "Tool results contain identifiers (intent.id, intent.session_id, intent_id, query_intent_id). They are not credentials. The agent passes an intent_id back as order_id when needed and never speaks any of them. The session token never appears in a tool parameter or result.",
+    "revision": "1.1.0 clarifies 1.0.0. Tool names, parameters and response fields are unchanged. See x-revision in contracts/api.yaml.",
     "simulated": "Every response carries simulated: true. Market and status data come from the fixed simulated catalog in contracts/api.yaml (x-simulated-catalog), never from Gemini.",
     "error_shape": {
       "ok": false,
@@ -26,7 +28,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/capture_order_intent",
       "writes_intent": "place_order",
-      "description": "Record a fully specified Gemini limit order for later approval. Captures only; nothing is sent to Gemini. Call this only when the previous agent turn was the exact readback of these terms ending with 'Say yes to confirm.' and the user's latest turn was an explicit spoken yes. Never call it with a guessed instrument, quantity or price.",
+      "description": "Record a fully specified Gemini limit order for later approval. Captures only; nothing is sent to Gemini. Call this only when the previous agent turn was the exact readback of these terms ending with 'Say yes to confirm.' and everything the user said after it was an explicit spoken yes with no question, correction or negation. Never call it with a guessed instrument, quantity or price.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -119,7 +121,7 @@
       "response_timeout_secs": 10,
       "handler": "POST /tools/capture_cancel_intent",
       "writes_intent": "cancel_order",
-      "description": "Record a request to cancel one specific order for later approval. Captures only; nothing is cancelled on Gemini. Call this only when the previous agent turn was the exact cancel readback ending with 'Say yes to confirm.' and the user's latest turn was an explicit spoken yes. order_id must be an intent_id returned by get_order_status or a capture tool in this conversation, or a reference the user spoke aloud. Never invent or complete an order ID.",
+      "description": "Record a request to cancel one specific order for later approval. Captures only; nothing is cancelled on Gemini. Call this only when the previous agent turn was the exact cancel readback ending with 'Say yes to confirm.' and everything the user said after it was an explicit spoken yes with no question, correction or negation. order_id must be an intent_id returned by get_order_status or a capture tool in this conversation, or a reference the user spoke aloud. Never invent or complete an order ID.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -158,7 +160,7 @@
         "order_id is normalized (upper case, alphanumerics only) unless it is the id of an intent in this session.",
         "If order_id is the id of a place_order intent of this session: venue must equal that intent's venue (venue_mismatch); instrument, when given, must equal that intent's instrument (instrument_mismatch) and is filled from it when omitted; a second cancel for the same target is rejected with cancel_already_captured.",
         "If order_id is the id of an intent that is not a place_order, the error is order_not_cancellable.",
-        "Otherwise order_id must appear, after reference normalization, in the user's own transcript entries of this session, else order_id_not_user_supplied. The reference is recorded as stated and is not checked against Gemini.",
+        "Otherwise order_id must appear, after reference normalization, in the user's own transcript entries of this session, else order_id_not_user_supplied. The reference is recorded as stated and is not checked against Gemini. A reference that normalizes to the empty string is order_id_not_user_supplied.",
         "confirmed_by_user is true, else confirmation_required.",
         "Transcript confirmation enforcement passes (api.yaml x-confirmation-enforcement).",
         "utterance is found in the user's transcript, else utterance_mismatch."
@@ -216,7 +218,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64,
-            "description": "An intent_id from this conversation or a reference the user spoke. Omit to list by description."
+            "description": "An intent_id from this conversation or a complete reference the user spoke. Omit to list by description. Never send punctuation, filler or a partial reference."
           },
           "instrument": {
             "type": "string",
@@ -238,8 +240,9 @@
       },
       "validation": [
         "Parameters match the schema above, else invalid_parameters.",
+        "order_id that is not the id of an intent in this session and normalizes to the empty string (upper case, alphanumerics only) is invalid_parameters.",
         "Only place_order intents of the calling session and the given venue are searched. Filters combine with AND. order_id matches an intent id exactly, or, after reference normalization, never matches a prepared order (user references are not known to the capture store).",
-        "utterance that is not found in the user's transcript is replaced by the latest user transcript entry; the call does not fail."
+        "utterance that is not found in the user's transcript is replaced by the latest non-empty user transcript entry, cut to 2000 characters; the call does not fail. If the session has no user speech at all the call is refused with utterance_mismatch and nothing is stored (api.yaml x-audit-records)."
       ],
       "response": {
         "type": "object",
@@ -283,7 +286,7 @@
           }
         }
       },
-      "errors": ["invalid_parameters", "transcript_not_synced", "session_ended", "backend_unavailable"]
+      "errors": ["invalid_parameters", "utterance_mismatch", "transcript_not_synced", "session_ended", "backend_unavailable"]
     },
     {
       "name": "search_markets",
@@ -307,7 +310,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 120,
-            "description": "Search words taken from what the user said, for example 'bitcoin' or 'fed rate cut'."
+            "description": "Only the name of the asset or event, in a few words taken from what the user said, for example 'bitcoin' or 'fed rate cut'. Every word must match, so leave out other words."
           },
           "limit": {
             "type": "integer",
@@ -325,8 +328,9 @@
       },
       "validation": [
         "Parameters match the schema above, else invalid_parameters.",
-        "Matching is case-insensitive over instrument, title and aliases of the simulated catalog for the given venue. No match returns ok true with count 0.",
-        "utterance that is not found in the user's transcript is replaced by the latest user transcript entry; the call does not fail."
+        "Matching follows api.yaml x-query-matching: fold case, split the query into words of letters and digits, drop stop words (market, markets, contract, contracts, price, prices, spot, prediction, predictions, gemini, the, and, for) and words shorter than 3 characters; an item matches when every remaining word is a substring of its instrument, title or an alias. No remaining word, or no matching item, returns ok true with count 0.",
+        "The audit intent stores the first 64 characters of the trimmed query as its instrument; queries up to 120 characters are valid.",
+        "utterance that is not found in the user's transcript is replaced by the latest non-empty user transcript entry, cut to 2000 characters; the call does not fail. If the session has no user speech at all the call is refused with utterance_mismatch and nothing is stored (api.yaml x-audit-records)."
       ],
       "response": {
         "type": "object",
@@ -380,7 +384,7 @@
           "query_intent_id": { "type": "string", "format": "uuid" }
         }
       },
-      "errors": ["invalid_parameters", "transcript_not_synced", "session_ended", "backend_unavailable"]
+      "errors": ["invalid_parameters", "utterance_mismatch", "transcript_not_synced", "session_ended", "backend_unavailable"]
     },
     {
       "name": "get_orderbook",
@@ -422,7 +426,7 @@
       "validation": [
         "Parameters match the schema above, else invalid_parameters.",
         "instrument exists in the simulated catalog for the given venue, else unknown_instrument.",
-        "utterance that is not found in the user's transcript is replaced by the latest user transcript entry; the call does not fail."
+        "utterance that is not found in the user's transcript is replaced by the latest non-empty user transcript entry, cut to 2000 characters; the call does not fail. If the session has no user speech at all the call is refused with utterance_mismatch and nothing is stored (api.yaml x-audit-records)."
       ],
       "response": {
         "type": "object",
@@ -469,7 +473,7 @@
           "query_intent_id": { "type": "string", "format": "uuid" }
         }
       },
-      "errors": ["invalid_parameters", "unknown_instrument", "transcript_not_synced", "session_ended", "backend_unavailable"]
+      "errors": ["invalid_parameters", "unknown_instrument", "utterance_mismatch", "transcript_not_synced", "session_ended", "backend_unavailable"]
     }
   ]
 }
