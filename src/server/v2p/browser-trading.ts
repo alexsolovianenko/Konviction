@@ -258,6 +258,7 @@ function confirmedInCall(history: unknown, row): boolean {
   try {
     const { entries } = JSON.parse(history);
     if (!Array.isArray(entries)) return false;
+    let bound = false;
     let steps = 0;
     const expected = spokenProposal(row);
     const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -265,19 +266,25 @@ function confirmedInCall(history: unknown, row): boolean {
       for (const result of turn.role === "tool" || turn.role === "agent" ? turn.tool_results ?? [] : []) {
         if (!["prepare_sandbox_buy", "prepare_sandbox_remainder"].includes(result.tool_name)) continue;
         // An interrupted preparation returns a plain-text error. Only its own attempt is invalid.
+        bound = false;
         steps = 0;
         if (result.is_error) continue;
         let data = result.result_value;
         if (typeof data === "string") {
           try { data = JSON.parse(data); } catch { continue; }
         }
-        if (data?.ok === true && data.proposal_id === row.id) steps = 1;
+        bound = data?.ok === true && data.proposal_id === row.id;
       }
       if (typeof turn.message !== "string" || !turn.message.trim()) continue;
       if (turn.role === "tool") continue;
-      if (turn.role === "agent" && steps === 1 && !turn.interrupted && normalize(turn.message.replace(/^\[(?:neutral|slow)\]\s*/i, "")) === normalize(expected)) steps = 2;
+      if (turn.role === "agent" && bound && !turn.interrupted && normalize(turn.message.replace(/^\[(?:neutral|slow)\]\s*/i, "")) === normalize(expected)) steps = 2;
       else if (turn.role === "user" && steps === 2 && /^(?:confirm|yes|yes[, ]+confirm)[.!]?$/i.test(turn.message.trim())) steps = 3;
-      else steps = 0;
+      else {
+        steps = 0;
+        // A status question or hesitation can be followed by a fresh, exact readback.
+        // A cancellation or changed terms require another preparation.
+        if (turn.role === "user" && !/^(?:(?:maybe|wait|not yet|hold on|yes|confirm)[.,!? ]*)?(?:(?:did you (?:buy|sell|place|submit) it(?: already)?|is (?:it|my order) (?:filled|done))\??)?[.!? ]*$/i.test(turn.message.trim())) bound = false;
+      }
     }
     return steps === 3;
   } catch { return false; }

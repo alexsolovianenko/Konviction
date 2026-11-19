@@ -279,6 +279,15 @@ describe("approval: the only order-submission path", () => {
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 
+  it("allows an exact repeated readback after hesitation but requires new preparation for changed terms", async () => {
+    const {s,id} = await proposed();
+    const turns = conversationEntries(id);
+    const repeated = (message:string) => ({history:JSON.stringify({entries:[
+      ...turns.slice(0,2), {role:"user", message}, ...turns.slice(1)
+    ]})});
+    await expect(callConfirm(id,s.session_token,repeated("No, change the size."))).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+    expect(await callConfirm(id,s.session_token,repeated("Maybe. Did you buy it already?"))).toMatchObject({outcome_summary:"FILLED"});
+  });
   it("accepts a valid confirmation after an earlier interrupted preparation", async () => {
     const { s, id } = await proposed();
     const entries = [
