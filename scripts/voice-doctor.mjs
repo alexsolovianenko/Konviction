@@ -5,6 +5,7 @@ for (const path of [".env", process.env.SERVER_ENV_FILE ?? "../UBC-Hackathon/.en
 }
 const id = process.env.ELEVENLABS_AGENT_ID;
 const key = process.env.ELEVENLABS_API_KEY;
+const branch = process.env.ELEVENLABS_BRANCH_ID;
 async function read(path) {
   const response = await fetch("https://api.elevenlabs.io/v1/convai/" + path, {
     headers: { "xi-api-key": key }, redirect: "error", signal: AbortSignal.timeout(8000),
@@ -20,7 +21,8 @@ try {
   if (!key || !id) throw new Error("Set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID.");
   let agent;
   try {
-    agent = await read("agents/" + encodeURIComponent(id));
+    const query = branch ? "?" + new URLSearchParams({ branch_id: branch }) : "";
+    agent = await read("agents/" + encodeURIComponent(id) + query);
   } catch (error) {
     if (error.message.startsWith("HTTP 404")) {
       const visible = await read("agents?page_size=20");

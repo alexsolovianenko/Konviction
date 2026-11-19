@@ -22,10 +22,11 @@ async function readBody(request) {
   }
 }
 
-async function sign(repo, { apiKey, agentId, upstream, clock }) {
+async function sign(repo, { apiKey, agentId, branchId, upstream, clock }) {
   requireRule(apiKey && agentId, 'voice_not_configured');
   const url = new URL('https://api.elevenlabs.io/v1/convai/conversation/get-signed-url');
   url.searchParams.set('agent_id', agentId);
+  if (branchId) url.searchParams.set('branch_id', branchId);
   url.searchParams.set('include_conversation_id', 'true');
   let signed;
   try {
@@ -182,7 +183,7 @@ function handle(repo, session, path, method, body, key, now, market, legacyMarke
   return result;
 }
 
-export function createApi({ trading, repo, apiKey, agentId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
+export function createApi({ trading, repo, apiKey, agentId, branchId, lookupInstrument = async () => false, legacyMarket, upstream = fetch, clock = Date.now }) {
   return createServer(async (req, res) => {
     function reply([status, body]) {
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -217,7 +218,7 @@ export function createApi({ trading, repo, apiKey, agentId, lookupInstrument = a
       if (!Object.hasOwn(api.paths[path], req.method.toLowerCase())) return reply([405, {}]);
       if (path === '/voice/signed-url') {
         requireRule(requests[path](await readBody(req)), 'invalid_parameters');
-        return reply(await sign(repo, { apiKey, agentId, upstream, clock }));
+        return reply(await sign(repo, { apiKey, agentId, branchId, upstream, clock }));
       }
       if (!legacyMarket && ['/tools/search_markets', '/tools/get_orderbook'].includes(path))
         return reply([410, { ok: false, error: 'Use /api/public/market-tools for live sandbox reads.' }]);
@@ -269,5 +270,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     repo,
     apiKey: process.env.ELEVENLABS_API_KEY,
     agentId: process.env.ELEVENLABS_AGENT_ID,
+    branchId: process.env.ELEVENLABS_BRANCH_ID,
   }).listen(8787, '127.0.0.1', () => console.info('Capture API listening on 127.0.0.1:8787'));
 }

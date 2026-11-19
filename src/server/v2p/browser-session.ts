@@ -61,6 +61,8 @@ export async function fetchSignedUrl(fetchImpl: typeof fetch = fetch): Promise<S
   if (!apiKey || !agentId) return { error: "ElevenLabs agent is not configured." };
   const url = new URL("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url");
   url.searchParams.set("agent_id", agentId);
+  const branchId = env("ELEVENLABS_BRANCH_ID");
+  if (branchId) url.searchParams.set("branch_id", branchId);
   url.searchParams.set("include_conversation_id", "true");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);

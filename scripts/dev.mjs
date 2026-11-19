@@ -15,6 +15,7 @@ catch { console.error('Voice capture unavailable: SQLite storage could not be op
 const { browserTrading } = await import('../server/browser-trading.mjs');
 const capture = repo ? createApi({
   trading: browserTrading(repo), repo, apiKey: process.env.ELEVENLABS_API_KEY, agentId: process.env.ELEVENLABS_AGENT_ID,
+  branchId: process.env.ELEVENLABS_BRANCH_ID,
   async lookupInstrument(symbol) {
     const match = /^GEMI-([A-Z0-9_.-]+)-[A-Z0-9_.]+$/i.exec(symbol);
     if (!match) return false;
