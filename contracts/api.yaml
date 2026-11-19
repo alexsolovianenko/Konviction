@@ -1156,6 +1156,7 @@ x-market-data:
       required: [ticker, title, category, status, contracts]
       properties:
         ticker: { type: string, description: "Use as event_ticker." }
+        volume_usd: { type: [number, "null"], description: "Total trading volume in USD across this event." }
         title: { type: string }
         category: { type: [string, "null"] }
         status: { type: [string, "null"] }

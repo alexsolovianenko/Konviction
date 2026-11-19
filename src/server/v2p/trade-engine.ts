@@ -1,7 +1,7 @@
 // @ts-nocheck -- shared with the mechanically ported phone backend.
 import { contractTradable, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
 import { comboEligibility } from "./native-combo";
-import { cents, feeEstimate, hashPhone, json, LIMITS, minBuyMinutesToExpiry, num, round2, speakTime, usd } from "./util";
+import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, speakTime, usd } from "./util";
 type Body = Record<string, any>;
 const err = (error: string, message: string, extra = {}) =>
   json({ ok: false, error, message, ...extra });
@@ -64,37 +64,25 @@ export async function prepareTrade(b: Body, saveProposal) {
   const comboError = await comboEligibility(event, c);
   if (comboError) return err("COMBO_UNAVAILABLE", comboError);
   const expiryIso = c.expiryDate ?? event.expiryDate ?? null;
-  const minutesLeft = expiryIso ? (Date.parse(expiryIso) - Date.now()) / 60000 : Infinity;
+  if (expiryIso && Date.parse(expiryIso) <= Date.now())
+    return err("CONTRACT_NOT_OPEN", "This contract has expired.");
+  if (side === "buy" && expiryIso && Date.parse(expiryIso) - Date.now() <= BUY_CUTOFF_MS)
+    return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   const q = quoteFor(c, outcome as "yes" | "no");
   const label = c.label ?? c.ticker ?? symbol;
   const outcomeText = outcome === "yes" ? `YES (${label})` : `NO (not ${label})`;
 
   let quantity: number, limit: number, quotePrice: number;
   if (side === "buy") {
-    const minMinutes = minBuyMinutesToExpiry(event.ticker);
-    if (minutesLeft < minMinutes) {
-      return err(
-        "TOO_CLOSE_TO_EXPIRY",
-        `This contract closes in under ${minMinutes} ${minMinutes === 1 ? 'minute' : 'minutes'}. Choose another open window.`,
-      );
-    }
     if (q.buy === null)
       return err(
         "NO_LIQUIDITY",
         "Gemini shows no buy price for this outcome. Check for a fresh quote or choose another contract.",
       );
     quotePrice = q.buy;
-    limit =
-      priceLimitIn !== null ? priceLimitIn : round2(Math.min(q.buy + 0.01, LIMITS.maxLimitPrice));
-    limit = round2(Math.min(limit, LIMITS.maxLimitPrice));
-    if (limit < LIMITS.minLimitPrice) return err("BAD_INPUT", "Price must be at least 1 cent.");
-    if (limit < q.buy) {
-      return err(
-        "PRICE_ABOVE_YOUR_MAX",
-        `The ask is ${cents(q.buy)} and the order limit is ${cents(limit)}. Wait for an ask within your limit or request a new quote.`,
-        { current_price: q.buy },
-      );
-    }
+    limit = priceLimitIn ?? q.buy;
+    if (limit < LIMITS.minLimitPrice || limit > LIMITS.maxLimitPrice)
+      return err("LIMIT_PRICE_CAP", `The order limit must be between 1¢ and ${cents(LIMITS.maxLimitPrice)}.`, { max_price: LIMITS.maxLimitPrice });
     if (qtyIn !== null) {
       quantity = Math.floor(qtyIn);
     } else if (budget !== null) {
@@ -224,26 +212,9 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
   }
   const q = quoteFor(c, it.outcome);
   const limit = Number(it.limit_price);
-  const quoted = Number(it.quote_price);
-  if (it.side === "buy") {
-    if (
-      q.buy === null ||
-      q.buy > limit + 1e-9 ||
-      q.buy - quoted > LIMITS.priceMoveTolerance + 1e-9
-    ) {
-      await finish("REJECTED");
-      await log("PRICE_MOVED", caller, `${code}: ask now ${q.buy ?? "none"} vs limit ${limit}`);
-      return err(
-        q.buy === null ? "NO_LIQUIDITY" : "PRICE_MOVED",
-        q.buy === null
-          ? "The buy quote disappeared before submission. Request a fresh quote or choose another outcome."
-          : q.buy > limit + 1e-9
-            ? `The ask rose to ${cents(q.buy)}, above your ${cents(limit)} limit. Wait for a lower ask or confirm a new quote.`
-            : `The ask rose from ${cents(quoted)} to ${cents(q.buy)} before submission. Confirm a fresh quote to continue.`,
-        { current_price: q.buy },
-      );
-    }
-  } else if (q.sell === null || q.sell < limit - 1e-9) {
+  // The signed IOC limit caps the exchange price even if the ask changes between
+  // this snapshot and matching. A buy below the current ask can still be tried.
+  if (it.side === "sell" && (q.sell === null || q.sell < limit - 1e-9)) {
     await finish("REJECTED");
     await log("PRICE_MOVED", caller, `${code}: bid now ${q.sell ?? "none"} vs min ${limit}`);
     return err(
@@ -253,13 +224,15 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     );
   }
 
-  if (
-    it.side === "buy" &&
-    (c.expiryDate ?? event.expiryDate) &&
-    Date.parse(c.expiryDate ?? event.expiryDate) - Date.now() < minBuyMinutesToExpiry(event.ticker) * 60000
-  ) {
+  const expiry = c.expiryDate ?? event.expiryDate;
+  if (expiry && Date.parse(expiry) <= Date.now()) {
     await finish("REJECTED");
-    return err("TOO_CLOSE_TO_EXPIRY", "The contract is too close to expiry. Choose a later open window and confirm a fresh quote.");
+    return err("CONTRACT_NOT_OPEN", "This contract has expired.");
+  }
+  const submitBefore = it.side === "buy" && expiry ? Date.parse(expiry) - BUY_CUTOFF_MS : undefined;
+  if (submitBefore !== undefined && Date.now() >= submitBefore) {
+    await finish("REJECTED");
+    return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   }
   const callerHash = await hashPhone(caller);
   await receipt(it.id, code, "approval", {
@@ -290,7 +263,11 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     `${code}: sending IOC ${it.side} ${it.quantity} ${it.outcome} @ ${limit.toFixed(2)}`,
     orderFields,
   );
-  const placed = await gPrivate("/v1/prediction-markets/order", orderFields);
+  const placed = await gPrivate("/v1/prediction-markets/order", orderFields, { submitBefore });
+  if (placed.missedDeadline) {
+    await finish("REJECTED");
+    return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remained before submission.");
+  }
 
   let summary: "FILLED" | "PARTIAL" | "NOT_FILLED" | "PENDING_UNKNOWN" | "EXCHANGE_REJECTED";
   // deno-lint-ignore no-explicit-any

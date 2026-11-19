@@ -2,7 +2,8 @@ import type { NativeCombo } from "../../components/console/types";
 import { dashboardMarketsFrom } from "./dashboard-markets";
 import { geminiReadError, gPublic } from "./gemini";
 import { eligibleComboLegs } from "./native-combo";
-import { minBuyMinutesToExpiry } from "./util";
+
+import { BUY_CUTOFF_MS } from "./util";
 
 export function normalizeMarketQuery(query: string) {
   return query
@@ -65,15 +66,8 @@ export async function fiveMinuteDiscovery(assets: string[], query: string) {
       .sort((a, b) => a.seconds - b.seconds);
     const current = candidates.find((c) => c.event.contracts[0]?.market_state === "open");
     const following = candidates.filter((c) => !current || c.seconds > current.seconds);
-    const minSeconds = minBuyMinutesToExpiry(candidates[0]?.event.ticker) * 60;
-    const canBuyInTime = (w: NonNullable<typeof current>) =>
-      Date.parse(w.event.contracts[0]!.expiry!) - now >= minSeconds * 1000;
-    const imminent = !!current && !canBuyInTime(current);
-    const nextEligible = following.find(
-      (c) => c.event.contracts[0]?.market_state === "open" && canBuyInTime(c),
-    );
-    const next = imminent && nextEligible ? nextEligible : following[0];
-    const selected = imminent && nextEligible ? nextEligible : current;
+    const next = following[0];
+    const selected = current;
     const timing = (w: typeof current) =>
       w
         ? {
@@ -84,7 +78,7 @@ export async function fiveMinuteDiscovery(assets: string[], query: string) {
             expiry: w.event.contracts[0]!.expiry,
             seconds_to_expiry: w.seconds,
             market_state: w.event.contracts[0]!.market_state,
-            buy_window_open: canBuyInTime(w) && w.event.contracts[0]!.market_state === "open",
+            buy_window_open: w.event.contracts[0]!.market_state === "open" && Date.parse(w.event.contracts[0]!.expiry!) - now > BUY_CUTOFF_MS,
           }
         : null;
     const direction = query.match(new RegExp("\\b" + asset + "\\s+(up|down|yes|no)\\b"))?.[1];
@@ -101,7 +95,7 @@ export async function fiveMinuteDiscovery(assets: string[], query: string) {
       tracked_outcome,
       current: timing(current),
       next_window: timing(next),
-      imminent,
+      imminent: !!current && Date.parse(current.event.contracts[0]!.expiry!) - now <= BUY_CUTOFF_MS,
       selected: selected?.event,
     };
   });

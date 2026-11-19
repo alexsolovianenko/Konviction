@@ -17,7 +17,7 @@ import { prepareTrade as prepareQuotedTrade } from "./trade-engine";
 import { db, logActivity } from "./db";
 import { dailyCapError, supabaseLedger } from "./ledger";
 import {
-  corsHeaders, json, localHour, LIMITS, minBuyMinutesToExpiry, num, randomCode, speakTime, toolAuthorized,
+  BUY_CUTOFF_MS, corsHeaders, json, localHour, LIMITS, num, randomCode, speakTime, toolAuthorized,
 } from "./util";
 
 // deno-lint-ignore no-explicit-any
@@ -89,7 +89,7 @@ async function findMarket(b: Body) {
         return { event_ticker: ev.ticker, event_title: ev.title, contract_label: c.label,
           instrument_symbol: c.symbol, expires_spoken: speakTime(c.expiry), minutes_to_expiry: Math.round(seconds / 60),
           yes_buy_price: c.buy.yes, no_buy_price: c.buy.no, yes_sell_price: c.sell.yes, no_sell_price: c.sell.no,
-          tradable_now: seconds >= minBuyMinutesToExpiry(ev.ticker) * 60 && (c.buy.yes !== null || c.buy.no !== null) };
+          tradable_now: seconds * 1000 > BUY_CUTOFF_MS && (c.buy.yes !== null || c.buy.no !== null) };
       }));
       return json({ ok: true, matches, none_found: !matches.length, ambiguous: matches.length > 1, timing: result.timing });
     } catch {
@@ -158,7 +158,7 @@ async function findMarket(b: Body) {
       expires_spoken: speakTime(c.expiryDate ?? ev.expiryDate),
       minutes_to_expiry: minutes,
       yes_buy_price: y.buy, no_buy_price: n.buy, yes_sell_price: y.sell, no_sell_price: n.sell,
-      tradable_now: expiryMs - now >= minBuyMinutesToExpiry(ev.ticker) * 60000 && (y.buy !== null || n.buy !== null),
+      tradable_now: expiryMs - now > BUY_CUTOFF_MS && (y.buy !== null || n.buy !== null),
       note: y.buy === null && n.buy === null ? "No one is offering this contract right now (no ask)." : undefined,
     };
   });

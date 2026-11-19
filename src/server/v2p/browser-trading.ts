@@ -184,15 +184,16 @@ async function startSession(store: Store, fetchImpl?: typeof fetch) {
 
 async function propose(store: Store, token: string | undefined, body) {
   const s = await requireSession(store, token);
-  const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity", "limit_price"];
+  const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity"];
+  if (body && Object.hasOwn(body, "limit_price")) keys.push("limit_price");
   if (
     !keysAre(body, keys) ||
     !keys.slice(0, 2).every((k) => typeof body[k] === "string" && SYMBOL.test(body[k])) ||
     !["yes", "no"].includes(body.outcome) ||
     !isValidBuySize(body) ||
-    typeof body.limit_price !== "number" || !Number.isFinite(body.limit_price) ||
-    body.limit_price < 0.01 || body.limit_price > 0.99 ||
-    Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8
+    (Object.hasOwn(body, "limit_price") && (!Number.isFinite(body.limit_price) ||
+      body.limit_price < 0.01 || body.limit_price > 0.99 ||
+      Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8))
   ) bad();
 
   const response = await prepareTrade(

@@ -30,28 +30,21 @@ function envNum(name: string, fallback: number): number {
 export const LIMITS = {
   get maxOrderUsd() { return envNum("MAX_ORDER_USD", 25); },
   get maxDailyUsd() { return envNum("MAX_DAILY_USD", 50); },
-  get maxLimitPrice() { return envNum("MAX_LIMIT_PRICE", 0.95); },
+  get maxLimitPrice() { return Math.min(0.99, envNum("MAX_LIMIT_PRICE", 0.99)); },
   minLimitPrice: 0.01,
   get maxQuantity() { return envNum("MAX_QUANTITY", 100); },
   get intentTtlSeconds() { return envNum("INTENT_TTL_SECONDS", 90); },
-  get priceMoveTolerance() { return envNum("PRICE_MOVE_TOLERANCE", 0.03); },
-  get minMinutesToExpiry() { return envNum("MIN_MINUTES_TO_EXPIRY", 5); },
   takerRate: 0.07, // Gemini production taker schedule; sandbox fees unverified -> always labelled an estimate
   toJSON() {
     return {
       maxOrderUsd: this.maxOrderUsd, maxDailyUsd: this.maxDailyUsd, maxLimitPrice: this.maxLimitPrice,
       minLimitPrice: this.minLimitPrice, maxQuantity: this.maxQuantity, intentTtlSeconds: this.intentTtlSeconds,
-      priceMoveTolerance: this.priceMoveTolerance, minMinutesToExpiry: this.minMinutesToExpiry, takerRate: this.takerRate,
+      takerRate: this.takerRate,
     };
   },
 };
 
-/** Explicit global settings apply to every series unless its five-minute override is set. */
-export function minBuyMinutesToExpiry(eventTicker: string | undefined): number {
-  if (eventTicker && /^[A-Z]+05M\d{10}$/i.test(eventTicker))
-    return envNum("MIN_FIVE_MINUTE_MINUTES_TO_EXPIRY", envNum("MIN_MINUTES_TO_EXPIRY", 1));
-  return LIMITS.minMinutesToExpiry;
-}
+export const BUY_CUTOFF_MS = 10_000;
 
 export const displayTz = () => envStr("DISPLAY_TZ", "America/Chicago");
 

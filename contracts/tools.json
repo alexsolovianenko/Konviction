@@ -413,7 +413,7 @@
       "expects_response": true,
       "response_timeout_secs": 15,
       "writes_intent": null,
-      "description": "Find Gemini prediction market events and their contracts in the Gemini Sandbox, a test environment. Pass key words of the event or topic, or an empty string to list the active events. Returns events, each with a ticker, a title and contracts; each contract has a symbol, a label, an expiry and buy and sell prices for yes and no in dollars per contract, any of which may be null. Use an event's ticker as event_ticker and a contract's symbol as contract_symbol and as an order's instrument.",
+      "description": "Find sandbox prediction markets by topic, event-wide USD volume or expiry. Each event has ticker, title, volume_usd and contracts; each contract has symbol, label, expiry and outcome prices in dollars. Use the returned ticker and symbol together.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -424,7 +424,7 @@
           "query": {
             "type": "string",
             "maxLength": 200,
-            "description": "Key words of the event or topic, such as 'bitcoin' or 'fed'. Every word must match, so use few. An empty string lists the active events."
+            "description": "Topic keywords and optional filters: 'highest volume', 'minimum volume 1000', 'ending soon' or 'ending within 15 minutes'. Empty query lists active events."
           }
         }
       },

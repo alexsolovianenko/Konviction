@@ -273,7 +273,8 @@ const sorters = {
   yesBid: ({contract}: MarketRow) => contract.sell.yes,
   noAsk: ({contract}: MarketRow) => contract.buy.no,
   noBid: ({contract}: MarketRow) => contract.sell.no,
-  expiry: ({contract}: MarketRow) => contract.expiry,
+  volume: ({event}: MarketRow) => event.volume_usd ?? null,
+  expiry: ({contract}: MarketRow) => Date.parse(contract.expiry ?? "") || null,
   status: ({contract}: MarketRow) => contract.market_state,
 };
 type SortKey = keyof typeof sorters;
@@ -283,6 +284,7 @@ const columns: { key: SortKey; label: string; num?: boolean }[] = [
   { key: "yesBid", label: "YES bid", num: true },
   { key: "noAsk", label: "NO ask", num: true },
   { key: "noBid", label: "NO bid", num: true },
+  { key: "volume", label: "Event volume", num: true },
   { key: "expiry", label: "Expires (UTC)" },
   { key: "status", label: "Availability" },
 ];
@@ -300,6 +302,10 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
   const q = useDashboardState();
   const markets = q.data?.markets;
   const [filter, setFilter] = useState("");
+  const [endingMinutes, setEndingMinutes] = useState(0);
+  const [minVolume, setMinVolume] = useState("");
+  const [openOnly, setOpenOnly] = useState(false);
+  const now = useNow(5_000);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "expiry", dir: 1 });
   const [limit, setLimit] = useState(30);
   const all = useMemo(() => (markets?.events ?? []).flatMap((event) => event.contracts.map((contract) => ({ event, contract }))), [markets]);
@@ -307,16 +313,22 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
     const needle = filter.trim().toLowerCase();
     const get = sorters[sort.key];
     return all
-      .filter(({ event, contract }) => !needle || [event.title, event.ticker, event.category, contract.label, contract.symbol].some((v) => v?.toLowerCase().includes(needle)))
+      .filter(({ event, contract }) => {
+        const expiry = Date.parse(contract.expiry ?? "");
+        if (openOnly && (!tradable(contract) || expiry <= now)) return false;
+        if (endingMinutes && !(expiry > now && expiry <= now + endingMinutes * 60_000)) return false;
+        if (minVolume && (event.volume_usd == null || event.volume_usd < Number(minVolume))) return false;
+        return !needle || [event.title, event.ticker, event.category, contract.label, contract.symbol].some((v) => v?.toLowerCase().includes(needle));
+      })
       .sort((a, b) => {
         const x = get(a), y = get(b);
-        if (x === y) return sorters.event(a)! < sorters.event(b)! ? -1 : 1;
+        if (x === y) return sorters.event(a).localeCompare(sorters.event(b)) || a.contract.symbol.localeCompare(b.contract.symbol);
         if (x === null || x === undefined) return 1; // missing values last in either direction
         if (y === null || y === undefined) return -1;
         return (x < y ? -1 : 1) * sort.dir;
       });
-  }, [all, filter, sort]);
-  const pick = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
+  }, [all, filter, sort, endingMinutes, minVolume, openOnly, now]);
+  const pick = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === "volume" ? -1 : 1 }));
   const shown = rows.slice(0, limit);
   const state = (c: MarketContract) => [c.status, c.market_state].filter(Boolean).join(" · ") || "—";
 
@@ -327,9 +339,14 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <input className="field pl-8" aria-label="Filter listed contracts" placeholder="Filter events and contracts" value={filter} onChange={(e) => { setFilter(e.target.value); setLimit(30); }} />
         </div>
+        <select className="field w-auto" aria-label="Time to expiry" value={endingMinutes} onChange={e => { setEndingMinutes(Number(e.target.value)); setLimit(30); }}>
+          <option value={0}>Any expiry</option><option value={5}>Ends within 5m</option><option value={15}>Ends within 15m</option><option value={60}>Ends within 1h</option><option value={1440}>Ends within 24h</option>
+        </select>
+        <input type="number" min="0" step="any" className="field w-36" aria-label="Minimum event volume in USD" placeholder="Min volume ($)" value={minVolume} onChange={e => { setMinVolume(e.target.value); setLimit(30); }} />
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={openOnly} onChange={e => { setOpenOnly(e.target.checked); setLimit(30); }} /> Open only</label>
         <label className="md:hidden">
           <span className="sr-only">Sort by</span>
-          <select className="field w-auto" value={sort.key} onChange={(e) => setSort({ key: e.target.value as SortKey, dir: 1 })}>
+          <select className="field w-auto" value={sort.key} onChange={(e) => setSort({ key: e.target.value as SortKey, dir: e.target.value === "volume" ? -1 : 1 })}>
             {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
         </label>
@@ -337,7 +354,7 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
       </div>
       {!q.data ? <Waiting q={q} /> : !markets ? <Empty>Market listings are not included in the current dashboard feed.</Empty>
         : markets.error ? <Empty>Markets unavailable: {markets.error}</Empty>
-        : rows.length === 0 ? <Empty>{filter.trim() ? "No listed contracts match this filter." : "No active contracts returned by Gemini Sandbox."}</Empty> : (
+        : rows.length === 0 ? <Empty>{filter.trim() || endingMinutes || minVolume || openOnly ? "No listed contracts match these filters." : "No active contracts returned by Gemini Sandbox."}</Empty> : (
         <>
           <ul className="border-t border-border md:hidden">
             {shown.map(({ event, contract }) => (
@@ -345,7 +362,7 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{contract.label ?? contract.symbol}</div>
                   <div className="truncate text-xs text-muted-foreground">{event.title}</div>
-                  <div className="tnum text-xs text-muted-foreground">{expiryText(contract.expiry)} · {tradable(contract) ? "open" : state(contract)}</div>
+                  <div className="tnum text-xs text-muted-foreground">{expiryText(contract.expiry)} UTC · {usd(event.volume_usd)} event volume · {tradable(contract) ? "open" : state(contract)}</div>
                 </div>
                 <div className="shrink-0 text-right font-mono text-xs">
                   <div>YES <Price v={contract.buy.yes} tone="text-success" /> / <Price v={contract.sell.yes} tone="text-success" /></div>
@@ -381,6 +398,7 @@ export function MarketsTable({ onQuote }: { onQuote?: (eventTicker: string, cont
                     <td className="num"><Price v={contract.sell.yes} tone="text-success" /></td>
                     <td className="num"><Price v={contract.buy.no} tone="text-destructive" /></td>
                     <td className="num"><Price v={contract.sell.no} tone="text-destructive" /></td>
+                    <td className="num" title="Total traded across this event">{usd(event.volume_usd)}</td>
                     <td className="tnum whitespace-nowrap text-subtle">{expiryText(contract.expiry)}</td>
                     <td className="whitespace-nowrap">{tradable(contract) ? <Pill tone="success">Open</Pill> : <Pill tone="muted">{state(contract)}</Pill>}</td>
                     {onQuote && <td className="text-right"><button type="button" className="btn btn-chip" aria-label={`Fresh quote for ${contract.label ?? contract.symbol}`} onClick={() => onQuote(event.ticker, contract.symbol)}>Quote</button></td>}

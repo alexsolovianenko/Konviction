@@ -48,7 +48,7 @@ export function MarketDiscoveryPanel() {
     <>
       {result?.timing?.map((window) => {
         const next = window.next_window;
-        if (!next || (!window.imminent && window.current)) return null;
+        if (!next || window.current) return null;
         return (
           <p className="text-sm text-muted-foreground" key={next.contract_symbol}>
             Next window · {next.title} · {next.market_state === "open" ? "Open" : "Post-only"}

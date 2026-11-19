@@ -104,7 +104,7 @@ it("stores exact fresh terms, deduplicates proposals, rejects changed parameters
   expect(gPrivate).not.toHaveBeenCalled();
 });
 
-it("requires owner, separate PIN and enabled execution; moved prices never submit", async () => {
+it("requires owner, separate PIN and enabled execution; moved asks preserve the signed IOC limit", async () => {
   const t = token(),
     id = (await propose(t)).proposal.proposal_id;
   await expect(approve(token(), id)).rejects.toMatchObject({ code: "UNKNOWN_PROPOSAL" });
@@ -113,8 +113,9 @@ it("requires owner, separate PIN and enabled execution; moved prices never submi
   await expect(approve(t, id)).rejects.toMatchObject({ code: "EXECUTION_DISABLED" });
   vi.stubEnv("EXECUTION_ENABLED", "true");
   quote(".44");
-  expect(await approve(t, id)).toMatchObject({ ok: false, error: "PRICE_MOVED" });
-  expect(gPrivate).not.toHaveBeenCalled();
+  vi.mocked(gPrivate).mockResolvedValueOnce({ ok:true, status:200, text:"", data:{ orderId:"2", status:"cancelled", filledQuantity:"0" } });
+  expect(await approve(t, id)).toMatchObject({ ok:true, outcome_summary:"NOT_FILLED" });
+  expect(gPrivate).toHaveBeenCalledWith("/v1/prediction-markets/order", expect.objectContaining({price:"0.40"}), expect.objectContaining({submitBefore:expect.any(Number)}));
 });
 
 it("atomically reserves aggregate daily exposure, submits at most once and replays completed results", async () => {
@@ -143,6 +144,7 @@ it("atomically reserves aggregate daily exposure, submits at most once and repla
       outcome: "yes",
       timeInForce: "immediate-or-cancel",
     }),
+    {submitBefore:expect.any(Number)},
   );
 });
 
@@ -343,10 +345,10 @@ it("uses the verified native combo's own outcome price at proposal and approval"
   expect(gPublic).toHaveBeenCalledWith("/v1/prediction-markets/combos/" + order.contract_symbol);
   expect(gPrivate).toHaveBeenCalledTimes(1);
   expect(gPrivate).toHaveBeenCalledWith("/v1/prediction-markets/order",
-    expect.objectContaining({symbol:order.contract_symbol,side:"buy",outcome:"no",price:"0.65"}));
+    expect.objectContaining({symbol:order.contract_symbol,side:"buy",outcome:"no",price:"0.65"}), {submitBefore:expect.any(Number)});
 });
 
-it("refuses unverified, expired or resolved combo legs, stale prices, and missing combo liquidity", async () => {
+it("verifies native combo eligibility and preserves the signed limit when quotes change", async () => {
   const t = token();
   const {event,order,contract,meta} = nativeCombo();
   const produce = () => propose(t,randomUUID(),order);
@@ -365,8 +367,9 @@ it("refuses unverified, expired or resolved combo legs, stale prices, and missin
   contract.prices.buy.yes = ".37";
   const another = (await produce()).proposal;
   contract.prices.buy.yes = ".84";
-  expect(await approve(t,another.proposal_id)).toMatchObject({ok:false,error:"PRICE_MOVED"});
+  vi.mocked(gPrivate).mockResolvedValueOnce({ ok:true, status:200, text:"", data:{orderId:"2",status:"cancelled",filledQuantity:"0"} });
+  expect(await approve(t,another.proposal_id)).toMatchObject({ok:true,outcome_summary:"NOT_FILLED"});
   event.status = "settled";
   expect(await produce()).toMatchObject({ok:false,error:"COMBO_UNAVAILABLE"});
-  expect(gPrivate).not.toHaveBeenCalled();
+  expect(gPrivate).toHaveBeenCalledTimes(1);
 });

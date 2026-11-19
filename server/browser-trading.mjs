@@ -121,17 +121,17 @@ export function browserTrading(repo) {
     }
     const owner = sessionOwner(repo, token);
     if (path === "proposals") {
-      const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity", "limit_price"];
+      const keys = ["event_ticker", "contract_symbol", "outcome", body && Object.hasOwn(body, "budget_usd") ? "budget_usd" : "quantity"];
+      if (body && Object.hasOwn(body, "limit_price")) keys.push("limit_price");
       if (
         !keysAre(body, keys) ||
         !uuid.test(key) ||
         !keys.slice(0, 2).every((k) => typeof body[k] === "string" && symbol.test(body[k])) ||
         !["yes", "no"].includes(body.outcome) ||
         !isValidBuySize(body) ||
-        !Number.isFinite(body.limit_price) ||
-        body.limit_price < 0.01 ||
-        body.limit_price > 0.99 ||
-        Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8
+        (Object.hasOwn(body, "limit_price") && (!Number.isFinite(body.limit_price) ||
+          body.limit_price < 0.01 || body.limit_price > 0.99 ||
+          Math.abs(Math.round(body.limit_price * 100) - body.limit_price * 100) > 1e-8))
       )
         bad();
       // Preserve existing quantity fingerprints and distinguish equal numeric dollar amounts.

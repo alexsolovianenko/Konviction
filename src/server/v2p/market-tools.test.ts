@@ -43,8 +43,8 @@ it('checks each requested five-minute series directly and keeps post-only window
     const reply = await (await marketTool('search_markets',new URLSearchParams({query:'track Bitcoin up and Ethereum down five-minute'}))).json();
     expect(reply.track_group).toBe(true);
     expect(reply.timing.map((w: {tracked_outcome:string}) => w.tracked_outcome)).toEqual(['yes','no']);
-    expect(reply.events.map((e: {ticker:string}) => e.ticker)).toEqual(['BTC05M2611191002','ETH05M2611191003']);
-    expect(reply.timing[0]).toMatchObject({imminent:true,current:{seconds_to_expiry:29},next_window:{seconds_to_expiry:329,market_state:'post_only'}});
+    expect(reply.events.map((e: {ticker:string}) => e.ticker)).toEqual(['BTC05M2611191002','ETH05M2611191002']);
+    expect(reply.timing[0]).toMatchObject({imminent:false,current:{seconds_to_expiry:29,buy_window_open:true},next_window:{seconds_to_expiry:329,market_state:'post_only'}});
     expect(mock).toHaveBeenCalledTimes(2);
   } finally { vi.restoreAllMocks(); }
 });
@@ -85,4 +85,23 @@ it.each([
   vi.stubGlobal('fetch',get);
   const result = await (await marketTool('get_orderbook',new URLSearchParams({event_ticker:'E',contract_symbol:'C'}))).json();
   expect(result).toMatchObject({ok:true, contract:{buy:{yes:.43,no:.79}}, displayed_buy_quantity_at_ask:expected});
+});
+
+it('ranks event-wide volume across pages and filters individual contract deadlines', async () => {
+  const now = Date.now();
+  const event = (ticker: string, volume: string | null, minutes: number) => ({
+    ticker, title: "Bitcoin " + ticker, volume, contracts: [{ instrumentSymbol: ticker + "-UP",
+      expiryDate: new Date(now + minutes * 60_000).toISOString() }],
+  });
+  const pages = [
+    [event('BTC-A', '1200', 100), event('BTC-B', '1001', 4), event('BTC-C', null, 3)],
+    [event('BTC-D', '2100', 9), event('BTC-E', '9999', -1), event('BTC-F', '42', 3)],
+  ];
+  vi.stubGlobal('fetch', async (url: URL) => Response.json({
+    data: pages[url.searchParams.get('offset') === '0' ? 0 : 1], pagination: { total: 6 },
+  }));
+  const query = 'Bitcoin highest volume minimum volume $1k ending within 15 minutes';
+  const reply = await (await marketTool('search_markets', new URLSearchParams({query}))).json();
+  expect(reply.events.map((e: {ticker: string; volume_usd: number}) => [e.ticker, e.volume_usd]))
+    .toEqual([['BTC-D', 2100], ['BTC-B', 1001]]);
 });

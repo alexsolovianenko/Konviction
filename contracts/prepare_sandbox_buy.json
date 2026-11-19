@@ -32,7 +32,7 @@
         "type": "number",
         "minimum": 0.01,
         "maximum": 0.99,
-        "description": "Maximum USD per contract"
+        "description": "User-stated maximum per contract in dollars (97 cents = 0.97). Omit for the current ask or an unstated limit."
       },
       "budget_usd": {
         "type": "number",
@@ -43,8 +43,7 @@
     "required": [
       "event_ticker",
       "contract_symbol",
-      "outcome",
-      "limit_price"
+      "outcome"
     ]
   }
 }

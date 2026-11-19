@@ -24,7 +24,7 @@ export type MarketContract = {
   expiry: string | null; buy: MarketQuote; sell: MarketQuote;
 };
 export type MarketEvent = {
-  ticker: string; title: string; category: string | null; status: string | null; contracts: MarketContract[];
+  ticker: string; title: string; category: string | null; status: string | null; volume_usd?: number | null; contracts: MarketContract[];
 };
 export type NativeCombo = {
   can_request_quote: boolean; event_ticker: string; symbol: string; title: string; status: string | null; expiry: string | null;

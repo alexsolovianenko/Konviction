@@ -22,6 +22,7 @@ const invalidOrigin = (): GeminiResult => ({
 const TIMEOUT_MS = 8000;
 
 export type GeminiResult = {
+  missedDeadline?: boolean;
   ok: boolean;
   status: number; // 0 = network error / timeout (outcome unknown)
   data: any; // deno-lint-ignore no-explicit-any
@@ -133,6 +134,7 @@ async function signedOnce(
   fields: Record<string, unknown>,
   query: Record<string, string | number | undefined>,
   nonceCollision = false,
+  submitBefore?: number,
 ): Promise<GeminiResult> {
   const url = sandboxUrl(path, query);
   if (!url) return invalidOrigin();
@@ -161,6 +163,8 @@ async function signedOnce(
     "Content-Type": "text/plain",
     "Content-Length": "0",
   };
+  if (submitBefore !== undefined && Date.now() >= submitBefore)
+    return { ok: false, status: 0, data: null, text: "", missedDeadline: true };
   return doFetch(url, { method, headers });
 }
 
@@ -183,11 +187,11 @@ function isInvalidNonce(r: GeminiResult): boolean {
 export async function gPrivate(
   path: string,
   fields: Record<string, unknown> = {},
-  opts: { method?: "GET" | "POST"; query?: Record<string, string | number | undefined> } = {},
+  opts: { method?: "GET" | "POST"; submitBefore?: number; query?: Record<string, string | number | undefined> } = {},
 ): Promise<GeminiResult> {
   const method = opts.method ?? "POST";
   const send = async () => {
-    const request = (collision = false) => signedOnce(method, path, fields, opts.query ?? {}, collision);
+    const request = (collision = false) => signedOnce(method, path, fields, opts.query ?? {}, collision, opts.submitBefore);
     const result = await request();
     return isInvalidNonce(result) ? request(/has not increased/i.test(result.data?.message ?? "")) : result;
   };
