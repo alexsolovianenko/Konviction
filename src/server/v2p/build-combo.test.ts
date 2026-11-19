@@ -42,7 +42,7 @@ it("registers exactly the resolved leg IDs and outcomes, and reads the joint ask
   const result = await buildSandboxCombo({ legs });
   expect(result).toMatchObject({ok:true, quoted:true, buy_price:.23, implied_percent:23, payout_per_winning_contract_usd:1,
     contract_symbol:symbol, event_ticker:ticker});
-  expect(gPrivate).toHaveBeenCalledExactlyOnceWith("/v1/prediction-markets/combos", { legs: registered });
+  expect(gPrivate).toHaveBeenCalledExactlyOnceWith("/v1/prediction-markets/combos", { legs: registered }, { jsonBody: true });
   expect(gPublic).toHaveBeenCalledWith("/v1/prediction-markets/combos/" + symbol);
 });
 
@@ -70,4 +70,14 @@ it("reports an absent joint ask without constructing one from the legs", async (
   });
   expect(await buildSandboxCombo({legs})).toMatchObject({ok:true, quoted:false, buy_price:null, implied_percent:null});
   expect(gPrivate).toHaveBeenCalledTimes(1);
+});
+
+it("uses an exact already-listed combination when registration is unavailable to the account", async () => {
+  vi.mocked(gPrivate).mockResolvedValueOnce({ok:false, status:403, data:null, text:""});
+  const detail = (await vi.mocked(gPublic).getMockImplementation()!("")).data;
+  vi.mocked(gPublic).mockResolvedValueOnce(response({combos:[
+    {contract:{instrumentSymbol:"WRONG"},legs:detail.legs.slice(0,1)}, detail,
+  ],pagination:{total:2}}));
+  const result = await buildSandboxCombo({legs});
+  expect(result).toMatchObject({ok:true, quoted:true, contract_symbol:symbol});
 });

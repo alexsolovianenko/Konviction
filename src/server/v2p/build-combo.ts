@@ -35,6 +35,21 @@ function exactLegSet(returned: unknown, requested: ResolvedLeg[], verifyInstrume
       (r.contract?.eventTicker === wanted.event_ticker && r.contract?.instrumentSymbol === wanted.contract_symbol))));
 }
 
+async function findListedCombo(legs: ResolvedLeg[]): Promise<string | null> {
+  let offset = 0;
+  while (true) {
+    const result = await gPublic("/v1/prediction-markets/combos", {
+      contractId: legs[0]!.id, status: "Active", instrumentRegistered: "true", limit: 100, offset,
+    });
+    const combos = result.data?.combos;
+    if (!result.ok || !Array.isArray(combos)) return null;
+    const match = combos.find(c => exactLegSet(c?.legs, legs, true));
+    if (identifier(match?.contract?.instrumentSymbol)) return match.contract.instrumentSymbol;
+    offset += combos.length;
+    if (!combos.length || !(offset < result.data?.pagination?.total)) return null;
+  }
+}
+
 export async function buildSandboxCombo(body: unknown) {
   if (!record(body) || Object.keys(body).length !== 1 || !Array.isArray(body["legs"]) ||
       body["legs"].length < 2 || body["legs"].length > 6 || !body["legs"].every(validLeg) ||
@@ -48,18 +63,25 @@ export async function buildSandboxCombo(body: unknown) {
   // Canonical registration creates only the instrument. The normal confirmed trade route places orders.
   const created = await gPrivate("/v1/prediction-markets/combos", {
     legs: found.map(l => ({ contractId: l.id, requiredOutcome: l.outcome === "yes" ? "Yes" : "No" })),
-  });
-  if (!created.ok) {
-    if (created.status === 401 || created.status === 403) return fail("COMBO_PERMISSION", "This account cannot create that combination.");
-    if (created.status === 400 || created.status === 422) return fail("COMBO_REJECTED", "Gemini cannot combine those predictions.");
-    return fail("COMBO_UNAVAILABLE", "Combo creation unavailable.");
+  }, { jsonBody: true });
+  let symbol: string;
+  if (created.ok) {
+    const combo = created.data?.combo;
+    if (!exactLegSet(combo?.legs, found)) return fail("COMBO_MISMATCH", "Gemini couldn't verify those exact predictions.");
+    if (combo.instrumentRegistered !== true || !identifier(combo.instrumentSymbol))
+      return fail("COMBO_UNREGISTERED", "This combination is awaiting registration.");
+    symbol = combo.instrumentSymbol;
+  } else {
+    // Canonical listings may already exist even when Gemini declines registration by this account.
+    const existing = await findListedCombo(found);
+    if (existing) symbol = existing;
+    else if (created.status === 401 || created.status === 403)
+      return fail("COMBO_PERMISSION", "This account cannot create that combination.");
+    else if (created.status === 400 || created.status === 422)
+      return fail("COMBO_REJECTED", "Gemini cannot combine those predictions.");
+    else return fail("COMBO_UNAVAILABLE", "Combo creation unavailable.");
   }
-  const combo = created.data?.combo;
-  if (!exactLegSet(combo?.legs, found)) return fail("COMBO_MISMATCH", "Gemini couldn't verify those exact predictions.");
-  if (combo.instrumentRegistered !== true || !identifier(combo.instrumentSymbol))
-    return fail("COMBO_UNREGISTERED", "This combination is awaiting registration.");
 
-  const symbol = combo.instrumentSymbol;
   const detail = await gPublic("/v1/prediction-markets/combos/" + encodeURIComponent(symbol));
   const meta = detail.data?.contract;
   if (!detail.ok || meta?.instrumentSymbol !== symbol || !identifier(meta.eventTicker) ||

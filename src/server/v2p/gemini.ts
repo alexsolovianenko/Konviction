@@ -142,6 +142,7 @@ async function signedOnce(
   query: Record<string, string | number | undefined>,
   nonceCollision = false,
   submitBefore?: number,
+  jsonBody = false,
 ): Promise<GeminiResult> {
   const url = sandboxUrl(path, query);
   if (!url) return invalidOrigin();
@@ -172,6 +173,11 @@ async function signedOnce(
   };
   if (submitBefore !== undefined && Date.now() >= submitBefore)
     return { ok: false, status: 0, data: null, text: "", missedDeadline: true };
+  if (jsonBody) {
+    headers["Content-Type"] = "application/json";
+    delete headers["Content-Length"];
+    return doFetch(url, { method, headers, body: JSON.stringify(fields) });
+  }
   return doFetch(url, { method, headers });
 }
 
@@ -194,11 +200,11 @@ function isInvalidNonce(r: GeminiResult): boolean {
 export async function gPrivate(
   path: string,
   fields: Record<string, unknown> = {},
-  opts: { method?: "GET" | "POST"; submitBefore?: number; query?: Record<string, string | number | undefined> } = {},
+  opts: { method?: "GET" | "POST"; jsonBody?: boolean; submitBefore?: number; query?: Record<string, string | number | undefined> } = {},
 ): Promise<GeminiResult> {
   const method = opts.method ?? "POST";
   const send = async () => {
-    const request = (collision = false) => signedOnce(method, path, fields, opts.query ?? {}, collision, opts.submitBefore);
+    const request = (collision = false) => signedOnce(method, path, fields, opts.query ?? {}, collision, opts.submitBefore, opts.jsonBody);
     const result = await request();
     return isInvalidNonce(result) ? request(/has not increased/i.test(result.data?.message ?? "")) : result;
   };
