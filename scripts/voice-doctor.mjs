@@ -1,4 +1,4 @@
-// Read-only. This command never signs a call URL, opens a microphone, or submits orders.
+// Reads call metadata by default. The explicit audio probe synthesizes one short word.
 import { existsSync } from "node:fs";
 for (const path of [".env", process.env.SERVER_ENV_FILE ?? "../UBC-Hackathon/.env"]) {
   if (existsSync(path)) process.loadEnvFile(path);
@@ -29,7 +29,32 @@ try {
     throw error;
   }
   console.log("Configured agent:", agent.name, id);
-  const arg = process.argv[2];
+  const args = process.argv.slice(2);
+  const probe = args.includes("--probe-audio");
+  const positional = args.filter(arg => arg !== "--probe-audio");
+  if (positional.length > 1) throw new Error("Supply at most one conversation ID.");
+  if (probe) {
+    // ElevenAgents sometimes hides account restrictions behind its generic close code.
+    // The synthesis API can supply a specific provider error for the same workspace.
+    const voice = agent.conversation_config?.tts?.voice_id;
+    if (!voice) throw new Error("The configured agent has no voice ID.");
+    const response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(voice), {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(10000),
+      headers: { "xi-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Hi.", model_id: "eleven_flash_v2_5" }),
+    });
+    if (response.ok) {
+      console.log("Speech synthesis: received", (await response.arrayBuffer()).byteLength, "audio bytes.");
+    } else {
+      const body = await response.json().catch(() => ({}));
+      const reason = body.detail?.status ?? body.detail?.code;
+      console.log("Speech synthesis:", response.status,
+        typeof reason === "string" && /^\w+$/.test(reason) ? reason : "unspecified provider error");
+      if (reason === "detected_unusual_activity") console.log("ElevenLabs disabled free-tier access on this account. Contact ElevenLabs about the restriction.");
+      process.exitCode = 1;
+    }
+  }
+  const arg = positional[0];
   if (arg && !/^conv_[a-zA-Z0-9_-]+$/.test(arg)) throw new Error("Supply an ElevenLabs conversation ID, or omit it for the latest call.");
   const cid = arg ?? (await read("conversations?agent_id=" + encodeURIComponent(id) + "&page_size=1")).conversations[0]?.conversation_id;
   if (cid) {
