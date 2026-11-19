@@ -1,5 +1,5 @@
 {
-  "_readme": "ElevenLabs CLIENT tools for the browser /voice page, copied unchanged from the alex branch (contracts/tools.json market_tools and contracts/prepare_sandbox_buy.json at 081cd3a). The browser runs them: search_markets/get_orderbook call GET /api/public/market-tools/*, prepare_sandbox_buy calls POST /api/public/browser-trading/proposals with the in-memory session token. None of them can submit an order; approval is a separate typed-PIN action on screen. The agent must be private (authentication enabled) because sessions start from a server-issued signed URL.",
+  "_readme": "Browser client tools for the Gemini Sandbox voice assistant. Credentials, device pairing and transcript confirmation evidence are added only by the browser. Hosted deployments without device pairing use private dashboard approval.",
   "tools": [
     {
       "name": "search_markets",
@@ -52,7 +52,7 @@
     {
       "type": "client",
       "name": "prepare_sandbox_buy",
-      "description": "Prepare a sandbox buy for typed PIN approval. Send exactly one of quantity or budget_usd. The server sizes dollar budgets.",
+      "description": "Prepare a Gemini Sandbox buy. Supply exactly one of quantity or budget_usd. Speak the returned say field and wait for the user. All identifiers are silent tool parameters.",
       "expects_response": true,
       "response_timeout_secs": 20,
       "parameters": {
@@ -97,6 +97,30 @@
           "outcome",
           "limit_price"
         ]
+      }
+    },
+    {
+      "type": "client",
+      "name": "confirm_sandbox_buy",
+      "description": "Submit the current sandbox proposal on a paired device only after the caller explicitly answers the exact, fully spoken proposal readback with confirm or yes. The browser and service verify the saved proposal and transcript. Speak only the returned say field.",
+      "expects_response": true,
+      "response_timeout_secs": 35,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "type": "client",
+      "name": "get_sandbox_positions",
+      "description": "Read current Gemini Sandbox positions for the paired browser on request. Use the event title, outcome and quantity to answer briefly. The on_screen field identifies the selected contract. Keep all identifiers silent.",
+      "expects_response": true,
+      "response_timeout_secs": 20,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
       }
     }
   ]

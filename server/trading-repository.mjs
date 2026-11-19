@@ -55,7 +55,7 @@ export class TradingRepository {
       )
       .get(day).total;
   }
-  propose(owner, key, fingerprint, terms, maxDaily) {
+  propose(owner, key, fingerprint, terms, maxDaily, onInsert) {
     return this.repository.transaction(() => {
       const replay = this.replay(owner, key, fingerprint);
       if (replay) return replay;
@@ -79,10 +79,11 @@ export class TradingRepository {
           "INSERT INTO browser_proposals(id,owner,request_id,fingerprint,terms,status) VALUES (?,?,?,?,?,'PROPOSED')",
         )
         .run(id, owner, key, fingerprint, JSON.stringify(terms));
+      onInsert?.(id);
       return { ...terms, proposal_id: id };
     });
   }
-  claim(owner, id, limits) {
+  claim(owner, id, limits, authorize) {
     return this.repository.transaction(() => {
       const row = this.db
         .prepare("SELECT * FROM browser_proposals WHERE owner=? AND id=?")
@@ -93,6 +94,7 @@ export class TradingRepository {
           "Proposal unavailable for this voice session.",
           404,
         );
+      authorize?.();
       if (row.result) return { result: JSON.parse(row.result) };
       if (row.status === "EXECUTING")
         throw new TradeError(

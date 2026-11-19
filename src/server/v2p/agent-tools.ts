@@ -12,11 +12,12 @@ import {
   contractTradable, getUsdAvailable, gPrivate, listActiveEvents, quoteFor,
   type Contract, type GEvent,
 } from "./gemini";
+import { fiveMinuteDiscovery, normalizeMarketQuery } from "./prediction-discovery";
 import { prepareTrade as prepareQuotedTrade } from "./trade-engine";
 import { db, logActivity } from "./db";
 import { dailyCapError, supabaseLedger } from "./ledger";
 import {
-  corsHeaders, json, localHour, LIMITS, num, randomCode, speakTime, toolAuthorized,
+  corsHeaders, json, localHour, LIMITS, minBuyMinutesToExpiry, num, randomCode, speakTime, toolAuthorized,
 } from "./util";
 
 // deno-lint-ignore no-explicit-any
@@ -78,6 +79,23 @@ async function findMarket(b: Body) {
   const query = String(b.query ?? "").trim();
   if (!query) return err("BAD_INPUT", "Ask the caller what they want to bet on.");
   const expiryHint = String(b.expiry_hint ?? "");
+  const normalized = normalizeMarketQuery(query + " " + expiryHint);
+  const assets = [...new Set(normalized.match(/\b(?:btc|eth|sol|xrp)\b/g) ?? [])];
+  if (assets.length && /\b05m\b/.test(normalized)) {
+    try {
+      const result = await fiveMinuteDiscovery(assets, normalized);
+      const matches = result.events.flatMap(ev => ev.contracts.map(c => {
+        const seconds = Math.max(0, (Date.parse(c.expiry) - Date.now()) / 1000);
+        return { event_ticker: ev.ticker, event_title: ev.title, contract_label: c.label,
+          instrument_symbol: c.symbol, expires_spoken: speakTime(c.expiry), minutes_to_expiry: Math.round(seconds / 60),
+          yes_buy_price: c.buy.yes, no_buy_price: c.buy.no, yes_sell_price: c.sell.yes, no_sell_price: c.sell.no,
+          tradable_now: seconds >= minBuyMinutesToExpiry(ev.ticker) * 60 && (c.buy.yes !== null || c.buy.no !== null) };
+      }));
+      return json({ ok: true, matches, none_found: !matches.length, ambiguous: matches.length > 1, timing: result.timing });
+    } catch {
+      return err("MARKET_DATA_UNAVAILABLE", "Gemini market data is unavailable right now.");
+    }
+  }
   const { events, error } = await listActiveEvents();
   if (error) return err("MARKET_DATA_UNAVAILABLE", "Gemini market data is unavailable right now. Do not guess prices.", { detail: error });
 
@@ -103,7 +121,7 @@ async function findMarket(b: Body) {
       if (score === 0) continue;
       const expiryIso = c.expiryDate ?? ev.expiryDate ?? null;
       const expiryMs = expiryIso ? Date.parse(expiryIso) : Infinity;
-      if (!contractTradable(c) || expiryMs - now < 60_000) { closedMatches++; continue; }
+      if (!contractTradable(c) || expiryMs <= now) { closedMatches++; continue; }
       const strike = strikeOf(c);
       if (nums.length && strike !== null) {
         const best = Math.min(...nums.map((n) => Math.abs(n - strike) / Math.max(n, 1)));
@@ -140,7 +158,7 @@ async function findMarket(b: Body) {
       expires_spoken: speakTime(c.expiryDate ?? ev.expiryDate),
       minutes_to_expiry: minutes,
       yes_buy_price: y.buy, no_buy_price: n.buy, yes_sell_price: y.sell, no_sell_price: n.sell,
-      tradable_now: minutes >= LIMITS.minMinutesToExpiry,
+      tradable_now: expiryMs - now >= minBuyMinutesToExpiry(ev.ticker) * 60000 && (y.buy !== null || n.buy !== null),
       note: y.buy === null && n.buy === null ? "No one is offering this contract right now (no ask)." : undefined,
     };
   });

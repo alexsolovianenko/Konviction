@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { SettlementCalls } from "./SettlementCalls";
 import { PrivatePortfolio } from "./PrivatePortfolio";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Phone, Search } from "lucide-react";
@@ -128,8 +129,9 @@ export function OverviewView() {
       {!d ? <Waiting q={q} /> : (
         <>
           <AccountStrip d={d} />
+          <SettlementCalls />
           <Panel title="Gemini order history">
-            <p className="mb-4 text-sm text-muted-foreground">Use your approval PIN to check whether Gemini received or filled an order.</p>
+            <p className="mb-4 text-sm text-muted-foreground">Check whether Gemini received or filled an order.</p>
             <PrivatePortfolio showPositions={!d.account.configured || Boolean(d.account.positions_error)} />
           </Panel>
           {(d.history_available !== false || d.orders.length > 0 || d.intents.length > 0) && <Trades d={d} now={now} open={open} />}

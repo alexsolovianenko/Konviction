@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMarketTools, type MarketTools } from '../../pages/useMarketTools';
 import { Voice, initial, type VoiceView } from '../../voice';
+import { workerTrading } from '../../browserTrading';
 
 export type Phase =
   | 'idle'
@@ -58,6 +59,14 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     () => new Voice((patch) => setView((previous) => ({ ...previous, ...patch })), market.run),
   );
   useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const token = hash.get('pair');
+    if (token && !workerTrading) {
+      hash.delete('pair');
+      const rest = hash.toString();
+      window.history.replaceState(window.history.state, '', location.pathname + location.search + (rest ? '#' + rest : ''));
+      void voice.pairDevice({pairing_token:token});
+    }
     const close = () => {
       void voice.stop();
     };

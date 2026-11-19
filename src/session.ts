@@ -123,6 +123,17 @@ export class Session {
       this.synced = Math.max(this.synced, last);
     } while (this.synced < end);
   }
+  async confirmationSequence() {
+    const evidence = this.pendingEvidence ?? this.entries.length;
+    return this.schedule(async () => {
+      const end = await evidence;
+      const last = this.entries[end - 1];
+      if (this.closed || !last || last.role !== 'user') throw new Error('Confirmation required.');
+      await this.flush(end, false, this.evidenceValidity.signal);
+      if (this.closed || this.entries.length !== end) throw new Error('Confirmation changed.');
+      return end;
+    });
+  }
   private async refresh() {
     const result = await this.request('/intents?session_id=' + this.credentials.session_id);
     if (!Array.isArray(result.intents)) throw new Error();

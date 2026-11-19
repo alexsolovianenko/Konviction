@@ -195,7 +195,10 @@ export function createApi({ trading, repo, apiKey, agentId, lookupInstrument = a
         if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json'))
           return reply([415,{ok:false,message:'JSON required.'}]);
         try {
+          const deviceCookie = /(?:^|;\s*)v2p_device=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
           const result = await trading({ path:path.slice('/trading/'.length), method:req.method,
+            host, deviceCookie, setDeviceCookie: (value, seconds) => res.setHeader('Set-Cookie',
+              'v2p_device=' + value + '; HttpOnly; SameSite=Strict; Path=/api/trading; Max-Age=' + seconds),
             token:/^Bearer ([^ ]+)$/i.exec(req.headers.authorization ?? '')?.[1],
             body:req.method === 'POST' ? await readBody(req) : {}, key:req.headers['idempotency-key'] });
           return reply([200,result]);

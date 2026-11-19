@@ -1,6 +1,7 @@
 import { AudioLines } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../components/voice/VoiceProvider';
+import { MarketDiscoveryPanel } from '../components/prediction/MarketDiscoveryPanel';
 import { ActivityPanel } from '../components/voice/ActivityPanel';
 import { PredictionPanel } from '../components/prediction/PredictionPanel';
 
@@ -52,6 +53,7 @@ export function Home() {
         {view.error && <p className="voice-state" role="alert">{view.error}</p>}
       </div>
       <PredictionPanel key={market.epoch} />
+      <MarketDiscoveryPanel />
       {turns.length > 0 && <details className="voice-transcript"><summary>Full transcript</summary>
         <ol>{turns.map(turn => <li key={turn.seq}><strong>{turn.role === 'user' ? 'You' : 'Assistant'}</strong><span>{turn.text}{turn.interrupted && ' (interrupted)'}</span></li>)}</ol>
       </details>}

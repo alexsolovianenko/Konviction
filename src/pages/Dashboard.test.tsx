@@ -485,3 +485,97 @@ it('shows a voice proposal and accepts its private approval only from the dashbo
   expect(calls[1]!.init.headers).toMatchObject({Authorization:'Bearer private-1'});
   expect(spoken).not.toContain('6739');
 });
+
+it('ends the connection on a spoken goodbye and keeps order-status questions active', async () => {
+  const f = fixture();
+  const opts = await f.begin();
+  act(() => opts.onMessage?.({ role: 'user', source: 'user', event_id: 1, message: 'Is my order done?' }));
+  expect(f.endSession).not.toHaveBeenCalled();
+  act(() => opts.onMessage?.({ role: 'user', source: 'user', event_id: 2, message: 'Okay, I’m done. Thanks!' }));
+  await waitFor(() => expect(f.endSession).toHaveBeenCalledOnce());
+  await screen.findByText('Microphone · Idle');
+  expect(f.entries().some(entry => entry.text === 'Okay, I’m done. Thanks!')).toBe(true);
+});
+
+it('flushes audible terms and the caller confirmation before a paired sandbox buy', async () => {
+  const f = fixture(), sdk = await f.begin();
+  const baseFetch = f.fetchMock.getMockImplementation()!;
+  const readback = 'Buy two YES Bitcoin contracts at forty cents? Say confirm.';
+  const submit = vi.fn();
+  f.fetchMock.mockImplementation(async (path, options) => {
+    if (path.endsWith('/proposals')) return Response.json({
+      ok: true, availability: {message:'Enabled', execution_enabled:true, voice_confirmation_supported:true, voice_authorized:true},
+      proposal: {proposal_id:'pending', title:'Bitcoin', contract_label:'Up', quantity:2, outcome:'yes', limit_price:.4, quote_price:.4,
+        instrument_symbol:'GEMI-INTERNAL', expires_at:new Date(Date.now()+60000).toISOString(), readback:'Buy two contracts',
+        voice_readback:readback, notional_usd:.8, est_fee_usd:.02},
+    });
+    if (path.endsWith('/voice-confirm')) {
+      submit(JSON.parse(String(options.body)), f.entries(), options.headers);
+      return Response.json({ok:true, outcome_summary:'FILLED', order_id:'12345678', exchange_status:'filled'});
+    }
+    return baseFetch(path, options);
+  });
+  await act(async () => {
+    const result = JSON.parse(await sdk.clientTools['prepare_sandbox_buy']!({}));
+    expect(result.say).toBe(readback);
+    expect(await sdk.clientTools['confirm_sandbox_buy']!({})).not.toContain('12345678');
+  });
+  expect(submit).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('Private approval PIN')).toBeNull();
+  act(() => {
+    sdk.onModeChange?.({mode:'speaking'});
+    sdk.onMessage?.({source:'ai', role:'agent', event_id:1, message:readback});
+    sdk.onModeChange?.({mode:'listening'});
+    sdk.onMessage?.({source:'user', role:'user', event_id:2, message:'Confirm'});
+  });
+  await act(async () => {
+    const reply = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({proposal_id:'untrusted', confirmation_seq:77}));
+    expect(reply).toEqual({ok:true,say:'Filled in the sandbox.'});
+    await sdk.clientTools['confirm_sandbox_buy']!({});
+  });
+  expect(submit).toHaveBeenCalledTimes(1);
+  expect(submit).toHaveBeenCalledWith(
+    {proposal_id:'pending',confirmation_seq:2},
+    [expect.objectContaining({role:'agent',text:readback}), expect.objectContaining({role:'user',text:'Confirm'})],
+    expect.objectContaining({Authorization:'Bearer private-1'}),
+  );
+});
+
+it('reads paired Gemini positions with the live session and keeps symbol IDs out of speech', async () => {
+  const f = fixture(), sdk = await f.begin();
+  f.fetchMock.mockImplementation(async (path, init) => {
+    expect(path).toBe('/api/trading/portfolio');
+    expect(init.headers).toMatchObject({Authorization:'Bearer private-1'});
+    expect(JSON.parse(String(init.body))).toEqual({});
+    return Response.json({ok:true,as_of:'2026-11-19T09:40:00Z',positions:{rows:[
+      {symbol:'GEMI-INTERNAL',title:'Bitcoin',contract_label:'Up',outcome:'yes',totalQuantity:'2',avgPrice:'.4',markPrice:'.45',current_bid:'.44',unrealizedPnl:'.10',netProfit:'0'},
+    ]}, settlements:{rows:[{event_title:'Bitcoin yesterday',resolutionSide:'yes',payout:'2.00',netProfit:'1.15'}]}});
+  });
+  let spoken = '';
+  await act(async () => { spoken = await sdk.clientTools['get_sandbox_positions']!({}); });
+  expect(screen.getByRole('region',{name:'Voice position lookup'})).toHaveTextContent('45¢');
+  expect(JSON.parse(spoken).positions).toEqual([expect.objectContaining({event_title:'Bitcoin',quantity:2,outcome:'yes'})]);
+  expect(spoken).not.toContain('GEMI-INTERNAL');
+  expect(screen.getByText('Recent settlements')).toBeInTheDocument();
+  expect(screen.getByText('$1.15')).toBeInTheDocument();
+});
+
+it('explains the generic ElevenLabs unavailable message without claiming a balance', async () => {
+  const f = fixture();
+  const sdk = await f.begin();
+  act(() => sdk.onDisconnect?.({reason:'error',message:'The AI agent you are trying to reach is not available.',context:{type:'socket'}}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Check the workspace’s remaining voice credits and agent availability.');
+});
+
+it('redeems a device pairing link once and removes its secret before requesting it', async () => {
+  window.history.replaceState(null, '', '/?from=local#pair=one-time-secret');
+  try {
+    const f = fixture();
+    await waitFor(() => expect(f.requests.filter(req => req.path.endsWith('/pair'))).toHaveLength(1));
+    expect(f.requests.find(req => req.path.endsWith('/pair'))?.body).toEqual({pairing_token:'one-time-secret'});
+    expect(window.location.hash).toBe('');
+    expect(window.location.search).toBe('?from=local');
+  } finally {
+    window.history.replaceState(null, '', '/');
+  }
+});

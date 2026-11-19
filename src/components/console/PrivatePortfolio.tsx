@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PIN_PATTERN, tradingRequest } from "../../browserTrading";
 import { Empty, Panel } from "./ui";
 
@@ -9,6 +9,12 @@ export function PrivatePortfolio({ showPositions = true }: { showPositions?: boo
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [account, setAccount] = useState<Account | null>(null);
+  const [paired, setPaired] = useState(false);
+  useEffect(() => {
+    let active = true;
+    tradingRequest("availability").then(result => {if (active) setPaired(result?.voice_authorized === true);});
+    return () => {active=false;};
+  }, []);
   return (
     <div className="flex max-w-5xl flex-col gap-8">
       <form
@@ -21,7 +27,7 @@ export function PrivatePortfolio({ showPositions = true }: { showPositions?: boo
           setAccount(null);
           setMessage("");
           try {
-            const r = await tradingRequest("portfolio", { pin });
+            const r = await tradingRequest("portfolio", paired ? {} : { pin });
             if (r.ok) setAccount(r);
             else setMessage(r.message);
           } finally {
@@ -29,7 +35,7 @@ export function PrivatePortfolio({ showPositions = true }: { showPositions?: boo
           }
         }}
       >
-        <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
+        {!paired && <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
           Approval PIN
           <input
             className="field tracking-[0.3em]"
@@ -41,8 +47,8 @@ export function PrivatePortfolio({ showPositions = true }: { showPositions?: boo
             value={pin}
             onChange={(e) => setPin(e.target.value)}
           />
-        </label>
-        <button className="btn btn-primary" disabled={busy || !PIN_PATTERN.test(pin)}>
+        </label>}
+        <button className="btn btn-primary" disabled={busy || (!paired && !PIN_PATTERN.test(pin))}>
           Read Gemini account
         </button>
         {busy && (

@@ -1,6 +1,7 @@
 // @ts-nocheck -- shared with the mechanically ported phone backend.
 import { contractTradable, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
-import { cents, feeEstimate, hashPhone, json, LIMITS, num, round2, speakTime, usd } from "./util";
+import { comboEligibility } from "./native-combo";
+import { cents, feeEstimate, hashPhone, json, LIMITS, minBuyMinutesToExpiry, num, round2, speakTime, usd } from "./util";
 type Body = Record<string, any>;
 const err = (error: string, message: string, extra = {}) =>
   json({ ok: false, error, message, ...extra });
@@ -60,6 +61,8 @@ export async function prepareTrade(b: Body, saveProposal) {
     return err("BAD_INPUT", "That contract isn't in this event. Call find_market again.");
   if (!contractTradable(c) || !c.status || !c.marketState)
     return err("CONTRACT_NOT_OPEN", "That contract isn't open for trading.");
+  const comboError = await comboEligibility(event, c);
+  if (comboError) return err("COMBO_UNAVAILABLE", comboError);
   const expiryIso = c.expiryDate ?? event.expiryDate ?? null;
   const minutesLeft = expiryIso ? (Date.parse(expiryIso) - Date.now()) / 60000 : Infinity;
   const q = quoteFor(c, outcome as "yes" | "no");
@@ -68,10 +71,11 @@ export async function prepareTrade(b: Body, saveProposal) {
 
   let quantity: number, limit: number, quotePrice: number;
   if (side === "buy") {
-    if (minutesLeft < LIMITS.minMinutesToExpiry) {
+    const minMinutes = minBuyMinutesToExpiry(event.ticker);
+    if (minutesLeft < minMinutes) {
       return err(
         "TOO_CLOSE_TO_EXPIRY",
-        `This contract closes in under ${LIMITS.minMinutesToExpiry} minutes. Offer the next one.`,
+        `This contract closes in under ${minMinutes} ${minMinutes === 1 ? 'minute' : 'minutes'}. Offer the next one.`,
       );
     }
     if (q.buy === null)
@@ -191,6 +195,11 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     await finish("REJECTED");
     return err("CONTRACT_NOT_OPEN", "The contract closed. Nothing was placed.");
   }
+  const comboError = await comboEligibility(event, c);
+  if (comboError) {
+    await finish("REJECTED");
+    return err("COMBO_UNAVAILABLE", comboError);
+  }
   const q = quoteFor(c, it.outcome);
   const limit = Number(it.limit_price);
   const quoted = Number(it.quote_price);
@@ -220,8 +229,8 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
 
   if (
     it.side === "buy" &&
-    c.expiryDate &&
-    Date.parse(c.expiryDate) - Date.now() < LIMITS.minMinutesToExpiry * 60000
+    (c.expiryDate ?? event.expiryDate) &&
+    Date.parse(c.expiryDate ?? event.expiryDate) - Date.now() < minBuyMinutesToExpiry(event.ticker) * 60000
   ) {
     await finish("REJECTED");
     return err("TOO_CLOSE_TO_EXPIRY", "The contract is too close to expiry.");

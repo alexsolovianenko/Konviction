@@ -26,6 +26,10 @@ export type MarketContract = {
 export type MarketEvent = {
   ticker: string; title: string; category: string | null; status: string | null; contracts: MarketContract[];
 };
+export type NativeCombo = {
+  can_request_quote: boolean; event_ticker: string; symbol: string; title: string; status: string | null; expiry: string | null;
+  legs: { title: string | null; label: string; outcome: string; resolution: string | null }[];
+};
 export type MarketsSnapshot = { events: MarketEvent[]; error: string | null };
 export type DashboardState = {
   history_available?: boolean;

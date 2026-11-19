@@ -5,7 +5,7 @@ import { tradingRequest } from "../../browserTrading";
 
 const { feed } = vi.hoisted(() => ({ feed: vi.fn() }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: feed }));
-vi.mock("../../browserTrading", () => ({ PIN_PATTERN: /^\d{4,8}$/, tradingRequest: vi.fn() }));
+vi.mock("../../browserTrading", () => ({ workerTrading: true, PIN_PATTERN: /^\d{4,8}$/, tradingRequest: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 it("shows exchange fills behind the PIN even when the journal is offline and open positions are empty", async () => {
@@ -21,7 +21,7 @@ it("shows exchange fills behind the PIN even when the journal is offline and ope
   render(<OverviewView />);
   expect(screen.getByText("Gemini reports no open positions.")).toBeInTheDocument();
   expect(screen.queryByText("No trades yet.")).toBeNull();
-  expect(tradingRequest).not.toHaveBeenCalled();
+  expect(tradingRequest).not.toHaveBeenCalledWith("portfolio", expect.anything());
   fireEvent.change(screen.getByLabelText("Approval PIN"), { target: { value: "7314" } });
   fireEvent.click(screen.getByRole("button", { name: "Read Gemini account" }));
   expect(await screen.findByText("GEMI-TEST")).toBeInTheDocument();

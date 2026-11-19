@@ -1,5 +1,8 @@
 import { dashboardMarkets, dashboardMarketsFrom } from "./dashboard-markets";
-import { gPublic, geminiReadError } from "./gemini";
+import { comboEligibility } from "./native-combo";
+import { gPublic, geminiReadError, findContract, type GEvent } from "./gemini";
+
+import { normalizeMarketQuery, discoverCombos, fiveMinuteDiscovery, secondsUntil, payoutAtAsk } from "./prediction-discovery";
 
 export async function marketTool(name: string, params: URLSearchParams) {
   const fail = (error: string, status: number) => Response.json({ ok: false, error }, { status });
@@ -8,10 +11,18 @@ export async function marketTool(name: string, params: URLSearchParams) {
   if (Array.from(params.keys()).length !== fields.length || fields.some(k => !params.has(k) || params.get(k)!.length > 200))
     return fail("Invalid market tool parameters.", 400);
   if (name === "search_markets") {
+    const query = normalizeMarketQuery(params.get("query")!);
+    const assets = [...new Set(query.match(/\b(?:btc|eth|sol|xrp)\b/g) ?? [])];
+    try {
+      if (/\b(?:combos?|parlays?)\b/.test(query)) return Response.json(await discoverCombos(query));
+      if (/\b05m\b/.test(query) && assets.length && query.split(/[\s,&+/]+/).every(
+        word => ["btc","eth","sol","xrp","05m","and","track","nearest","current","up","down","yes","no",""].includes(word)
+      )) return Response.json(await fiveMinuteDiscovery(assets, query));
+    } catch {
+      return fail("Gemini Sandbox listing unavailable.", 502);
+    }
     const { events, error } = await dashboardMarkets(true);
     if (error) return fail(error, 502);
-    const query = params.get("query")!.toLowerCase().replace(/\bbitcoin\b/g, "btc")
-      .replace(/\b(?:five|5)[ -]?(?:minutes?|mins?|m)\b/g, "05m").trim();
     const words = query.split(/\s+/);
     const fiveMinute = words.includes("05m");
     const now = Date.now();
@@ -35,5 +46,13 @@ export async function marketTool(name: string, params: URLSearchParams) {
   const event = dashboardMarketsFrom({ data: Array.isArray(row) ? row : [row] })?.find(e => e.ticker === ticker);
   const contract = event?.contracts.find(c => c.symbol === symbol);
   if (!event || !contract) return fail("Prediction contract unavailable for this event.", 404);
-  return Response.json({ ok: true, source: "Gemini Sandbox", as_of: new Date().toISOString(), event_ticker: ticker, title: event.title, contract });
+  const rawEvent = (Array.isArray(row) ? row : [row]).find((e: GEvent) => e?.ticker === ticker);
+  const rawContract = findContract(rawEvent, symbol);
+  if (!rawContract) return fail("Prediction contract unavailable for this event.", 404);
+  const comboError = await comboEligibility(rawEvent, rawContract);
+  if (comboError) return fail(comboError, 409);
+  const now = Date.now();
+  return Response.json({ ok: true, source: "Gemini Sandbox", as_of: new Date(now).toISOString(),
+    event_ticker: ticker, title: event.title, contract, seconds_to_expiry: secondsUntil(contract.expiry, now),
+    payout_per_contract: { yes: payoutAtAsk(contract.buy.yes), no: payoutAtAsk(contract.buy.no) } });
 }

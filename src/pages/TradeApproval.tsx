@@ -8,11 +8,13 @@ export function TradeApproval({
   availability,
   message,
   approve,
+  pair,
 }: {
   proposal: Proposal | null;
   availability: Availability | null;
   message: string;
   approve: (id: string, pin: string) => Promise<void>;
+  pair?: (pin: string) => Promise<boolean>;
 }) {
   const [status, setStatus] = useState<Availability | null>(null);
   const [pin, setPin] = useState("");
@@ -38,9 +40,11 @@ export function TradeApproval({
     return () => clearTimeout(timer);
   }, [proposal]);
   const config = availability ?? status;
+  const pairing = !!(config?.voice_confirmation_supported && !config?.voice_authorized && pair);
+  const voiceReady = !!(config?.voice_confirmation_supported && config?.voice_authorized && proposal?.voice_readback);
   let approvalStatus = config?.message ?? "Checking sandbox trading availability…";
   if (proposal && config?.execution_enabled) {
-    approvalStatus = pending ? "Submitting sandbox order…" : expired ? "Approval expired" : "Awaiting your private approval";
+    approvalStatus = pending ? "Submitting sandbox order…" : expired ? "Approval expired" : voiceReady ? "Awaiting spoken confirmation" : "Awaiting your private approval";
   }
   return (
     <section
@@ -53,12 +57,12 @@ export function TradeApproval({
           {approvalStatus}
         </p>
         <a
-          href="/open-trades"
+          href="/dashboard"
           target="_blank"
           rel="noreferrer"
           className="inline-flex shrink-0 items-center gap-1 text-accent-foreground hover:underline"
         >
-          Open trades and positions <ArrowUpRight className="size-3.5" aria-hidden />
+          View account <ArrowUpRight className="size-3.5" aria-hidden />
         </a>
       </div>
       {proposal && (
@@ -90,6 +94,8 @@ export function TradeApproval({
           </p>
           {expired ? (
             <p className="text-sm text-warning">Proposal expired. Ask for a fresh quote.</p>
+          ) : voiceReady && config?.execution_enabled ? (
+            <p className="border-t border-border pt-3 text-sm text-muted-foreground">Say “confirm” after hearing the order terms.</p>
           ) : (
             config?.execution_enabled && (
               <form
@@ -104,7 +110,8 @@ export function TradeApproval({
                   setPending(true);
                   setPin("");
                   try {
-                    await approve(proposal.proposal_id, pin);
+                    if (pairing && pair) await pair(pin);
+                    else await approve(proposal.proposal_id, pin);
                   } finally {
                     setPending(false);
                   }
@@ -112,11 +119,11 @@ export function TradeApproval({
               >
                 <p className="flex items-start gap-2 text-sm text-muted-foreground">
                   <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  Enter your private PIN and approve to send this order to Gemini Sandbox.
+                  {pairing ? "Pair this browser once to confirm sandbox orders by voice." : "Enter your private PIN and approve to send this order to Gemini Sandbox."}
                 </p>
                 <div className="mt-3 flex flex-wrap items-end gap-2">
                   <label className="flex w-44 flex-col gap-1 text-xs text-muted-foreground">
-                    Private approval PIN
+                    {pairing ? "Device pairing PIN" : "Private approval PIN"}
                     <input
                       className="field tracking-[0.3em]"
                       type="password"
@@ -129,7 +136,7 @@ export function TradeApproval({
                     />
                   </label>
                   <button className="btn btn-primary" disabled={pending || !PIN_PATTERN.test(pin)}>
-                    {pending ? "Submitting…" : "Approve sandbox buy"}
+                    {pending ? "Submitting…" : pairing ? "Pair this browser" : "Approve sandbox buy"}
                   </button>
                 </div>
               </form>

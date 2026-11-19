@@ -46,6 +46,13 @@ export const LIMITS = {
   },
 };
 
+/** Explicit global settings apply to every series unless its five-minute override is set. */
+export function minBuyMinutesToExpiry(eventTicker: string | undefined): number {
+  if (eventTicker && /^[A-Z]+05M\d{10}$/i.test(eventTicker))
+    return envNum("MIN_FIVE_MINUTE_MINUTES_TO_EXPIRY", envNum("MIN_MINUTES_TO_EXPIRY", 1));
+  return LIMITS.minMinutesToExpiry;
+}
+
 export const displayTz = () => envStr("DISPLAY_TZ", "America/Chicago");
 
 /** Taker fee estimate: rate x contracts x P x (1-P), rounded up to the cent. */

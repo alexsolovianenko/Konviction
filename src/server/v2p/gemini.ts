@@ -191,7 +191,7 @@ export type Contract = {
   status?: string; marketState?: string | null; expiryDate?: string | null;
   prices?: { buy?: { yes?: string; no?: string }; sell?: { yes?: string; no?: string }; bestBid?: string | null; bestAsk?: string | null; lastTradePrice?: string | null } | null;
   strike?: { value?: string | null; type?: string } | null;
-  quantityMinimum?: string | null; resolutionSide?: string | null;
+  isCombo?: boolean; quantityMinimum?: string | null; resolutionSide?: string | null;
 };
 export type GEvent = {
   id?: string; title?: string; ticker?: string; category?: string; status?: string; expiryDate?: string | null;

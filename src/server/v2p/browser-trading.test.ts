@@ -5,12 +5,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { SQLiteRepository } from "../../../server/repository.mjs";
 // @ts-expect-error JavaScript service is used by the local Node launcher.
 import { browserTrading } from "../../../server/browser-trading.mjs";
-import { getEvent, gPrivate } from "./gemini";
+import { getEvent, gPrivate, gPublic } from "./gemini";
 
 vi.mock("./gemini", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./gemini")>()),
   getEvent: vi.fn(),
   gPrivate: vi.fn(),
+  gPublic: vi.fn(),
   hasCredentials: () => true,
 }));
 const input = {
@@ -240,4 +241,141 @@ it("sizes a dollar budget in whole contracts including rounded fees and binds re
   }
   await expect(propose(t, randomUUID(), { ...input, budget_usd: 100 })).rejects.toMatchObject({ code: "BAD_INPUT" });
   expect(await propose(t, randomUUID(), { ...terms, budget_usd: 0.4 })).toMatchObject({ ok: false, error: "CAP_EXCEEDED" });
+});
+
+async function paired() {
+  let cookie = "";
+  const host = "127.0.0.1:5173";
+  await run({ path: "pair", method: "POST", body: { pin }, host,
+    setDeviceCookie: (value: string) => { cookie = value; } });
+  return { host, deviceCookie: cookie };
+}
+
+it("executes one sandbox buy only after the paired browser hears its fresh readback and confirms", async () => {
+  const device = await paired();
+  const t = token();
+  const owner = repo.authenticate(createHash("sha256").update(t).digest("hex")).id;
+  const { proposal } = await run({ ...device, token:t, method:"POST", path:"proposals", key:randomUUID(), body:input });
+  expect(proposal.voice_readback).toBe(`Buy 2 YES on Example event, Option, at up to 40 cents each. About $${(proposal.notional_usd + proposal.est_fee_usd).toFixed(2)} at risk including estimated fees, $2 payout if all fill and win. Say confirm.`);
+  const confirm = (seq:number, credentials: Record<string,string> = device) =>
+    run({ ...credentials, token:t, method:"POST", path:"voice-confirm", body:{proposal_id:proposal.proposal_id, confirmation_seq:seq} });
+  const entry = (seq:number, role:string, text:string, interrupted = false, now = Date.now()) =>
+    repo.append(owner, {role, seq, text, interrupted}, now);
+  await expect(confirm(1)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+  entry(1,"agent",proposal.voice_readback,true);
+  entry(2,"user","confirm");
+  await expect(confirm(2)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+  entry(3,"agent",proposal.voice_readback.replace("40 cents","4 cents"));
+  entry(4,"user","yes");
+  await expect(confirm(4)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+  entry(5,"agent",proposal.voice_readback);
+  entry(6,"user","yes, but change that");
+  await expect(confirm(6)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+  entry(7,"agent",proposal.voice_readback);
+  entry(8,"user","confirm",false,Date.now()-31000);
+  await expect(confirm(8)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+  entry(9,"agent",proposal.voice_readback);
+  entry(10,"user","Confirm.");
+  await expect(confirm(10, {host:device.host})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
+  await expect(confirm(10, await paired())).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
+  await expect(confirm(10, {...device,host:"localhost:5173"})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
+  expect(gPrivate).not.toHaveBeenCalled();
+  const responses = await Promise.allSettled([confirm(10),confirm(10)]);
+  expect(responses[0]).toMatchObject({ status:"fulfilled", value:{ok:true,outcome_summary:"FILLED"} });
+  expect(responses[1]).toMatchObject({ status:"rejected",reason:{code:"IN_PROGRESS"} });
+  expect(await confirm(10)).toMatchObject({ ok:true,outcome_summary:"FILLED" });
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+});
+
+it("opens a trusted device only with a fresh single-use local pairing code", async () => {
+  // @ts-expect-error local Node module.
+  const { TrustedDevices } = await import("../../../server/trusted-device.mjs");
+  const devices = new TrustedDevices(repo);
+  const code = devices.issueCode();
+  const host = "127.0.0.1:5173";
+  let deviceCookie = "";
+  const pair = (value:string) => run({ path:"pair", method:"POST", host, body:{pairing_token:value},
+    setDeviceCookie:(value:string) => {deviceCookie=value;} });
+  await expect(pair("bogus")).rejects.toMatchObject({code:"PAIRING_EXPIRED"});
+  await expect(pair(code)).resolves.toMatchObject({voice_authorized:true});
+  await expect(pair(code)).rejects.toMatchObject({code:"PAIRING_EXPIRED"});
+  const available = () => run({path:"availability",method:"GET",host,deviceCookie});
+  expect((await available()).voice_authorized).toBe(true);
+  repo.db.exec("UPDATE browser_devices SET expires=0");
+  expect((await available()).voice_authorized).toBe(false);
+  const expired = devices.issueCode();
+  repo.db.exec("UPDATE browser_pairing_codes SET expires=0");
+  await expect(pair(expired)).rejects.toMatchObject({code:"PAIRING_EXPIRED"});
+});
+
+it("requires paired device identity for settlement callback preferences and private reads", async () => {
+  const callback = vi.fn(async () => ({ok:true,configured:true}));
+  run = browserTrading(repo, { settlementCallback: callback });
+  const device = await paired();
+  const request = (method:string, credentials:Record<string,string>) =>
+    run({ ...credentials, path:"settlement-callback", method, body:{} });
+  for (const method of ["GET","POST"]) {
+    await expect(request(method, {})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
+    expect(await request(method, device)).toMatchObject({ok:true});
+  }
+  expect(callback).toHaveBeenCalledTimes(2);
+  await expect(run({path:"portfolio",method:"POST",body:{}})).rejects.toMatchObject({code:"DEVICE_REQUIRED"});
+  vi.mocked(gPrivate).mockResolvedValue({
+    ok:true,status:200,text:"", data:{ orders:[], positions:[{symbol:"C",contractMetadata:{eventName:"Bitcoin today",contractName:"Up",otherPrivate:"redacted"}}] },
+  });
+  const portfolio = await run({...device,path:"portfolio",method:"POST",body:{}});
+  expect(portfolio.positions.rows).toEqual([{symbol:"C",event_title:"Bitcoin today",contract_label:"Up"}]);
+});
+
+function nativeCombo() {
+  const eventTicker = "CMB-270101-TEST";
+  const symbol = "GEMI-CMB-270101-TEST-CMB";
+  const expiry = new Date(Date.now()+86400000).toISOString();
+  const contract = { isCombo:true, instrumentSymbol:symbol, label:"Both levels", status:"active", marketState:"open",
+    expiryDate:expiry, prices:{buy:{yes:".37", no:".64"}, sell:{yes:".36",no:".63"}} };
+  const event = {ticker:eventTicker,title:"Oil and Bitcoin",status:"active",contracts:[contract]};
+  const meta = { contract:{instrumentSymbol:symbol,eventTicker,contractStatus:"Active",expiryDate:expiry},
+    legs:[{requiredOutcome:"Yes",contract:{instrumentSymbol:"GEMI-BTC-LEVEL",contractStatus:"Active",expiryDate:expiry}},
+          {requiredOutcome:"No",legOutcome:"Pass",contract:{instrumentSymbol:"GEMI-OIL-LEVEL",contractStatus:"Settled",resolutionSide:"no"}}] };
+  vi.mocked(getEvent).mockResolvedValue({event});
+  vi.mocked(gPublic).mockResolvedValue({ok:true,data:meta,status:200,text:""});
+  return {event,contract,meta,order:{...input,event_ticker:eventTicker,contract_symbol:symbol}};
+}
+
+it("uses the verified native combo's own outcome price at proposal and approval", async () => {
+  const {order} = nativeCombo();
+  const t = token();
+  const r = await propose(t, randomUUID(), {...order,outcome:"no",limit_price:.65});
+  expect(r.proposal.quote_price).toBe(.64);
+  expect(await approve(t, r.proposal.proposal_id)).toMatchObject({ok:true,outcome_summary:"FILLED"});
+  expect(gPublic).toHaveBeenCalledTimes(2);
+  expect(gPublic).toHaveBeenCalledWith("/v1/prediction-markets/combos/" + order.contract_symbol);
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+  expect(gPrivate).toHaveBeenCalledWith("/v1/prediction-markets/order",
+    expect.objectContaining({symbol:order.contract_symbol,side:"buy",outcome:"no",price:"0.65"}));
+});
+
+it("refuses unverified, expired or resolved combo legs, stale prices, and missing combo liquidity", async () => {
+  const t = token();
+  const {event,order,contract,meta} = nativeCombo();
+  const produce = () => propose(t,randomUUID(),order);
+  const proposal = (await produce()).proposal;
+  meta.legs[1]!.legOutcome = "Fail";
+  expect(await approve(t, proposal.proposal_id)).toMatchObject({ok:false,error:"COMBO_UNAVAILABLE"});
+  meta.legs[1]!.legOutcome = "Pass";
+  meta.contract.instrumentSymbol += "-WRONG";
+  expect(await produce()).toMatchObject({ok:false,error:"COMBO_UNAVAILABLE"});
+  meta.contract.instrumentSymbol = order.contract_symbol;
+  meta.legs[0]!.contract.expiryDate = "2000-01-01T00:00:00Z";
+  expect(await produce()).toMatchObject({ok:false,error:"COMBO_UNAVAILABLE"});
+  meta.legs[0]!.contract.expiryDate = contract.expiryDate;
+  contract.prices.buy.yes = "";
+  expect(await produce()).toMatchObject({ok:false,error:"NO_LIQUIDITY"});
+  contract.prices.buy.yes = ".37";
+  const another = (await produce()).proposal;
+  contract.prices.buy.yes = ".84";
+  expect(await approve(t,another.proposal_id)).toMatchObject({ok:false,error:"PRICE_MOVED"});
+  event.status = "settled";
+  expect(await produce()).toMatchObject({ok:false,error:"COMBO_UNAVAILABLE"});
+  expect(gPrivate).not.toHaveBeenCalled();
 });

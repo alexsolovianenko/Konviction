@@ -4,6 +4,7 @@ import { cents, countdown } from "../../lib/format";
 import { TradeApproval } from "../../pages/TradeApproval";
 import type { Lookup, MarketResult } from "../../pages/useMarketTools";
 import { useVoice } from "../voice/VoiceProvider";
+import { VoicePositions } from "../voice/VoicePositions";
 import { QuoteChart } from "./QuoteChart";
 import { POLL_MS, useContractQuotes, type QuoteTarget } from "./useContractQuotes";
 
@@ -26,7 +27,7 @@ export function selectTarget(
     const eventTicker = text(proposed.event_ticker);
     return eventTicker ? { eventTicker, symbol: proposed.instrument_symbol } : null;
   }
-  if (!result?.ok) return null;
+  if (!result?.ok || result.track_group) return null;
   const quoted = result as MarketResult & { event_ticker?: unknown };
   if (quoted.contract) {
     const eventTicker = text(quoted.event_ticker);
@@ -73,7 +74,7 @@ export function PredictionPanel() {
     return () => clearInterval(timer);
   }, [expiry, feed.status]);
 
-  if (!shown && !view.proposal && !view.tradeMessage) return null;
+  if (!shown && !view.proposal && !view.tradeMessage && !view.positionSnapshot) return null;
   const latest = feed.contract?.symbol === shown?.symbol ? feed.samples.at(-1) : undefined;
   return (
     <section aria-label="Prediction contract" className="grid min-w-0 gap-4">
@@ -133,10 +134,12 @@ export function PredictionPanel() {
           Chart unavailable: the proposal did not name its event.
         </p>
       )}
+      <VoicePositions snapshot={view.positionSnapshot} />
       {(view.proposal || view.tradeMessage) && <TradeApproval
         proposal={view.proposal}
         availability={view.availability}
         message={view.tradeMessage}
+        pair={(pin) => voice.pairDevice({pin})}
         approve={(id, pin) => voice.approve(id, pin)}
       />}
     </section>

@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronRight, Search } from 'lucide-react';
 import { TradeApproval } from './TradeApproval';
+import { MarketDiscoveryPanel } from '../components/prediction/MarketDiscoveryPanel';
+import { VoicePositions } from '../components/voice/VoicePositions';
 import { ActivityPanel } from '../components/voice/ActivityPanel';
 import { StatusBubble } from '../components/voice/StatusBubble';
 import { VoiceButton } from '../components/voice/VoiceButton';
@@ -42,9 +44,11 @@ function Workspace({ children }: { children?: ReactNode }) {
           proposal={view.proposal}
           availability={view.availability}
           message={view.tradeMessage}
+          pair={(pin) => voice.pairDevice({pin})}
           approve={(id, pin) => voice.approve(id, pin)}
         />
 
+        <VoicePositions snapshot={view.positionSnapshot} />
         {children}
       </div>
 
@@ -75,6 +79,7 @@ function Workspace({ children }: { children?: ReactNode }) {
               <span className="spinner spinner-ink" aria-hidden /> Refreshing Gemini Sandbox…
             </p>
           )}
+          <MarketDiscoveryPanel />
           {result && (
             <div aria-live="polite" className="mt-3 space-y-2">
               {result.error && <p role="alert" className="text-sm text-destructive">{result.error}</p>}

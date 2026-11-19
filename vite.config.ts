@@ -17,7 +17,10 @@ export default defineConfig({
     server: { host: "127.0.0.1", port: 5173, strictPort: true,
       fs: { deny: [".env", ".env.*", "*.{crt,pem,key}", "**/.git/**", "**/data/**", "**/*.{sqlite,sqlite-wal,sqlite-shm,db,db-wal,db-shm}"] },
       proxy: process.env['CAPTURE_PORT'] ? {
-        "^/api/(trading/|voice/|transcripts(?:$|[?])|intents(?:$|[?])|tools/)": "http://127.0.0.1:" + process.env['CAPTURE_PORT'],
+        "^/api/(trading/|voice/|transcripts(?:$|[?])|intents(?:$|[?])|tools/)": {
+          target: "http://127.0.0.1:" + process.env['CAPTURE_PORT'],
+          changeOrigin: false, // The capture service checks the browser Origin against the public loopback Host.
+        },
       } : {},
     },
     resolve: {
