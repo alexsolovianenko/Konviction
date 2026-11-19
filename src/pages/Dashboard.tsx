@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronRight, Search } from 'lucide-react';
 import { PredictionPanel } from '../components/prediction/PredictionPanel';
 import { MarketDiscoveryPanel } from '../components/prediction/MarketDiscoveryPanel';
@@ -24,7 +24,7 @@ export function Dashboard({ children }: { children?: ReactNode } = {}) {
 
 function Workspace({ children }: { children?: ReactNode }) {
   const { view, market } = useVoice();
-  const [query, setQuery] = useState('');
+  const { query, sort } = market.browse;
   const result = market.result;
   return (
     <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -50,7 +50,7 @@ function Workspace({ children }: { children?: ReactNode }) {
             className="mt-3 flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              void market.run('search_markets', { query });
+              void market.run('search_markets', { query, ...(sort && { sort }) });
             }}
           >
             <div className="relative min-w-0 flex-1">
@@ -60,7 +60,7 @@ function Workspace({ children }: { children?: ReactNode }) {
                 aria-label="Market search"
                 placeholder="Event, ticker, or category"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => market.filterTopic(e.target.value)}
               />
             </div>
             <button className="btn btn-quiet">Search markets</button>

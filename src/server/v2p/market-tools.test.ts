@@ -1,5 +1,9 @@
-import { afterEach, expect, it, vi } from 'vitest';
-import { marketTool } from './market-tools';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+let marketTool: typeof import('./market-tools').marketTool;
+beforeEach(async () => {
+  vi.resetModules();
+  ({ marketTool } = await import('./market-tools'));
+});
 afterEach(() => vi.unstubAllGlobals());
 
 it('refreshes even an identical search and surfaces an unavailable upstream', async () => {
@@ -151,5 +155,69 @@ it.each(['quantity=2','outcome=yes&quantity=1.5','outcome=no&limit_price=0','out
   vi.stubGlobal('fetch',get);
   const params = new URLSearchParams('event_ticker=E&contract_symbol=C&' + extra);
   expect((await marketTool('get_orderbook', params)).status).toBe(400);
+  expect(get).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['Bitcoin featured', 'featured', ['B','A','D']],
+  ['Bitcoin highest volume', 'volume', ['A','B','D']],
+  ['Bitcoin highest 24-hour volume', 'volume_24h', ['B','A','D']],
+  ['Bitcoin newest', 'newest', ['D','B','A']],
+  ['Bitcoin by expiry date', 'expiry', ['A','D','B']],
+])('ranks by %s before limiting the result', async (query, sort, tickers) => {
+  const now = Date.now();
+  const event = (ticker: string, volume: number | null, volume24h: number | null, age: number, expires: number) => ({
+    ticker, title: 'BTC ' + ticker, volume, volume24h, createdAt: new Date(now - age * 1000).toISOString(),
+    contracts: [{ instrumentSymbol: ticker + '-YES', expiryDate:new Date(now + expires * 1000).toISOString() }],
+  });
+  const a = event('A', 100, 2, 10, 20), b = event('B', 50, 12, 5, 60), d = event('D', null, null, 2, 40);
+  vi.stubGlobal('fetch', async (url: URL) => {
+    if (url.hostname === 'exchange.sandbox.gemini.com') {
+      expect(url.searchParams.get('sort')).toBe('featured');
+      return Response.json({data:[b,a], pagination:{total:2}});
+    }
+    return Response.json({data:[a,b,d], pagination:{total:3}});
+  });
+  for (const params of [new URLSearchParams({query}), new URLSearchParams({query:'Bitcoin',sort})]) {
+    const reply = await (await marketTool('search_markets',params)).json();
+    expect(reply).toMatchObject({sort, query:'btc', topic:'btc'});
+    expect(reply.events.map((e: {ticker:string}) => e.ticker)).toEqual(tickers);
+  }
+});
+
+it('shares the listing and its original timestamp across sort changes, then refreshes after 15 seconds', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date('2026-11-19T18:00:00Z'));
+    const get = vi.fn(async () => Response.json({data:[], pagination:{total:0}}));
+    vi.stubGlobal('fetch',get);
+    const browse = async (sort: string) => (await marketTool('search_markets',new URLSearchParams({query:'',sort}))).json();
+    const [first,parallel] = await Promise.all([browse('volume'),browse('featured')]);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(first.as_of).toBe(parallel.as_of);
+    vi.advanceTimersByTime(5_000);
+    expect((await browse('newest')).as_of).toBe(first.as_of);
+    expect(get).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(10_000);
+    expect((await browse('expiry')).as_of).not.toBe(first.as_of);
+    expect(get).toHaveBeenCalledTimes(4);
+  } finally { vi.useRealTimers(); }
+});
+
+it('keeps other rankings available if the Featured feed fails and retries the failed source', async () => {
+  let failFeatured = true;
+  vi.stubGlobal('fetch',async (url:URL) => url.hostname === 'exchange.sandbox.gemini.com' && failFeatured
+    ? new Response('',{status:503}) : Response.json({data:[]}));
+  const browse = (sort: string) => marketTool('search_markets',new URLSearchParams({query:'',sort}));
+  expect((await browse('volume')).status).toBe(200);
+  expect((await browse('featured')).status).toBe(502);
+  failFeatured = false;
+  expect((await browse('featured')).status).toBe(200);
+});
+
+it('explicitly rejects a ranking unsupported by the separate native combo feed', async () => {
+  const get = vi.fn(); vi.stubGlobal('fetch',get);
+  const reply = await marketTool('search_markets',new URLSearchParams({query:'BTC combos',sort:'volume'}));
+  expect(reply.status).toBe(422);
   expect(get).not.toHaveBeenCalled();
 });

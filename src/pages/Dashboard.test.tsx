@@ -519,7 +519,7 @@ it.each([false, true])('requests one fresh remainder proposal after spoken appro
   });
   await act(async () => {
     const result = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({}));
-    expect(result.say).toContain('remaining 2');
+    expect(result.say).toBe('Filled 1 of 3.');
   });
   const retryButton = await screen.findByRole('button',{name:'Prepare remaining 2 contracts'});
   expect(requests).toHaveLength(1);
@@ -579,7 +579,7 @@ it('flushes audible terms and the caller confirmation before a paired sandbox bu
     });
     if (path.endsWith('/voice-confirm')) {
       submit(JSON.parse(String(options.body)), f.entries(), options.headers);
-      return Response.json({ok:true, outcome_summary:'FILLED', order_id:'12345678', exchange_status:'filled'});
+      return Response.json({ok:true, outcome_summary:'FILLED', filled_quantity:2, avg_price:0.4, order_id:'12345678', exchange_status:'filled'});
     }
     return baseFetch(path, options);
   });
@@ -598,7 +598,7 @@ it('flushes audible terms and the caller confirmation before a paired sandbox bu
   });
   await act(async () => {
     const reply = JSON.parse(await sdk.clientTools['confirm_sandbox_buy']!({proposal_id:'untrusted', confirmation_seq:77}));
-    expect(reply).toEqual({ok:true,say:'Filled in the sandbox.'});
+    expect(reply).toEqual({ok:true,say:'Filled 2 at 40 cents.'});
     await sdk.clientTools['confirm_sandbox_buy']!({});
   });
   expect(submit).toHaveBeenCalledTimes(1);

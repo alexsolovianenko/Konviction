@@ -1,10 +1,12 @@
+import { browseQuery, isMarketSort } from "../../lib/market-sort";
+import { compareMarketRanks, marketRank } from "../../lib/market-rank";
 import { liquiditySnapshot, type LiquidityQuery } from "./book-liquidity";
 import { dashboardMarkets, dashboardMarketsFrom } from "./dashboard-markets";
 import { comboEligibility } from "./native-combo";
 import { gPublic, geminiReadError, findContract, type GEvent } from "./gemini";
 import { settlementIndex } from "./settlement-index";
 
-import { normalizeMarketQuery, discoverCombos, fiveMinuteDiscovery, secondsUntil, payoutAtAsk } from "./prediction-discovery";
+import { discoverCombos, fiveMinuteDiscovery, secondsUntil, payoutAtAsk } from "./prediction-discovery";
 
 // Gemini quotes its binary book on the YES side. A resting YES bid at p
 // supplies a NO buy at 1 - p. Only attach size if both snapshots agree.
@@ -16,70 +18,59 @@ function displayedBuySize(level: { price?: unknown; amount?: unknown } | undefin
   return Math.abs((complement ? 1 - price : price) - quote) < 1e-9 ? amount : null;
 }
 
-// Keep the voice tool's single query parameter. Remove browse qualifiers before matching market names.
-function browseQuery(raw: string) {
-  let minVolume: number | null = null;
-  let endingMinutes: number | null = null;
-  let rankByVolume = false;
-  let rankByExpiry = false;
-  const words = raw.toLowerCase()
-    .replace(/\b(?:min(?:imum)?\s+volume|volume\s+(?:at least|above|over|from))\s*\$?([\d,]+(?:\.\d+)?)\s*([km])?\b/g, (_, amount, suffix) => {
-      minVolume = Number(amount.replaceAll(",", "")) * (suffix === "k" ? 1000 : suffix === "m" ? 1000000 : 1);
-      return " ";
-    })
-    .replace(/\b(?:highest|high|most|top|by)\s+volume\b/g, () => { rankByVolume = true; return " "; })
-    .replace(/\b(?:ending|closing|expiring)\s+(?:in|within)\s+(?:the next\s+)?(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/g, (_, value, unit) => {
-      endingMinutes = Number(value) * (unit.startsWith("h") ? 60 : unit.startsWith("d") ? 1440 : 1);
-      rankByExpiry = true;
-      return " ";
-    })
-    .replace(/\b(?:ending|closing|expiring)\s+(?:soonest|soon|first|next)\b/g, () => { rankByExpiry = true; return " "; });
-  const browsing = minVolume !== null || rankByVolume || rankByExpiry;
-  const keywords = browsing ? words.replace(/\b(?:please|show|me|the|markets?|events?|contracts?|with|and|sort|sorted|by)\b/g, " ") : words;
-  return { query: normalizeMarketQuery(keywords), minVolume, endingMinutes, rankByVolume, rankByExpiry, browsing };
-}
-
 export async function marketTool(name: string, params: URLSearchParams) {
   const fail = (error: string, status: number) => Response.json({ ok: false, error }, { status });
   const fields = name === "search_markets" ? ["query"] : name === "get_settlement_index" ? ["event_ticker"] : ["event_ticker", "contract_symbol"];
   if (!["search_markets", "get_orderbook", "get_settlement_index"].includes(name)) return fail("Unknown market tool.", 404);
-  const optional = name === "get_orderbook" ? ["outcome", "side", "quantity", "limit_price"] : [];
+  const optional = name === "get_orderbook" ? ["outcome", "side", "quantity", "limit_price"] : name === "search_markets" ? ["sort"] : [];
   if (fields.some(k => !params.has(k)) || Array.from(params).some(([key, value]) =>
     ![...fields, ...optional].includes(key) || params.getAll(key).length !== 1 || value.length > 200))
     return fail("Invalid market tool parameters.", 400);
   if (name === "get_settlement_index") return settlementIndex(params.get("event_ticker")!);
   if (name === "search_markets") {
-    const { query, minVolume, endingMinutes, rankByVolume, rankByExpiry, browsing } = browseQuery(params.get("query")!);
+    const requestedSort = params.get("sort");
+    if (requestedSort !== null && !isMarketSort(requestedSort)) return fail("Unknown market sort.", 400);
+    const { topic: query, query: filterQuery, minVolume, endingMinutes, sort, browsing } = browseQuery(params.get("query")!, requestedSort);
+    const rankByExpiry = sort === "expiry" || endingMinutes !== null;
     const assets = [...new Set(query.match(/\b(?:btc|eth|sol|xrp)\b/g) ?? [])];
     try {
-      if (/\b(?:combos?|parlays?)\b/.test(query)) return Response.json(await discoverCombos(query));
+      if (/\b(?:combos?|parlays?)\b/.test(query)) {
+        if (browsing) return fail("Market rankings apply to events. Browse native combos without ranking filters.", 422);
+        return Response.json(await discoverCombos(query));
+      }
       if (!browsing && /\b05m\b/.test(query) && assets.length && query.split(/[\s,&+/]+/).every(
         word => ["btc","eth","sol","xrp","05m","and","track","nearest","current","up","down","yes","no",""].includes(word)
       )) return Response.json(await fiveMinuteDiscovery(assets, query));
     } catch {
       return fail("Gemini Sandbox listing unavailable.", 502);
     }
-    const { events, error } = await dashboardMarkets(true);
+    const { events, error, as_of } = await dashboardMarkets({ fresh: !browsing, requireFeatured: sort === "featured" });
     if (error) return fail(error, 502);
     const words = query.split(/\s+/);
     const fiveMinute = words.includes("05m");
     const now = Date.now();
     const matches = events.flatMap(event => {
-      if ((rankByVolume || minVolume !== null) && (event.volume_usd == null || event.volume_usd < (minVolume ?? 0))) return [];
+      if (minVolume !== null && (event.volume_usd == null || event.volume_usd < minVolume)) return [];
       const title = [event.title, event.category, event.ticker].join(" ").toLowerCase();
       const contracts = event.contracts.filter(c => {
         const expiry = Date.parse(c.expiry ?? "");
         if (fiveMinute && !(c.status === "active" && c.market_state === "open" && expiry > now)) return false;
-        if (rankByExpiry && !(expiry > now)) return false;
+        if ((endingMinutes !== null || (rankByExpiry && Number.isFinite(expiry))) && !(expiry > now)) return false;
         if (endingMinutes !== null && expiry > now + endingMinutes * 60_000) return false;
         return words.every(w => (title + " " + c.symbol + " " + c.label).toLowerCase().includes(w));
       });
-      if (rankByExpiry || fiveMinute) contracts.sort((a, b) => Date.parse(a.expiry!) - Date.parse(b.expiry!));
+      if (rankByExpiry || fiveMinute) contracts.sort((a, b) => compareMarketRanks(
+        marketRank("expiry", event, a.expiry), marketRank("expiry", event, b.expiry), false));
       return contracts.length ? [{ ...event, contracts: contracts.slice(0, 8) }] : [];
     });
-    if (rankByVolume) matches.sort((a, b) => b.volume_usd! - a.volume_usd!);
-    else if (fiveMinute || rankByExpiry) matches.sort((a, b) => Date.parse(a.contracts[0]!.expiry!) - Date.parse(b.contracts[0]!.expiry!));
-    return Response.json({ ok: true, as_of: new Date().toISOString(), source: "Gemini Sandbox", events: matches.slice(0, 8), matched_events: matches.length });
+    const order = sort ?? (fiveMinute ? "expiry" : null);
+    if (order) {
+      const descending = order === "volume" || order === "volume_24h" || order === "newest";
+      matches.sort((a, b) => compareMarketRanks(marketRank(order, a, a.contracts[0]!.expiry), marketRank(order, b, b.contracts[0]!.expiry), descending));
+    }
+    return Response.json({ ok: true, as_of, source: "Gemini Sandbox", query: filterQuery, topic: query,
+      ...(sort && { sort }), ...(minVolume !== null && { min_volume: minVolume }), ...(endingMinutes !== null && { ending_minutes: endingMinutes }),
+      events: matches.slice(0, 8), matched_events: matches.length });
   }
   const ticker = params.get("event_ticker")!;
   const symbol = params.get("contract_symbol")!;

@@ -11,6 +11,7 @@
 //   POST portfolio               sanitized shared sandbox Gemini open orders, positions, order history
 //
 // The ElevenLabs system injects the conversation history and call ID into its server webhook.
+import { spokenFill } from "../../spoken-fill";
 import { validOrderKeys } from "./browser-order-input";
 import { spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { db, executionEnabled, logActivity } from "./db";
@@ -227,7 +228,8 @@ async function recordedResult(store: Store, row) {
   const order = await store.getOrderByIntent(row.id);
   if (order) {
     if (row.order_mode === "market" && order.raw?.result?.order_mode === "market") {
-      return order.raw.result;
+      const result = order.raw.result;
+      return { ...result, voice_say: spokenFill(result.outcome_summary, result.filled_quantity, row.quantity, result.avg_price) ?? result.voice_say };
     }
     const remainder = remainderBuy(row, order.outcome_summary, order.filled_qty, order.exchange_status);
     const say = order.outcome_summary === "EXCHANGE_REJECTED" ? "Gemini rejected the sandbox order." :
@@ -239,7 +241,7 @@ async function recordedResult(store: Store, row) {
       order_id: order.gemini_order_id, exchange_status: order.exchange_status, filled_quantity: order.filled_qty,
       remaining_quantity: order.remaining_qty, avg_price: order.avg_price,
       ...(remainder && { remainder_buy: remainder }),
-      voice_say: say,
+      voice_say: spokenFill(order.outcome_summary, order.filled_qty, row.quantity, order.avg_price) ?? say,
       say: say + (remainder ? ` Ask to retry the remaining ${remainder.quantity} at the original limit.` : ""),
     };
   }
@@ -402,7 +404,9 @@ export async function handleBrowserTrading(req: Request, action: string): Promis
       return reply(200, { ok: true, voice_only: true, signed_url: signed.signed_url });
     }
     const token = action === "call-confirm" ? req.headers.get("x-trade-session-token") ?? undefined : /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
-    return reply(200, await runBrowserTrading({ action, method: req.method, token, body, callSecret }));
+    const result = await runBrowserTrading({ action, method: req.method, token, body, callSecret });
+    if (action === "call-confirm" && result.voice_say) return reply(200, { ...result, say: result.voice_say });
+    return reply(200, result);
   } catch (e) {
     if (e instanceof TradeError) {
       // ElevenLabs treats non-2xx as a failed webhook and may improvise a reason.

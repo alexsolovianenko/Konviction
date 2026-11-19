@@ -4,7 +4,7 @@
     {
       "name": "search_markets",
       "type": "client",
-      "description": "Find sandbox prediction markets by topic, event-wide USD volume or expiry. Each event has ticker, title, volume_usd and contracts; each contract has symbol, label, expiry and outcome prices in dollars. Use the returned ticker and symbol together.",
+      "description": "Search prediction markets and sort the matching events. Use the returned event ticker and its contract symbol together.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,
@@ -19,6 +19,17 @@
             "type": "string",
             "maxLength": 200,
             "description": "Topic keywords and optional filters: 'highest volume', 'minimum volume 1000', 'ending soon' or 'ending within 15 minutes'. Empty query lists active events."
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "featured",
+              "volume",
+              "volume_24h",
+              "newest",
+              "expiry"
+            ],
+            "description": "Optional ranking: featured, total USD volume, trailing 24-hour USD volume, newest listings, or soonest expiry. For a sort-only follow-up keep the current topic and filters."
           }
         }
       }

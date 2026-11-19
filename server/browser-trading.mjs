@@ -1,3 +1,4 @@
+import { spokenFill } from "../src/spoken-fill.ts";
 import { validOrderKeys } from "../src/server/v2p/browser-order-input.ts";
 import { sandboxPortfolio } from "../src/server/v2p/portfolio.ts";
 import { spokenProposal } from "./spoken-proposal.mjs";
@@ -67,6 +68,7 @@ export function browserTrading(repo) {
         ok: true, order_id: original.gemini_order_id, outcome_summary: record.outcome_summary,
         exchange_status: record.exchange_status, filled_quantity: record.filled_qty,
         remaining_quantity: record.remaining_qty, avg_price: record.avg_price, est_fee_usd: fee, say,
+        voice_say: spokenFill(record.outcome_summary, record.filled_qty, original.quantity, record.avg_price) ?? say,
       }, original.side === "sell" ? 0 : Math.round((record.filled_notional_usd + fee) * 100));
     }
   }

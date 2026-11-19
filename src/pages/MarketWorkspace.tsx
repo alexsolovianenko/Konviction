@@ -10,7 +10,7 @@ export function MarketWorkspace() {
   return (
     <ClientOnly>
       <Dashboard>
-        <MarketsTable onQuote={(event_ticker, contract_symbol) => void market.run("get_orderbook", { event_ticker, contract_symbol })} />
+        <MarketsTable market={market} onQuote={(event_ticker, contract_symbol) => void market.run("get_orderbook", { event_ticker, contract_symbol })} />
         <Disclaimer />
       </Dashboard>
     </ClientOnly>

@@ -24,13 +24,14 @@ export type MarketContract = {
   expiry: string | null; buy: MarketQuote; sell: MarketQuote;
 };
 export type MarketEvent = {
-  ticker: string; title: string; category: string | null; status: string | null; volume_usd?: number | null; contracts: MarketContract[];
+  ticker: string; title: string; category: string | null; status: string | null; volume_usd?: number | null;
+  volume_24h_usd?: number | null; created_at?: string | null; featured_rank?: number | null; contracts: MarketContract[];
 };
 export type NativeCombo = {
   can_request_quote: boolean; event_ticker: string; symbol: string; title: string; status: string | null; expiry: string | null;
   legs: { title: string | null; label: string; outcome: string; resolution: string | null }[];
 };
-export type MarketsSnapshot = { events: MarketEvent[]; error: string | null };
+export type MarketsSnapshot = { as_of?: string; events: MarketEvent[]; error: string | null };
 export type DashboardState = {
   history_available?: boolean;
   generated_at: string; environment: string; phone_number: string | null; execution_enabled: boolean;

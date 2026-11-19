@@ -5,15 +5,8 @@ import { eligibleComboLegs } from "./native-combo";
 
 import { BUY_CUTOFF_MS } from "./util";
 
-export function normalizeMarketQuery(query: string) {
-  return query
-    .toLowerCase()
-    .replace(/\bbitcoin\b/g, "btc")
-    .replace(/\bethereum\b/g, "eth")
-    .replace(/\bsolana\b/g, "sol")
-    .replace(/\b(?:five|5)[ -]?(?:minutes?|mins?|m)\b/g, "05m")
-    .trim();
-}
+import { normalizeMarketQuery } from "../../lib/market-sort";
+export { normalizeMarketQuery } from "../../lib/market-sort";
 
 export function secondsUntil(expiry: string | null, now: number) {
   const timestamp = Date.parse(expiry ?? "");

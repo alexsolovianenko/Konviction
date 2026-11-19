@@ -348,7 +348,7 @@ describe("approval: the only order-submission path", () => {
     const result = await callConfirm(id, s.session_token);
     expect(result.remainder_buy).toBeUndefined();
     expect(result.say).toContain("quantity at your limit was unknown");
-    expect(result).toMatchObject({ outcome_summary: "PARTIAL", filled_quantity: 0.25, say: expect.stringContaining("0.25 of 1") });
+    expect(result).toMatchObject({ outcome_summary: "PARTIAL", filled_quantity: 0.25, voice_say: "Filled 0.25 of 1.", say: expect.stringContaining("0.25 of 1") });
     expect(geminiOrderCalls()).toHaveLength(1);
   });
 

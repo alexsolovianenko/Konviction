@@ -1,3 +1,4 @@
+import { spokenFill } from './spoken-fill';
 import { tradingRequest, type Proposal, type Availability } from './browserTrading';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
 import { Session as LocalSession, startCredentials as localCredentials, type Entry, type Intent } from './session';
@@ -504,13 +505,13 @@ export class Voice {
       if (session !== this.session) return {ok:false, say:'Session ended.'};
       if (result.outcome_summary) {
         this.showExchangeResult(result);
-        const fills: Record<string, string> = {
-          OPEN: result.voice_say ?? result.say ?? 'Sandbox limit order open.',
-          FILLED: 'Filled in the sandbox.', PARTIAL: result.say ?? `Sandbox filled ${result.filled_quantity} of ${proposal.quantity}.`,
-          NOT_FILLED: result.say ?? `No fills at ${Math.round(proposal.limit_price * 100)} cents.`, PENDING_UNKNOWN: 'Fill status is pending.',
-          EXCHANGE_REJECTED: result.voice_say ?? 'Exchange rejected the order.',
+        const spoken = spokenFill(result.outcome_summary, result.filled_quantity, proposal.quantity, result.avg_price);
+        const fallback: Record<string, string> = {
+          FILLED: 'Filled.', PARTIAL: 'Partially filled.', OPEN: 'Limit order open.',
+          NOT_FILLED: 'No fill.', PENDING_UNKNOWN: 'Final fill pending.',
+          EXCHANGE_REJECTED: 'Order rejected.',
         };
-        return {ok:result.ok, say:result.voice_say ?? (result.outcome_summary === 'FILLED' ? result.say : null) ?? fills[result.outcome_summary] ?? 'Order status is unconfirmed.'};
+        return {ok:result.ok, say:spoken ?? result.voice_say ?? result.say ?? fallback[result.outcome_summary] ?? 'Order status unconfirmed.'};
       }
       const code = typeof result.error === 'string' ? result.error : result.error?.code;
       const terminal = ['INACTIVE', 'EXPIRED', 'SUPERSEDED', 'CAP_EXCEEDED', 'UNKNOWN_PROPOSAL', 'PRICE_MOVED', 'NO_LIQUIDITY', 'CONTRACT_NOT_OPEN', 'TOO_CLOSE_TO_EXPIRY'].includes(code);

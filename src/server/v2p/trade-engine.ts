@@ -1,5 +1,6 @@
 // @ts-nocheck -- shared with the mechanically ported phone backend.
 import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
+import { spokenFill } from "../../spoken-fill";
 import { liquiditySnapshot } from "./book-liquidity";
 import { comboEligibility } from "./native-combo";
 import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2, usd } from "./util";
@@ -437,6 +438,7 @@ export async function executeTrade(it, caller, { finish, log, receipt, saveOrder
     est_fee_usd: fillFee,
     ...(remainder && { remainder_buy: remainder }),
     say: say[summary],
+    voice_say: spokenFill(summary, filledQty, it.quantity, avg) ?? say[summary],
     ...(summary === "EXCHANGE_REJECTED" && { voice_say: typeof reason === "string" && Object.hasOwn(voiceReasons, reason) ? voiceReasons[reason] : "Rejected. Check order details." }),
   });
 }
@@ -540,7 +542,8 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
     : fillText + (reason ? " " + reason : "");
   const last = attempts.at(-1)?.order;
   const gross = filled > 0 && knownAverage ? round2(spent) : (filled === 0 && !uncertain ? 0 : null);
-  const result = { side: it.side, ok: outcome !== "EXCHANGE_REJECTED", order_mode: "market", outcome_summary: outcome, say, voice_say: say,
+  const result = { side: it.side, ok: outcome !== "EXCHANGE_REJECTED", order_mode: "market", outcome_summary: outcome, say,
+    voice_say: spokenFill(outcome, filled, target, avg) ?? say,
     order_id: ids[0] ?? null, order_ids: ids, exchange_status: last?.status ?? null, filled_quantity: filled || (uncertain ? null : 0),
     remaining_quantity: uncertain ? null : Number((target - filled).toFixed(8)), avg_price: avg,
     filled_notional_usd: buy ? round2(spent) : 0, ...(!buy && {gross_proceeds_usd: gross}), est_fee_usd: fees };

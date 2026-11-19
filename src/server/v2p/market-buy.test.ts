@@ -24,7 +24,7 @@ it("sizes a market buy at the ask, retries just the cancelled remainder within i
   const result=await (await executeTrade(proposal,"test",hooks)).json();
   expect(gPrivate).toHaveBeenCalledTimes(2);
   expect(vi.mocked(gPrivate).mock.calls.map(([,b])=>[b?.["price"],b?.["quantity"],b?.["timeInForce"]])).toEqual([["0.20","9","immediate-or-cancel"],["0.26","5","immediate-or-cancel"]]);
-  expect(result).toMatchObject({outcome_summary:"PARTIAL",filled_quantity:7,remaining_quantity:2,order_ids:["A","B"]});
+  expect(result).toMatchObject({outcome_summary:"PARTIAL",filled_quantity:7,remaining_quantity:2,order_ids:["A","B"],voice_say:"Filled 7 of 9 at 24.29 cents."});
   expect(result.filled_notional_usd+result.est_fee_usd).toBeLessThanOrEqual(2);
   expect(hooks.saveOrder).toHaveBeenCalledOnce();
 });
@@ -51,7 +51,7 @@ it("retries a confirmed zero fill once at the next ask for a count order", async
   vi.mocked(getEvent).mockResolvedValueOnce(quote(.20)).mockResolvedValueOnce(quote(.21));
   vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",0,0,"cancelled")).mockResolvedValueOnce(fill("B",4,.21,"filled"));
   const result=await(await executeTrade(proposal,"test",hooks)).json();
-  expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:4,order_ids:["A","B"],avg_price:.21});
+  expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:4,order_ids:["A","B"],avg_price:.21,voice_say:"Filled 4 at 21 cents."});
   expect(vi.mocked(gPrivate).mock.calls[1]?.[1]?.["price"]).toBe("0.21");
 });
 it("sells at the best bid, retries only remaining held contracts, and reports combined proceeds", async () => {
@@ -61,7 +61,7 @@ it("sells at the best bid, retries only remaining held contracts, and reports co
     .mockResolvedValueOnce(fill("A",1,.54,"cancelled")).mockResolvedValueOnce(fill("B",3,.52,"filled"));
   const proposal={side:"sell",order_mode:"market",quantity:4,limit_price:.01,event_ticker:"E",instrument_symbol:"S",outcome:"yes",time_in_force:"immediate-or-cancel"};
   const result=await(await executeTrade(proposal,"test",hooks)).json();
-  expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:4,gross_proceeds_usd:2.10,filled_notional_usd:0});
+  expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:4,gross_proceeds_usd:2.10,filled_notional_usd:0,voice_say:"Filled 4 at 52.5 cents."});
   expect(vi.mocked(gPrivate).mock.calls.slice(1).map(([,b])=>[b?.["side"],b?.["quantity"],b?.["price"]])).toEqual([["sell","4","0.54"],["sell","3","0.52"]]);
 });
 it("closes an exact fractional holding when Gemini omits the increment", async () => {

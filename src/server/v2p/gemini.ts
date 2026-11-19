@@ -125,6 +125,13 @@ export function gPublic(path: string, query: Record<string, string | number | un
   return url ? doFetch(url, { method: "GET", headers: { Accept: "application/json" } }) : Promise.resolve(invalidOrigin());
 }
 
+/** Anonymous public listing used by the Gemini Sandbox website for its curated order. */
+export function featuredListingPage(offset: number) {
+  const url = new URL("https://exchange.sandbox.gemini.com/prediction-markets");
+  url.search = new URLSearchParams({ status: "active", sort: "featured", limit: "100", offset: String(offset) }).toString();
+  return doFetch(url, { method: "GET", headers: { Accept: "application/json" } });
+}
+
 let signedQueue = Promise.resolve();
 let lastSignedSecond = 0;
 
