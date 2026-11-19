@@ -28,26 +28,6 @@ export function hasSpokenMarketName(terms) {
     !/GEMI-[A-Z0-9._-]+|0x[0-9a-f]{12,}|[A-Z]{2,10}\d{2}[A-Z]?\d{6,}/i.test(name));
 }
 
-function marketName(terms) {
-  const assets = {BTC: 'Bitcoin', SOL: 'Solana', ETH: 'Ethereum', XRP: 'X R P'};
-  const duration = /^[A-Z]+(\d{2})M\d/.exec(terms.event_ticker ?? '');
-  const title = terms.title.replace(/\b(BTC|SOL|ETH|XRP)\b/g, key => assets[key]);
-  const parts = [title];
-  const expiry = new Date(terms.contract_expiry ?? NaN);
-  if (Number.isFinite(expiry.getTime()) && !/\b(?:\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?|noon|midnight)\b/i.test(title)) {
-    const timeZone = 'America/New_York';
-    const time = new Intl.DateTimeFormat('en-US', {timeZone, hour: 'numeric', minute: '2-digit'}).format(expiry).replace(':00', '');
-    const date = new Intl.DateTimeFormat('en-US', {timeZone, month: 'long', day: 'numeric'}).format(expiry);
-    const hasDate = /\b(?:today|tomorrow|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s*\d{0,2}\b/i.test(title);
-    parts.push((hasDate ? '' : date + ' at ') + time + ' Eastern');
-  }
-  if (duration && !/min(?:ute)?/i.test(title)) parts.push(count(Number(duration[1])) + ' minute');
-  if (!title.toLowerCase().includes(terms.contract_label.toLowerCase())) parts.push(terms.contract_label);
-  return parts.join(', ').replace(/\$(\d+(?:,\d{3})*(?:\.\d+)?)/g, moneyText)
-    .replace(/\b(\d{1,2})(am|pm)\b/gi, (_, hour, period) => count(Number(hour)) + ' ' + period.toUpperCase())
-    .replace(/\b(?:EST|EDT|ET)\b/g, 'Eastern');
-}
-
 // Provider transcripts may spell the same number as words, digits, currency or percent.
 export function normalizeReadback(value) {
   return value.normalize('NFKC').toLowerCase().replace(/^\[(?:neutral|slow)\]\s*/, '')
@@ -69,12 +49,12 @@ export function spokenProposal(terms) {
   }
   const cents = Math.round(terms.limit_price * 100);
   const maximum = Number(terms.notional_usd) + Number(terms.est_fee_usd);
-  const size = terms.budget_usd != null ? '' : 'Buy ' + count(terms.quantity) + ' ';
-  const market = marketName(terms);
+  const amount = money(terms.budget_usd ?? maximum);
+  const size = terms.budget_usd == null ? count(terms.quantity) + ' ' + terms.outcome.toUpperCase() + ', ' : '';
   const cap = count(cents) + (cents === 1 ? ' cent' : ' cents');
-  const cost = money(maximum) + ' max including about ' + money(terms.est_fee_usd) + ' in fees.';
-  const odds = terms.order_mode === 'market' && terms.quote_price != null ? ', about ' + count(Number((Number(terms.quote_price) * 100).toFixed(3))) + ' percent market-implied.' : '.';
-  const payout = /^GEMI-CMB-/i.test(terms.instrument_symbol ?? '') ? ' Maximum payout if every leg wins: ' + money(terms.quantity) + '.' : '';
-  const choice = terms.order_mode === 'market' ? ' Buy now or set a price?' : ' Place this limit order?';
-  return size + terms.outcome.toUpperCase() + ' on ' + market + '. Up to ' + cap + ' each' + odds + ' ' + cost + payout + choice;
+  if (terms.order_mode !== 'market') return size + 'Up to ' + amount + ' at ' + cap + ' each. Confirm?';
+  const quote = Number(terms.quote_price);
+  const odds = 'Market odds ' + count(Number((quote * 100).toFixed(3))) + ' percent.';
+  const lowerCap = Number(terms.limit_price) < quote ? ', at most ' + cap + ' each' : '';
+  return odds + ' ' + size + 'Up to ' + amount + lowerCap + '. Buy now?';
 }

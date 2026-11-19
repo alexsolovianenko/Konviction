@@ -6,13 +6,15 @@ import { Empty, Panel } from "./ui";
 type Rows = { error?: string; rows: Record<string, string | number>[] };
 type Account = { usd_available?: number | null; balance_error?: string; as_of: string; orders: Rows; positions: Rows; history: Rows };
 export function PrivatePortfolio({ showPositions = true, showBalance = false }: { showPositions?: boolean; showBalance?: boolean }) {
-  const [message, setMessage] = useState("Loading order history…");
+  const [message, setMessage] = useState("");
   const [account, setAccount] = useState<Account | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    setMessage("");
     let active = true;
     let next: ReturnType<typeof setTimeout>;
     async function load() {
-      if (document.visibilityState !== "hidden") {
+      if (!next || document.visibilityState !== "hidden") {
         const result = await tradingRequest("portfolio", {});
         if (!active) return;
         if (result.ok) setAccount(result);
@@ -22,10 +24,21 @@ export function PrivatePortfolio({ showPositions = true, showBalance = false }: 
     }
     void load();
     return () => { active = false; clearTimeout(next); };
-  }, []);
+  }, [attempt]);
   return (
     <div className="flex max-w-5xl flex-col gap-8">
-      {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
+      {!account && !message && <section aria-busy="true" className="space-y-4 py-3">
+        <p role="status" className="flex items-center gap-3"><span className="spinner spinner-ink" aria-hidden />Loading your account from Gemini…</p>
+        <div aria-hidden className="space-y-3 motion-safe:animate-pulse">
+          {(showBalance ? ["Available balance", "Open orders", "Recent fills"] : ["Open orders", "Recent fills"]).map(label =>
+            <div key={label} className="flex items-center justify-between rounded-lg bg-muted px-4 py-3">
+              <span className="text-sm text-muted-foreground">{label}</span><span className="h-3 w-20 rounded bg-muted-foreground/20" />
+            </div>)}
+        </div>
+      </section>}
+      {message && <div role="status" className="flex items-center gap-3 text-sm text-muted-foreground">{message}
+        <button className="btn btn-quiet" onClick={() => setAttempt(value => value + 1)}>Retry</button>
+      </div>}
       {account && (
         <>
           {showBalance && <section className="balance-card">
