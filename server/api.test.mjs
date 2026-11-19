@@ -135,7 +135,7 @@ test('complete simulated workflow, replay and aliases, status/cancel resolution 
     s = await app.start();
   await s.append(s.entry('user', first.user));
   const key = randomUUID(),
-    search = first.expect.calls[0].args;
+    search = { venue, query: first.expect.calls[0].args.query, utterance: first.user };
   const query = await s.tool('search_markets', search, key);
   matches('SearchMarketsResult', query.data);
   assert.equal(query.data.results[0].instrument, place.instrument);

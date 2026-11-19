@@ -42,7 +42,7 @@ function readbackMatches(readback, p, target, cancel) {
     fold(readback)
       .replace(/(?<=\d),(?=\d)/g, '')
       .replaceAll('−', '-')
-      .match(/-?(?:\.\d+|[a-z0-9]+(?:[.-][a-z0-9]+)*)/g) ?? [];
+      .match(/-?(?:\.\d+|[a-z0-9]+(?:[._-][a-z0-9]+)*)/g) ?? [];
   const phrase = (s) => (' ' + words.join(' ') + ' ').includes(' ' + s + ' ');
   if (!phrase(p.venue.replace('_', ' ')) || words.includes('cancel') !== cancel) return false;
   if (cancel && !target) return reference(readback).includes(p.order_id);
