@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "phase": 1,
   "description": "Spoken-style evaluation cases for the Gemini-only browser voice assistant (agent/system_prompt.md) against the Phase 1 contracts (contracts/tools.json, contracts/api.yaml, contracts/intent.schema.json). Capture only, zero execution; all query data is SIMULATED.",
   "fixed_phrases": {
@@ -16,7 +16,7 @@
     "expect.reply_includes / reply_excludes": "Case-insensitive substrings that must or must not occur in the reply.",
     "expect.behavior": "What a grader checks when string checks are not enough.",
     "agent_turn_interrupted": "The user barged in before the agent finished speaking its reply to this turn; the transcript entry has interrupted true.",
-    "utterance": "Always verbatim user words in spoken order. Where a case note allows it, a longer or shorter verbatim span also passes."
+    "utterance": "Always verbatim user words, as one unbroken stretch of the user's turns joined by single spaces (contracts/api.yaml x-utterance-check requires a contiguous substring of the user transcript). When a request spans turns, the stretch runs from the turn that started it to the turn that completed it, including user turns in between and excluding the final yes. A longer unbroken verbatim span that contains the expected one also passes."
   },
   "global_checks": [
     "Every agent reply is one to three sentences.",
@@ -356,7 +356,7 @@
                   "quantity": 1,
                   "limit_price": 97460,
                   "confirmed_by_user": true,
-                  "utterance": "buy one bitcoin at market ninety seven thousand four hundred sixty"
+                  "utterance": "buy one bitcoin at market well what's it at right now okay use that ninety seven thousand four hundred sixty"
                 }
               }
             ],
@@ -367,7 +367,7 @@
       "multi_turn_checks": [
         "No readback and no capture until the user has spoken a number as the limit (turn 4).",
         "Every price the agent speaks before turn 4 is from the tool result and is called simulated.",
-        "utterance may also include the intervening user turns; it must be verbatim user words in spoken order and contain turns 1 and 4."
+        "utterance is one unbroken stretch of the user's words: turns 1 to 4 joined by single spaces, without the final yes. Skipping turns 2 and 3 would be rejected as utterance_mismatch."
       ]
     },
     {
@@ -1596,7 +1596,7 @@
                   "quantity": 1,
                   "limit_price": 97000,
                   "confirmed_by_user": true,
-                  "utterance": "buy one bitcoin at ninety seven thousand do the same again"
+                  "utterance": "do the same again"
                 }
               }
             ],
@@ -1606,7 +1606,7 @@
       ],
       "multi_turn_checks": [
         "Exactly two captures, each directly after its own readback and yes.",
-        "The second utterance is verbatim user words that include 'do the same again'; it may or may not repeat the first request."
+        "The second utterance is 'do the same again'. A span that skips the intervening 'yes' would be rejected as utterance_mismatch; the full unbroken span from turn 1 to turn 3 also passes."
       ]
     },
     {
