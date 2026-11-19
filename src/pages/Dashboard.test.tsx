@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Callbacks } from '@elevenlabs/client';
 import { Dashboard } from './Dashboard';
@@ -436,4 +436,62 @@ it('preserves a correction arriving after the turn was stored and closes the ses
   await waitFor(() => expect(f.finals()).toHaveLength(1));
   expect(f.entries()[1]).toMatchObject({ text: 'Buy', interrupted: true });
   expect(screen.getByRole('alert')).toHaveTextContent('Start voice for a new readback');
+});
+
+it('renders identical chart states for SDK tool calls and buttons without sending an order or requesting data', async () => {
+  const actions = ['explore', 'buy', 'buy', 'sell', 'explore'] as const;
+  const buttons = { explore: 'Explore chart', buy: 'Preview buy', sell: 'Preview sell' };
+  const panel = () => screen.getByRole('region', { name: 'BTC/USD' });
+  const manual = fixture();
+  const fromClicks = actions.map((action) => {
+    fireEvent.click(within(panel()).getByRole('button', { name: buttons[action] }));
+    return panel().innerHTML;
+  });
+  expect(manual.fetchMock).not.toHaveBeenCalled();
+  cleanup();
+  const f = fixture(),
+    sdk = await f.begin();
+  await waitFor(() => expect(f.requests.some((r) => r.path.endsWith('/transcripts'))).toBe(true));
+  const count = f.fetchMock.mock.calls.length;
+  for (const [i, action] of actions.entries()) {
+    let data;
+    await act(async () => {
+      data = JSON.parse(await sdk.clientTools.explore_demo_chart({ action }));
+    });
+    expect(panel().innerHTML).toBe(fromClicks[i]);
+    expect(data).toMatchObject({
+      simulated: true,
+      symbol: 'BTC/USD',
+      window_minutes: 5,
+      action,
+      update: i + 1,
+      last_usd: 97455,
+      open_usd: 97320,
+      low_usd: 97320,
+      high_usd: 97455,
+      change_usd: 135,
+      change_percent: 0.14,
+      trend: 'up',
+    });
+    for (const point of data!.points) {
+      expect(within(panel()).getByRole('img')).toHaveTextContent(point.time_utc);
+      expect(within(panel()).getByRole('img')).toHaveTextContent(
+        '$' + point.price_usd.toLocaleString('en-US'),
+      );
+    }
+    if (action !== 'explore')
+      expect(data).toMatchObject({
+        preview: { side: action, price_usd: 97455, execution: 'none' },
+      });
+  }
+  fireEvent.click(within(panel()).getByRole('button', { name: 'Cancel preview' }));
+  expect(panel()).toHaveTextContent('Preview cancelled');
+  expect(within(panel()).queryByRole('button', { name: 'Cancel preview' })).toBeNull();
+  expect(screen.getByText('No intents captured this session.')).toBeInTheDocument();
+  let afterCancel;
+  await act(async () => {
+    afterCancel = JSON.parse(await sdk.clientTools.explore_demo_chart({ action: 'explore' }));
+  });
+  expect(afterCancel).toMatchObject({ preview: null, update: 7 });
+  expect(f.fetchMock.mock.calls.length).toBe(count);
 });

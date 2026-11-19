@@ -1,3 +1,4 @@
+import { isChartAction, type ChartAction, type DemoChart } from './demoChart';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
 import { Session, startCredentials, type Entry, type Intent } from './session';
 
@@ -22,7 +23,10 @@ export class Voice {
   private session?: Session;
   private conversation?: { endSession: () => Promise<void> };
   private finishSpeech?: () => void;
-  constructor(private update: (patch: Partial<VoiceView>) => void) {}
+  constructor(
+    private update: (patch: Partial<VoiceView>) => void,
+    private chartAction: (action: ChartAction) => DemoChart,
+  ) {}
 
   async start() {
     if (this.active) return;
@@ -230,7 +234,18 @@ export class Voice {
       const conversation = await Conversation.startSession({
         signedUrl: credentials.signed_url,
         connectionType: 'websocket',
-        clientTools: session.tools,
+        clientTools: {
+          ...session.tools,
+          explore_demo_chart: ({ action }: { action?: unknown }) => {
+            if (!current() || !isChartAction(action))
+              return JSON.stringify({
+                simulated: true,
+                ok: false,
+                error: 'Chart action unavailable',
+              });
+            return JSON.stringify(this.chartAction(action));
+          },
+        },
         ...callbacks,
       });
       if (!current()) {
