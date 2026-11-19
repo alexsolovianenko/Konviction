@@ -71,16 +71,51 @@ function b64(s: string): string {
   return btoa(bin);
 }
 
+export type FetchFailureCategory = "timeout" | "client_config" | "dns" | "tls" | "network" | "unknown";
+
+/** Classify a fetch exception without touching headers, payloads or signatures. */
+export function classifyFetchError(e: unknown, timedOut: boolean): FetchFailureCategory {
+  if (timedOut) return "timeout";
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  const text = `${err?.name ?? ""} ${err?.message ?? ""} ${err?.cause?.code ?? ""} ${err?.cause?.message ?? ""}`;
+  if (/invalid redirect|redirect value|invalid (url|header|method)|not implemented/i.test(text)) return "client_config";
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|dns|resolve/i.test(text)) return "dns";
+  if (/tls|ssl|certificate|CERT_|handshake/i.test(text)) return "tls";
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|network|connection|socket|fetch failed|internal error/i.test(text)) return "network";
+  return "unknown";
+}
+
+// Error text can echo a URL; keep it short and strip long base64/hex runs (payload- or signature-like).
+const scrub = (s: unknown) => String(s ?? "").replace(/[A-Za-z0-9+/=_-]{32,}/g, "[redacted]").slice(0, 200);
+
 async function doFetch(url: URL, init: RequestInit): Promise<GeminiResult> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, { ...init, signal: ctrl.signal, redirect: "error" });
+    // Cloudflare Workers reject redirect: "error" with a TypeError before any request is sent.
+    // "manual" is supported there; redirects are still refused below, never followed.
+    const res = await fetch(url, { ...init, signal: ctrl.signal, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel();
+      console.error(JSON.stringify({ event: "gemini_redirect_refused", method: init.method, path: url.pathname, status: res.status }));
+      return { ok: false, status: res.status, data: null, text: "", error: "Gemini returned a redirect; refusing to follow it." };
+    }
     const text = await res.text();
     return { ok: res.ok, status: res.status, data: parseSafe(text), text };
   } catch (e) {
     const timedOut = ctrl.signal.aborted;
-    return { ok: false, status: 0, data: null, text: "", timedOut, error: timedOut ? "Gemini request timed out." : "Gemini request failed before an HTTP response." };
+    const category = classifyFetchError(e, timedOut);
+    // Safe diagnostics only: method, path (no query, headers, payload or signature), error type and cause.
+    const err = e as { name?: string; message?: string; cause?: { name?: string; code?: string; message?: string } };
+    console.error(JSON.stringify({
+      event: "gemini_fetch_failed", category, method: init.method, path: url.pathname,
+      error_name: err?.name ?? null, error_message: scrub(err?.message),
+      cause_name: err?.cause?.name ?? null, cause_code: err?.cause?.code ?? null, cause_message: scrub(err?.cause?.message),
+    }));
+    return {
+      ok: false, status: 0, data: null, text: "", timedOut,
+      error: timedOut ? "Gemini request timed out." : `Gemini request failed before an HTTP response (${category}).`,
+    };
   } finally {
     clearTimeout(t);
   }

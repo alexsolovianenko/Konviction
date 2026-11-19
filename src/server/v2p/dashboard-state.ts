@@ -7,6 +7,9 @@ import { db, executionEnabled } from "./db";
 import { anchorPending, receiptAddress, receiptBalanceSol } from "./receipts";
 import { corsHeaders, env, json, LIMITS, maskPhone, num } from "./util";
 
+// Bump on every backend change so the deployed revision can be checked read-only from the dashboard feed.
+export const BACKEND_REVISION = "2026-11-19.2-gemini-fetch-workers-fix";
+
 let live: { at: number; value: unknown } | null = null;
 
 async function liveAccount() {
@@ -67,6 +70,7 @@ export async function handleDashboardState(req: Request): Promise<Response> {
   const mask = <T extends { caller?: string | null }>(rows: T[] | null) => (rows ?? []).map((r) => ({ ...r, caller: maskPhone(r.caller) }));
   return json({
     generated_at: new Date().toISOString(),
+    backend_revision: BACKEND_REVISION,
     environment: "gemini-sandbox (test funds only)",
     phone_number: env("PUBLIC_PHONE_NUMBER") ?? null,
     execution_enabled: enabled,
