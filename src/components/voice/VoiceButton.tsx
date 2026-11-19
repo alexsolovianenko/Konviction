@@ -1,22 +1,20 @@
-import { Power } from 'lucide-react';
+import { Mic, Square } from 'lucide-react';
 import { useVoice } from './VoiceProvider';
 
-// One large press-to-connect control. Its label is always the action a press will take.
 export function VoiceButton() {
-  const { view, voice, status } = useVoice();
-  const off = view.status === 'Idle' || view.status === 'Ending session';
+  const { view, voice } = useVoice();
+  const idle = view.status === 'Idle';
+  const ending = view.status === 'Ending session';
+  const Icon = idle ? Mic : Square;
   return (
-    <div className="orb-well" data-phase={status.phase}>
-      <button
-        type="button"
-        className="orb"
-        data-on={!off}
-        disabled={view.status === 'Ending session'}
-        onClick={() => void (off ? voice.start() : voice.stop())}
-      >
-        <Power strokeWidth={2.4} aria-hidden />
-        {off ? 'Start Voice' : 'End Session'}
-      </button>
-    </div>
+    <button
+      type="button"
+      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+      disabled={ending}
+      onClick={() => void (idle ? voice.start() : voice.stop())}
+    >
+      <Icon size={16} aria-hidden />
+      {idle ? 'Start Voice' : ending ? 'Ending session…' : 'End Session'}
+    </button>
   );
 }
