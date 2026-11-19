@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Call-to-Predict Phase 1 capture API
-  version: 1.1.0
-  summary: Gemini-only browser voice assistant. Capture only, zero execution.
+  version: 1.2.0
+  summary: Gemini browser voice demo. Simulated data, capture only, zero execution.
   description: |
     Backend contract for Phase 1 of the browser voice assistant.
 
@@ -17,17 +17,24 @@ info:
     - This document lists every endpoint. There are exactly nine operations: one signed-URL endpoint,
       GET and POST /intents, POST /transcripts, and five tool handlers
       (capture_order_intent, capture_cancel_intent, get_order_status, search_markets, get_orderbook).
+    - A sixth agent tool, explore_demo_chart, runs entirely in the browser. It has no endpoint here,
+      makes no request to this backend or to anyone else, and writes nothing. See `x-browser-tools`.
+    - Reading simulated data and opening a buy or sell preview can never execute an order. Nothing
+      in this system can. See `x-execution-boundary`, which also fixes where any future Gemini
+      access must live: on the server, never in the browser and never in a tool the model calls.
 
     Cross-cutting behavior is specified in the `x-` sections at the end of this file:
     `x-session-lifecycle`, `x-confirmation-enforcement`, `x-idempotency`, `x-normalization`,
     `x-utterance-check`, `x-audit-records`, `x-query-matching`, `x-validation-order`,
-    `x-error-codes`, `x-capture-status-queries`, `x-cancel-resolution`, `x-simulated-catalog` and
-    `x-revision`.
+    `x-error-codes`, `x-capture-status-queries`, `x-cancel-resolution`, `x-browser-tools`,
+    `x-execution-boundary`, `x-simulated-catalog` and `x-revision`.
     Tool parameters and responses are also listed, per tool, in contracts/tools.json; the two files
     must agree and this file wins on HTTP details.
 
-    Revision 1.1.0 clarifies 1.0.0 without adding or removing an operation, a tool, a parameter or
-    an intent field. Every change is listed in `x-revision`.
+    Revision 1.1.0 clarified 1.0.0 without adding or removing an operation, a tool, a parameter or
+    an intent field. Revision 1.2.0 documents the browser-only chart tool and the execution
+    boundary; it changes no operation, no backend tool, no parameter and no intent field. Every
+    change is listed in `x-revision`.
 servers:
   - url: /api
     description: Same-origin application backend.
@@ -1071,6 +1078,124 @@ x-cancel-resolution:
     - "order_id must be the id of a place_order intent of this session, or occur in the user's own transcript entries after reference normalization (order_id_not_user_supplied otherwise)."
     - "The readback must state the target's terms or the spoken reference (readback_mismatch otherwise), so a yes to one candidate can never cancel another."
 
+x-execution-boundary:
+  summary: >
+    Nothing in this system can execute, route, amend or cancel an order on Gemini. Reading
+    simulated data and opening a preview are display actions with no effect outside the browser
+    tab. The only durable effects are a captured intent and the session transcript, both stored
+    locally by this backend.
+  what_each_action_can_do:
+    - action: "search_markets, get_orderbook, get_order_status"
+      effect: "Reads the simulated catalog or the session's own captured intents. Writes one audit intent (order_status or market_query, confirmed_by_user false). Sends nothing to Gemini. Cannot create, change or remove a place_order or cancel_order intent."
+    - action: "explore_demo_chart with action explore"
+      effect: "Redraws a fabricated five-minute chart in the browser and returns its figures. No request leaves the browser. Nothing is stored."
+    - action: "explore_demo_chart with action buy or sell"
+      effect: "Shows a preview panel in the browser with execution none. It is a picture of what a trade would look like. No request leaves the browser, no intent is captured, nothing is stored, and no confirmation is asked for because there is nothing to confirm. A preview is not an order, not a prepared order and not a step toward one."
+    - action: "capture_order_intent, capture_cancel_intent"
+      effect: "Stores one intent with status captured after the transcript shows the exact uninterrupted readback and an unambiguous spoken yes (x-confirmation-enforcement). The intent is a record for later human approval. It is not sent to Gemini and nothing in this phase acts on it."
+  rules:
+    - "No operation, tool, tool result, preview, button or spoken phrase leads to execution. There is no code path from any of them to Gemini."
+    - "A preview never becomes a captured intent on its own. Preparing an order after a preview starts the capture flow from the beginning: every value from the user or a tool, the full readback, then an explicit yes."
+    - "A preview shown between a readback and the user's yes breaks that confirmation, because the agent's words about the preview become the latest agent entry. The readback must be given again."
+    - "The agent says preview for a preview and prepared for approval for a captured intent. It never says placed, submitted, sent, executed, filled, live, open or cancelled about either."
+    - "Every figure shown or spoken is labeled simulated. Chart and catalog data are fabricated fixtures and are never presented as Gemini data."
+  future_gemini_access:
+    summary: "Not part of this contract. These constraints bind any later revision that adds it."
+    constraints:
+      - "Gemini credentials live only in server-side configuration. They are never sent to the browser, never placed in a signed URL, tool parameter, tool result, transcript entry, intent or log, and never given to the model or the voice provider."
+      - "Every Gemini request is made by the backend. The browser never calls Gemini, and no client tool, including explore_demo_chart, may be given a Gemini call."
+      - "The model never triggers execution. A tool call may at most capture an intent. Sending an order to Gemini requires a separate server-side approval step by an authenticated person, acting on a stored intent, outside the voice conversation."
+      - "Live Gemini market data, if added, is fetched by the backend and labeled live; simulated data stays labeled simulated, and the two are never mixed in one answer without saying which is which."
+      - "Any such change is a new contract revision with its own operations, error codes and evals. Until then status is always captured and execution is always none."
+
+x-browser-tools:
+  summary: >
+    Agent tools implemented entirely in the browser. They are registered on the voice agent as
+    client tools like the other five, but they have no handler in this API, are not forwarded to
+    the backend, carry no session_id, Idempotency-Key or utterance, write no intent and add no
+    transcript entry. They are listed in contracts/tools.json under browser_tools, separate from
+    the five backend tools.
+  explore_demo_chart:
+    purpose: "Drive the dashboard's simulated five-minute BTC chart, its statistics and its sidebar preview by voice. The same actions are available as buttons; voice and buttons share one chart state."
+    parameters:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [explore, buy, sell]
+          description: "explore redraws the chart and moves the highlighted point to the next minute mark. buy or sell shows a preview of that side at the last simulated price."
+    behavior:
+      - "Runs synchronously in the browser against a fixed fabricated series. No network request of any kind."
+      - "explore: update increases by 1, selected moves to the next point (wrapping), an existing preview is kept."
+      - "buy or sell: update increases by 1, selected is the last point, preview becomes that side at last_usd with execution none. A later buy or sell replaces the preview."
+      - "The dashboard also has a control that clears the preview. The agent has no action for that."
+      - "No confirmation precedes any action. Nothing is captured, so there is nothing to confirm."
+      - "The chart symbol BTC/USD is a display label, not an instrument. An order for bitcoin still resolves its instrument through search_markets (BTCUSD)."
+    result:
+      type: object
+      required: [simulated, symbol, window_minutes, points, open_usd, last_usd, high_usd, low_usd, change_usd, change_percent, trend, update, action, selected, preview]
+      properties:
+        simulated: { const: true }
+        symbol: { const: "BTC/USD" }
+        window_minutes: { const: 5 }
+        points:
+          type: array
+          description: "Six minute marks spanning five minutes, oldest first."
+          items:
+            type: object
+            required: [time_utc, price_usd]
+            properties:
+              time_utc: { type: string, description: "HH:MM label of the fabricated series." }
+              price_usd: { type: number }
+        open_usd: { type: number }
+        last_usd: { type: number }
+        high_usd: { type: number }
+        low_usd: { type: number }
+        change_usd: { type: number, description: "last_usd minus open_usd." }
+        change_percent: { type: number, description: "Two decimals." }
+        trend: { enum: [up, down, flat] }
+        update: { type: integer, minimum: 1, description: "Count of chart actions in this page load." }
+        action: { enum: [explore, buy, sell] }
+        selected:
+          type: object
+          required: [time_utc, price_usd]
+          properties:
+            time_utc: { type: string }
+            price_usd: { type: number }
+        preview:
+          description: "Null until a buy or sell preview is shown."
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [side, price_usd, execution]
+              properties:
+                side: { enum: [buy, sell] }
+                price_usd: { type: number }
+                execution: { const: none, description: "Always none. A preview executes nothing and captures nothing." }
+    error_result:
+      description: "Returned when the action is not one of the three values or the voice session is no longer current. It is not the backend error shape."
+      example: { simulated: true, ok: false, error: "Chart action unavailable" }
+    fixture:
+      note: "SIMULATED. Fabricated series, not Gemini data. Values do not move."
+      symbol: "BTC/USD"
+      points:
+        - { time_utc: "14:00", price_usd: 97320 }
+        - { time_utc: "14:01", price_usd: 97382 }
+        - { time_utc: "14:02", price_usd: 97356 }
+        - { time_utc: "14:03", price_usd: 97424 }
+        - { time_utc: "14:04", price_usd: 97402 }
+        - { time_utc: "14:05", price_usd: 97455 }
+      open_usd: 97320
+      last_usd: 97455
+      high_usd: 97455
+      low_usd: 97320
+      change_usd: 135
+      change_percent: 0.14
+      trend: up
+
 x-simulated-catalog:
   note: >
     SIMULATED. Invented fixture data for Phase 1. These are not Gemini markets, prices or books and
@@ -1221,8 +1346,9 @@ x-simulated-catalog:
           - { price: 0.34, size: 850 }
 
 x-revision:
-  version: 1.1.0
-  supersedes: "1.0.0 (commit 856a0e4)"
+  version: 1.2.0
+  supersedes: "1.1.0 (commit 6582824), which superseded 1.0.0 (commit 856a0e4)"
+  history: "Changes A to D were made in 1.1.0. Changes E to G were made in 1.2.0."
   compatibility: "No operation, tool, parameter, response field or intent field was added or removed. A 1.0.0 client works unchanged. The backend changes behavior in the cases below. The documented responses of get_order_status and search_markets gain 422 (utterance_mismatch when the session has no user speech)."
   changes:
     - id: A
@@ -1240,4 +1366,16 @@ x-revision:
     - id: D
       title: "Identifier wording"
       detail: "session_token is the only credential and never reaches the model. session_id is an identifier that appears inside returned intents. The signed URL may contain the agent ID. The API key is never returned."
+      backend_behavior_change: "None."
+    - id: E
+      title: "Browser-only chart tool"
+      detail: "New x-browser-tools documents explore_demo_chart: parameters, result, fixture and the fact that it has no endpoint, makes no request and stores nothing. contracts/tools.json lists it under browser_tools; the tools array still holds exactly the five backend tools."
+      backend_behavior_change: "None. The backend has no handler for it and POST /tools/explore_demo_chart stays 404."
+    - id: F
+      title: "Execution boundary"
+      detail: "New x-execution-boundary states what each action can and cannot do, that reading simulated data or opening a buy or sell preview can never execute an order, and the constraints any future Gemini access must meet: credentials and every Gemini request stay on the server, and the model never triggers execution."
+      backend_behavior_change: "None."
+    - id: G
+      title: "Conversational scope"
+      detail: "The agent is a friendly conversational market demo. The fixed off-topic sentence of earlier evals is retired; off-topic and injection turns are declined in natural words. Confirmation enforcement for captured intents, the readback templates and the capture sentence are unchanged. This was never an API rule, so only contracts/tools.json wording, the prompt and the evals change."
       backend_behavior_change: "None."

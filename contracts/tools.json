@@ -1,14 +1,14 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "phase": 1,
-  "description": "Exact client tools of the Gemini-only browser voice assistant. Phase 1 is capture only: no tool executes, routes or cancels anything on Gemini, and every query answer is SIMULATED. Exactly five tools exist. Each is registered on the ElevenLabs agent as a client tool and implemented in the browser as a thin wrapper that forwards to the backend handler POST /tools/{name} (contracts/api.yaml).",
+  "description": "Agent tools of the Gemini browser voice demo. No tool executes, routes or cancels anything on Gemini, and every answer is SIMULATED. `tools` holds exactly the five backend tools: each is registered on the ElevenLabs agent as a client tool and implemented in the browser as a thin wrapper that forwards to the backend handler POST /tools/{name} (contracts/api.yaml). `browser_tools` holds tools that run entirely in the browser and never reach the backend. Reading simulated data or opening a buy or sell preview cannot execute an order; any future Gemini access stays on the server (api.yaml x-execution-boundary).",
   "conventions": {
     "llm_parameters": "The `parameters` object of each tool is everything the model supplies. Types are plain (no null unions). An optional parameter that is unknown is omitted; the wrapper sends it to the backend as null.",
     "wrapper_envelope": "The browser wrapper, never the model, adds session_id, last_transcript_seq and the Idempotency-Key header. Before forwarding, the wrapper flushes every pending transcript entry with POST /transcripts so the backend can check the readback and the spoken yes.",
     "wrapper_return": "The wrapper returns the backend JSON body to the model unchanged, serialized as a string, for success and for errors alike. On a network failure or timeout it retries once with the same Idempotency-Key, then returns {\"ok\":false,\"simulated\":true,\"error\":{\"code\":\"backend_unavailable\",\"message\":\"The capture service did not respond.\",\"agent_hint\":\"Say you could not reach the service and ask the user to try again. Do not say anything was prepared.\"}}.",
     "utterance": "Every tool takes `utterance`: the user's own words that stated this request, copied verbatim from the conversation as one unbroken stretch of user turns in spoken order, joined with single spaces when the request spanned several user turns. No paraphrase, no corrections, no agent words, no skipped user turn in the middle (api.yaml x-utterance-check requires a contiguous substring of the user transcript).",
     "identifiers": "Tool results contain identifiers (intent.id, intent.session_id, intent_id, query_intent_id). They are not credentials. The agent passes an intent_id back as order_id when needed and never speaks any of them. The session token never appears in a tool parameter or result.",
-    "revision": "1.1.0 clarifies 1.0.0. Tool names, parameters and response fields are unchanged. See x-revision in contracts/api.yaml.",
+    "revision": "1.2.0 adds browser_tools and the execution boundary wording. The five backend tools, their parameters and their response fields are unchanged since 1.0.0. See x-revision in contracts/api.yaml.",
     "simulated": "Every response carries simulated: true. Market and status data come from the fixed simulated catalog in contracts/api.yaml (x-simulated-catalog), never from Gemini.",
     "error_shape": {
       "ok": false,
@@ -474,6 +474,50 @@
         }
       },
       "errors": ["invalid_parameters", "unknown_instrument", "utterance_mismatch", "transcript_not_synced", "session_ended", "backend_unavailable"]
+    }
+  ],
+  "browser_tools": [
+    {
+      "name": "explore_demo_chart",
+      "type": "client",
+      "browser_only": true,
+      "expects_response": true,
+      "response_timeout_secs": 10,
+      "handler": null,
+      "writes_intent": null,
+      "description": "SIMULATED. Show and step through the dashboard's five-minute BTC/USD demo chart, or show a buy or sell preview in the sidebar. Runs in the browser only: it sends nothing to any server, saves nothing and can never place or prepare an order. A preview needs no confirmation. Use action explore to show or refresh the chart and get its simulated statistics, and buy or sell to show a preview of that side.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "explore",
+              "buy",
+              "sell"
+            ],
+            "description": "explore shows or refreshes the chart and returns its simulated statistics. buy or sell shows a simulated preview of that side in the sidebar."
+          }
+        }
+      },
+      "validation": [
+        "Runs in the browser. There is no backend handler, no session_id, no Idempotency-Key, no utterance and no transcript entry.",
+        "action must be explore, buy or sell; anything else returns the error result.",
+        "No confirmation is required or checked: nothing is captured."
+      ],
+      "response": {
+        "$ref": "api.yaml#/x-browser-tools/explore_demo_chart/result"
+      },
+      "error_result": {
+        "simulated": true,
+        "ok": false,
+        "error": "Chart action unavailable"
+      },
+      "errors": []
     }
   ]
 }
