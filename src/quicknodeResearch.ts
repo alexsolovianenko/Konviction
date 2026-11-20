@@ -312,6 +312,7 @@ export class ResearchClient {
         if (!r?.ok || !quote)
           return JSON.stringify({
             ok: false,
+            error: r?.error,
             say: r?.say ?? r?.message ?? "Research unavailable.",
             next_action: "wait_for_user",
           });

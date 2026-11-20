@@ -95,6 +95,7 @@ export class Voice {
   private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number; sendContextualUpdate: (text: string) => void; sendUserMessage: (text: string) => void };
   private visibleContract = "";
   private activeMarketTools = 0;
+  private researchDecisions = new Map<string, 'quoted' | 'offered' | 'report' | 'reported' | 'done'>();
   private selectionRevision = 0;
   private currentProposal: Proposal | null = null;
   private approving = false;
@@ -116,7 +117,7 @@ export class Voice {
     private selectMarket?: (target: { eventTicker: string; symbol: string }) => void,
   ) {}
 
-  private researchClient?: ResearchClient;
+  private researchClient: ResearchClient | undefined;
   private get research() {
     return this.researchClient ??= new ResearchClient(
       (research) => this.update({research}),
@@ -142,7 +143,7 @@ export class Voice {
     }
     this.remainder = null;
     this.update({proposal:this.currentProposal, tradeMessage:'', remainderQuantity:null, positionSnapshot:null});
-    if (selection && this.conversation && !this.activeMarketTools) this.offerResearch();
+    if (selection && this.conversation && !this.activeMarketTools && !this.researchDecisions.has(selection)) this.offerResearch();
     this.conversation?.sendContextualUpdate?.(selection
       ? "Contract on screen (silent tool context): " + selection
       : "The contract chart is no longer visible.");
@@ -158,6 +159,8 @@ export class Voice {
 
   async start(mommyMode = false) {
     if (this.active) return;
+    this.researchDecisions.clear();
+    this.researchClient = undefined;
     this.active = true;
     const id = ++this.attempt;
     const current = () => this.attempt === id;
@@ -348,6 +351,17 @@ export class Voice {
         },
         onMessage: ({ role, message, event_id }) => {
           if (!current()) return;
+          const selected = this.visibleContract;
+          const decision = this.researchDecisions.get(selected);
+          if (role === 'agent' && decision === 'quoted' && /quick\s*node/i.test(message) && /research/i.test(message))
+            this.researchDecisions.set(selected, 'offered');
+          if (role === 'agent' && decision === 'report' && message.trim())
+            this.researchDecisions.set(selected, 'reported');
+          if (role === 'user' && decision === 'reported' && /[a-z0-9]/i.test(message))
+            this.researchDecisions.set(selected, 'done');
+          if (role === 'user' && decision === 'offered' &&
+              /^(?:(?:uh|um|okay)[, ]+)*(?:no(?:pe)?\b|nah\b|skip\b|pass\b|no research\b|just (?:buy|trade)\b|(?:i(?:'ll| will) )?decline\b)/i.test(message.trim()))
+            this.researchDecisions.set(selected, 'done');
           if (role === 'agent') {
             if (pendingUser || (draftEvent !== undefined && draftEvent !== event_id)) finishTurn();
             draft = message;
@@ -393,6 +407,23 @@ export class Voice {
       };
       const { Conversation } = await import('@elevenlabs/client');
       if (!current()) return;
+      const researchTools = this.research.tools(current);
+      const trackResearch = async (tool: keyof typeof researchTools) => {
+        const key = this.visibleContract;
+        const value = await researchTools[tool]();
+        if (key && key === this.visibleContract && current()) {
+          const result = JSON.parse(value);
+          if (tool === 'request_research_quote') {
+            if (result.next_action === 'ask_for_voice_approval') this.researchDecisions.set(key, 'quoted');
+            else if (['paid','free'].includes(result.status) && this.researchDecisions.get(key) !== 'done')
+              this.researchDecisions.set(key, 'report');
+            else if (result.status === 'context_only' || result.next_action === 'report_result' || result.error)
+              this.researchDecisions.set(key, 'done');
+          } else if (['paid','free'].includes(result.status) && this.researchDecisions.get(key) !== 'done')
+            this.researchDecisions.set(key, 'report');
+        }
+        return value;
+      };
       const conversation = await Conversation.startSession({
         signedUrl: credentials.signed_url,
         ...(mommyMode && {overrides: {tts: {voiceId: 'tQ4MEZFJOzsahSEEZtHK', speed: 0.9}}}),
@@ -411,6 +442,16 @@ export class Voice {
           },
           prepare_sandbox_buy: async (params: Record<string, unknown>) => {
             if (!current()) return JSON.stringify({ok:false,say:'Session ended.'});
+            if (params['side'] !== 'sell' && params['event_ticker'] && params['contract_symbol']) {
+              const target = JSON.stringify({event_ticker:params['event_ticker'], contract_symbol:params['contract_symbol']});
+              if (this.visibleContract !== target)
+                return JSON.stringify({ok:false,next_action:'select_market',instruction:'Call get_orderbook for this exact contract, then request_research_quote before preparing the trade.'});
+              const decision = this.researchDecisions.get(target);
+              if (!decision)
+                return JSON.stringify({ok:false,next_action:'request_research_quote',instruction:'Call request_research_quote now. Keep the requested order terms for later.'});
+              if (decision !== 'done')
+                return JSON.stringify({ok:false,next_action:'wait_for_research_decision',instruction:'Finish the research offer first. If purchased, read the result and wait for the caller before preparing a trade.'});
+            }
             if (params['order_mode'] !== 'market' && params['limit_price'] == null) return JSON.stringify({ok:false, error:'ENTRY_REQUIRED', say:'Your limit?'});
             if (preparedThisTurn) return waitForUser;
             preparedThisTurn = true;
@@ -428,7 +469,8 @@ export class Voice {
             preparedThisTurn = true;
             return JSON.stringify(await this.confirmByVoice());
           },
-          ...this.research.tools(current),
+          request_research_quote: () => trackResearch('request_research_quote'),
+          get_research_result: () => trackResearch('get_research_result'),
           get_sandbox_positions: async () => JSON.stringify(current()
             ? await this.readPositions() : {ok:false, say:'Session ended.'}),
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
@@ -460,6 +502,7 @@ export class Voice {
         '. Interpret unqualified times in Central time. Preserve explicit time zones in searches.',
       );
       if (this.visibleContract) {
+        this.research.select(JSON.parse(this.visibleContract));
         conversation.sendContextualUpdate?.("Contract on screen (silent tool context): " + this.visibleContract);
         this.offerResearch();
       }

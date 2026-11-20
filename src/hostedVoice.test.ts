@@ -32,7 +32,24 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
     expect(opts.overrides).toEqual(mommyMode ? {tts:{voiceId:'tQ4MEZFJOzsahSEEZtHK',speed:0.9}} : undefined);
     expect(context.mock.calls.some(([message]) => message.includes('Mommy mode is enabled'))).toBe(mommyMode);
     expect(opts.dynamicVariables.secret__trade_session_token).toBe(credentials.session_token);
-    const reply = JSON.parse(await opts.clientTools.prepare_sandbox_buy({quantity:1,limit_price:.4}));
+    const order = {event_ticker:'EVENT', contract_symbol:'GEMI-C',quantity:1,limit_price:.4};
+    const prepare = async () => JSON.parse(await opts.clientTools.prepare_sandbox_buy(order));
+    expect(await prepare()).toMatchObject({next_action:'select_market'});
+    const fetchMock = vi.spyOn(globalThis,'fetch').mockImplementation(async () => Response.json({
+      ok:true, status:'quoted',quote_id:'research-q',payments_enabled:true,price_usdc:'0.0001',
+      expires_at:new Date(Date.now()+60000).toISOString(),say:'Buy QuickNode research?',context:{
+        market:{event_ticker:'EVENT',contract_symbol:'GEMI-C'},asset:{name:'Bitcoin',symbol:'BTC'}
+      }
+    }));
+    voice.setVisibleContract('EVENT','GEMI-C');
+    expect(await prepare()).toMatchObject({next_action:'request_research_quote'});
+    await opts.clientTools.request_research_quote();
+    expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
+    opts.onMessage({role:'agent',message:'Buy QuickNode research?',event_id:1});
+    opts.onMessage({role:'user',message:'No thanks.'});
+    expect(trade.mock.calls.map(([path])=>path)).not.toContain('proposals');
+    const reply = await prepare();
+    fetchMock.mockRestore();
     expect(reply).toMatchObject({proposal_id:'proposal-1', confirmation_tool:'confirm_hosted_sandbox_buy',say:readback});
     expect(JSON.stringify(reply)).not.toContain(credentials.session_token);
     await vi.advanceTimersByTimeAsync(2100);
