@@ -1,7 +1,7 @@
 import { QueueClient } from "@vercel/queue";
 
 const queue = new QueueClient({ region: "iad1", deploymentId: null });
-export default queue.handleNodeCallback(
+const consume = queue.handleCallback(
   async () => {
     // Unpinned messages follow the production alias on subsequent deployments.
     const now = Date.now();
@@ -29,3 +29,15 @@ export default queue.handleNodeCallback(
   },
   { retry: () => ({ afterSeconds: 3 }) },
 );
+
+// Build Output functions receive Node HTTP objects without framework helpers.
+export default async function handler(req, res) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const response = await consume(new Request("https://queue.internal/settlement-watch", {
+    method: req.method, headers: req.headers,
+    ...(req.method === "POST" && { body: Buffer.concat(chunks) }),
+  }));
+  res.writeHead(response.status, Object.fromEntries(response.headers));
+  res.end(Buffer.from(await response.arrayBuffer()));
+}
