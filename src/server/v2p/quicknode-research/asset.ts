@@ -1,3 +1,4 @@
+import { marketTitle } from "../market-title";
 // Identify the exact Gemini Sandbox market and its underlying cryptocurrency from Gemini's own
 // event and contract metadata. No coin list is consulted here: the symbol and name come from the
 // contract rules text, title, event ticker and series, and independent fields must agree.
@@ -125,14 +126,17 @@ export function identifyMarket(
   const buy = (p["buy"] ?? {}) as Loose;
   const sell = (p["sell"] ?? {}) as Loose;
   const asset: AssetIdentity = { symbol, name, identified_from: votes.map(([f]) => f) };
+  const expiry = str(c["expiryDate"]) ?? str(ev["expiryDate"]);
+  const title = str(ev["title"]);
+  const label = str(c["label"]);
   const market: MarketSelection = {
     event_ticker: eventTicker,
     contract_symbol: contractSymbol,
-    title: str(ev["title"])?.slice(0, 200) ?? null,
-    contract_label: str(c["label"])?.slice(0, 200) ?? null,
+    title: title ? marketTitle(title, expiry).slice(0, 200) : null,
+    contract_label: label ? marketTitle(label, expiry).slice(0, 200) : null,
     strike_type: str(strike["type"]),
     strike: strike["value"] != null ? String(strike["value"]).slice(0, 40) : null,
-    expiry: str(c["expiryDate"]) ?? str(ev["expiryDate"]),
+    expiry,
     settlement_agency: str(sd["agency"]),
     settlement_index: str(sd["index"]) ?? evSource,
     prices: {

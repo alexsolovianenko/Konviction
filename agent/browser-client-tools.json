@@ -207,7 +207,6 @@
       "response_timeout_secs": 15,
       "parameters": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {},
         "required": []
       }
@@ -221,7 +220,6 @@
       "response_timeout_secs": 15,
       "parameters": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {},
         "required": []
       }
