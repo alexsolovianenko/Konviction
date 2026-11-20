@@ -92,7 +92,7 @@ export class Voice {
   private attempt = 0;
   private active = false;
   private session: WorkerSession | LocalSession | undefined;
-  private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number; sendContextualUpdate: (text: string) => void };
+  private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number; sendContextualUpdate: (text: string) => void; sendUserMessage: (text: string) => void };
   private visibleContract = "";
   private selectionRevision = 0;
   private currentProposal: Proposal | null = null;
@@ -121,7 +121,7 @@ export class Voice {
       (research) => this.update({research}),
       () => this.session?.credentials.session_token || null,
       () => this.visibleContract ? JSON.parse(this.visibleContract) : null,
-      (text) => this.conversation?.sendContextualUpdate?.(text),
+      (text) => this.conversation?.sendUserMessage?.(text),
     );
   }
   /** QuickNode research payment: called only by the on-screen approval button, never by a voice tool. */

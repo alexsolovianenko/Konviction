@@ -357,6 +357,9 @@ export class ResearchClient {
     const q = this.view.quote;
     const token = this.token();
     if (!q || !q.quote_id || !token || this.approving || !this.view.canApprove) return;
+    const selection = this.selection;
+    const stillSelected = () => selection === this.selection && this.token() === token && this.matches(q, this.visible());
+    if (!stillSelected()) return;
     this.approving = true;
     let key = this.keys.get(q.quote_id);
     if (!key) this.keys.set(q.quote_id, (key = crypto.randomUUID()));
@@ -372,9 +375,11 @@ export class ResearchClient {
         },
         token,
       );
+      if (!stillSelected()) return;
       if (!r.ok) {
         // Network loss here is ambiguous: re-read status instead of resending.
         const latest = r.error === "NETWORK" ? await this.refresh(token) : null;
+        if (!stillSelected()) return;
         this.set({
           busy: false,
           message:
@@ -386,14 +391,13 @@ export class ResearchClient {
       this.set({ quote: latest });
       for (let i = 0; i < 10 && PENDING.includes(latest.status); i++) {
         await new Promise((res) => setTimeout(res, 3000));
-        const t = this.token();
-        if (!t) break;
-        latest = (await this.refresh(t)) ?? latest;
+        if (!stillSelected()) return;
+        latest = (await this.refresh(token)) ?? latest;
       }
+      if (!stillSelected()) return;
       this.set({ busy: false, message: "" });
       this.tellAgent(
-        "Research result is on screen. Summarize these facts honestly in one or two sentences, say it is market context and network activity rather than a price prediction, and do not trade unless the caller separately asks: " +
-          JSON.stringify(agentSummary(latest)),
+        "Read the research result from my on-screen request. Use get_research_result and explain the measurements.",
       );
     } finally {
       this.approving = false;
