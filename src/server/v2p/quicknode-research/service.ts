@@ -108,7 +108,7 @@ export function purchaseView(p: Purchase, cfg: ResearchConfig) {
   const r = p.report;
   const chain = route?.chain ?? "network";
   const sayFor: Record<string, string> = {
-    quoted: `${contextSummary(p.context)} Extra ${chain} network research from QuickNode costs ${price} testnet USDC on Arc. Approve it on screen if you want it.`,
+    quoted: `Would you like to buy ${chain} research from QuickNode for ${price} testnet USDC?`,
     free: (r ? r.headline + " " : "") + "QuickNode answered without charging.",
     expired: "That research quote expired. Nothing was paid.",
     reserved: "Research payment is starting.",
@@ -213,7 +213,7 @@ export function researchService(d: Deps) {
       return contextView(
         context,
         decision.route
-          ? `Paid ${decision.route.chain} network research is available with a voice session and on-screen approval.`
+          ? `Paid ${decision.route.chain} network research is available with your approval on the call.`
           : decision.limitation,
         decision.route,
         cfg,

@@ -201,7 +201,7 @@
     {
       "name": "request_research_quote",
       "type": "client",
-      "description": "Read-only. Only when the caller asks for research on the selected cryptocurrency prediction. Identifies the exact Gemini market and its underlying coin, returns verified context (market-implied YES %, strike, expiry, settlement-index level, 60-minute change and volatility) and, when a supported QuickNode x402 source exists for that coin, an UNPAID price quote in Arc Testnet USDC. It never pays and never trades. Speak the returned say once. If next_action is wait_for_on_screen_approval, payment happens only if the caller presses the on-screen button. Report limitations honestly. Never speak ids, addresses or hashes.",
+      "description": "Read-only. On a new market selection or a research request, get the exact selected market’s unpaid quote. If it returns ask_for_voice_approval, speak its say verbatim, alone, and wait. Never speak quote_id. No payment or trade occurs here.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,

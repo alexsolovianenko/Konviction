@@ -4,7 +4,8 @@
 //   approve  (POST, voice-session bearer): the on-screen button only. No voice tool can call it.
 //   status   (POST, voice-session bearer) and config (GET, public).
 import { verifySessionToken } from "../browser-session";
-import { env } from "../util";
+import { approvedResearch } from "./spoken-approval";
+import { env, secretEqual } from "../util";
 import { formatUsdc, QUICKNODE_NETWORKS_URL, researchConfig } from "./config";
 import { defaultSdkFactory } from "./paid-request";
 import { researchService, type Deps } from "./service";
@@ -98,8 +99,11 @@ export async function handleQuicknodeResearch(
     if (req.method !== "POST") return reply(404, { ok: false, error: "NOT_FOUND" });
     if (!(req.headers.get("content-type") ?? "").startsWith("application/json"))
       return reply(415, { ok: false, error: "JSON_REQUIRED" });
+    const voiceApproval = action === "call-confirm";
+    if (voiceApproval && !await secretEqual(req.headers.get("x-call-secret") ?? "", env("ELEVENLABS_CALL_CONFIRM_SECRET") ?? ""))
+      return reply(401, { ok: false, error: "UNAUTHORIZED" });
     const text = await req.text();
-    if (text.length > 2048) return reply(413, { ok: false, error: "TOO_LARGE" });
+    if (text.length > (voiceApproval ? 131072 : 2048)) return reply(413, { ok: false, error: "TOO_LARGE" });
     let body: Record<string, unknown>;
     try {
       const parsed = text ? JSON.parse(text) : {};
@@ -131,7 +135,7 @@ export async function handleQuicknodeResearch(
         })),
       });
     }
-    const token = /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
+    const token = voiceApproval ? req.headers.get("x-trade-session-token") ?? undefined : /^Bearer ([A-Za-z0-9_.-]+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
     const claims = await verifySessionToken(token);
     if (!claims)
       return reply(401, {
@@ -152,6 +156,18 @@ export async function handleQuicknodeResearch(
             contractSymbol: s("contract_symbol"),
           })),
         });
+      case "call-confirm": {
+        if (!claims.cid || claims.cid !== body["conversation_id"] || body["is_text_only"] !== false || !UUID.test(s("quote_id")))
+          return reply(403, { ok: false, say: "Confirm research in the same voice call." });
+        const quoteId = s("quote_id");
+        const q = await svc.status({sid, quoteId});
+        if (q.status !== "quoted") return reply(200, {ok:true, status:q.status, say:q.say});
+        if (!approvedResearch(body["history"], quoteId, q.say))
+          return reply(200, {ok:false, say:"I missed the confirmation. No research was purchased. Ask for a fresh offer."});
+        const result = await svc.approve({sid, quoteId, maxAtomic:q.price_atomic, idempotencyKey:quoteId});
+        return reply(200, {ok:true, status:result.status, say:result.status === "paid" && result.report
+          ? "Purchase successful. " + result.say : result.say});
+      }
       case "approve":
         // Separate from trade approval: this can only buy the quote's fixed research request.
         if (

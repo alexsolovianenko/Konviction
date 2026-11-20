@@ -207,13 +207,14 @@ describe("ResearchClient", () => {
     const out = await tools.request_research_quote();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]![0]).toBe("/api/public/quicknode-research/quote");
-    expect(out).not.toMatch(/token|0x[0-9a-fA-F]{8}|quote_id|GEMI-/);
+    expect(out).not.toMatch(/token|0x[0-9a-fA-F]{8}|GEMI-/);
     expect(JSON.parse(out)).toMatchObject({
       ok: true,
       asset: "Bitcoin (BTC)",
       price_usdc: "0.0001",
       implied_yes_pct: 60,
-      next_action: "wait_for_on_screen_approval",
+      quote_id: "q1",
+      next_action: "ask_for_voice_approval",
     });
     await tools.request_research_quote(); // reuses the fresh quote for this exact contract
     expect(fetchMock).toHaveBeenCalledTimes(2);

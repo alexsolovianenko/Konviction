@@ -1,0 +1,48 @@
+{
+  "type": "webhook",
+  "name": "confirm_research_purchase",
+  "description": "Only after the caller hears the exact QuickNode research offer and explicitly says yes or confirm, purchase this quote once. Wait for the returned result. Never places a Gemini order.",
+  "pre_tool_speech": "off",
+  "response_timeout_secs": 60,
+  "follow_redirects": false,
+  "api_schema": {
+    "url": "https://voice-to-predict-ebon.vercel.app/api/public/quicknode-research/call-confirm",
+    "method": "POST",
+    "request_headers": {
+      "x-call-secret": {
+        "secret_id": "REPLACE_WITH_ELEVENLABS_WORKSPACE_SECRET_ID"
+      },
+      "x-trade-session-token": {
+        "variable_name": "secret__trade_session_token"
+      }
+    },
+    "request_body_schema": {
+      "type": "object",
+      "description": "Verify the current spoken approval of this research price.",
+      "required": [
+        "quote_id",
+        "conversation_id",
+        "is_text_only",
+        "history"
+      ],
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "dynamic_variable": "system__conversation_id"
+        },
+        "is_text_only": {
+          "type": "boolean",
+          "dynamic_variable": "system__is_text_only"
+        },
+        "history": {
+          "type": "string",
+          "dynamic_variable": "system__conversation_history"
+        },
+        "quote_id": {
+          "type": "string",
+          "description": "Exact quote_id from request_research_quote."
+        }
+      }
+    }
+  }
+}

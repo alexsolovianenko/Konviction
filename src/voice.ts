@@ -144,9 +144,14 @@ export class Voice {
     }
     this.remainder = null;
     this.update({proposal:this.currentProposal, tradeMessage:'', remainderQuantity:null, positionSnapshot:null});
+    if (selection && this.conversation) this.offerResearch();
     this.conversation?.sendContextualUpdate?.(selection
       ? "Contract on screen (silent tool context): " + selection
       : "The contract chart is no longer visible.");
+  }
+
+  private offerResearch() {
+    this.conversation?.sendUserMessage?.("I selected a market. Check request_research_quote now and offer optional research for this selection.");
   }
 
   outputLevel() {
@@ -452,7 +457,10 @@ export class Voice {
         'The caller uses Central time (America/Chicago). Session started ' + localStart +
         '. Interpret unqualified times in Central time. Preserve explicit time zones in searches.',
       );
-      if (this.visibleContract) conversation.sendContextualUpdate?.("Contract on screen (silent tool context): " + this.visibleContract);
+      if (this.visibleContract) {
+        conversation.sendContextualUpdate?.("Contract on screen (silent tool context): " + this.visibleContract);
+        this.offerResearch();
+      }
     } catch (error) {
       if (!current()) return;
       const denied =

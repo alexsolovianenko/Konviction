@@ -306,7 +306,7 @@ export class ResearchClient {
         if (!target) return JSON.stringify({ ok: false, say: "Pick a crypto prediction first." });
         const existing = this.view.quote;
         // Reuse a fresh session-bound result for this exact contract; otherwise (re)load.
-        const fresh = existing && this.matches(existing, target);
+        const fresh = existing && this.matches(existing, target) && (existing.status !== "quoted" || Date.parse(existing.expires_at) > Date.now());
         // Upgrade free context to a session-bound unpaid quote only when a paid route exists.
         const wantsQuote =
           !fresh || (existing.status === "context_only" && existing.route_id && this.token());
@@ -325,9 +325,10 @@ export class ResearchClient {
           ...agentSummary(quote),
           say:
             quote.status === "quoted" && !quote.payments_enabled
-              ? `${quote.say} Research payments are switched off right now.`
+              ? "Research payments are switched off right now."
               : quote.say,
-          next_action: quote.status === "quoted" ? "wait_for_on_screen_approval" : "report_result",
+          ...(quote.status === "quoted" && quote.payments_enabled && {quote_id: quote.quote_id}),
+          next_action: quote.status === "quoted" && quote.payments_enabled ? "ask_for_voice_approval" : "report_result",
         });
       },
       get_research_result: async () => {
