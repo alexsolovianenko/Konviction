@@ -18,6 +18,25 @@ async function api(path, method = "GET", body) {
 const path = "agents/" + agent + "?branch_id=" + branch;
 const live = await api(path),
   prior = live.conversation_config.agent.prompt;
+// Give the agent the actual transport before any browser-specific tool instructions.
+const channelRule = "The provider reports channel {{system__channel}}. When it is twilio, follow Native telephone calls below for all market and account actions. Use phone_search_markets even for the first market lookup. Browser client tools require a connected browser and cannot run on a telephone call.";
+const section = readFileSync("agent/phone-instructions.md", "utf8").trim();
+function routedPrompt(current) {
+  if (current.includes("Native telephone calls\n") && !current.includes(section))
+    throw Error("Existing phone instructions changed. Reconcile before publishing.");
+  const browser = current.replace(channelRule, "").replace(section, "").trim();
+  return [channelRule, section, browser].join("\n\n");
+}
+if (process.argv.includes("--prompt-only")) {
+  const prompt = routedPrompt(prior.prompt);
+  if (prompt !== prior.prompt)
+    await api(path, "PATCH", { conversation_config: { agent: { prompt: { prompt } } } });
+  const after = (await api(path)).conversation_config.agent.prompt;
+  if (after.prompt !== prompt || JSON.stringify(after.tool_ids) !== JSON.stringify(prior.tool_ids))
+    throw Error("Phone routing publication mismatch");
+  console.log("Verified phone routing on the configured agent branch.");
+  process.exit(0);
+}
 const named = (await api("tools")).tools;
 const confirm = named.find(
   (t) => prior.tool_ids.includes(t.id) && t.tool_config.name === "confirm_hosted_sandbox_buy",
@@ -131,12 +150,7 @@ for (const definition of definitions) {
   ids.push(existing?.id ?? result.id);
 }
 const current = (await api(path)).conversation_config.agent.prompt;
-const section = readFileSync("agent/phone-instructions.md", "utf8").trim();
-if (current.prompt.includes("\nNative telephone calls\n") && !current.prompt.includes(section))
-  throw Error("Existing phone instructions changed. Reconcile before publishing.");
-const prompt = current.prompt.includes(section)
-  ? current.prompt
-  : current.prompt.trimEnd() + "\n\n" + section;
+const prompt = routedPrompt(current.prompt);
 const tool_ids = [...new Set([...current.tool_ids, ...ids])];
 await api(path, "PATCH", {
   conversation_config: { agent: { prompt: { prompt, tool_ids } } },
