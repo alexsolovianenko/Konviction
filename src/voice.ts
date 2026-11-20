@@ -359,7 +359,9 @@ export class Voice {
             this.researchDecisions.set(selected, 'reported');
           if (role === 'user' && decision === 'reported' && /[a-z0-9]/i.test(message))
             this.researchDecisions.set(selected, 'done');
-          if (role === 'user' && decision === 'offered' &&
+          // A caller can explicitly skip data while the offer is still playing.
+          const skipsQuote = decision === 'quoted' && /\b(?:no[, ]+thanks|skip (?:the )?(?:data|research))\b/i.test(message);
+          if (role === 'user' && (decision === 'offered' || skipsQuote) &&
               spokenDecision(message, 'research') === 'no')
             this.researchDecisions.set(selected, 'done');
           if (role === 'agent') {

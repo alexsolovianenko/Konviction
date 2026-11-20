@@ -45,8 +45,8 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
     expect(await prepare()).toMatchObject({next_action:'request_research_quote'});
     await opts.clientTools.request_research_quote();
     expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
-    opts.onMessage({role:'agent',message:'Would you like real DEX buy and sell volume for BTC from QuickNode?',event_id:1});
     if (mommyMode) {
+      opts.onMessage({role:'agent',message:'Would you like real DEX buy and sell volume for BTC from QuickNode?',event_id:1});
       opts.onMessage({role:'user',message:'Buy the research.'});
       expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
       fetchMock.mockResolvedValueOnce(Response.json({ok:true,status:'paid',quote_id:'research-q',
@@ -56,7 +56,7 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
       opts.onMessage({role:'agent',message:'Here are the Bitcoin measurements.',event_id:2});
       opts.onMessage({role:'user',message:'Place my original order.'});
     } else {
-      opts.onMessage({role:'user',message:'I don’t think so.'});
+      opts.onMessage({role:'user',message:'No thanks. Skip the research. Buy one dollar of NO.'});
     }
     expect(trade.mock.calls.map(([path])=>path)).not.toContain('proposals');
     const reply = await prepare();
