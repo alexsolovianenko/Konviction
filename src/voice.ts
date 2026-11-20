@@ -121,11 +121,8 @@ export class Voice {
       (research) => this.update({research}),
       () => this.session?.credentials.session_token || null,
       () => this.visibleContract ? JSON.parse(this.visibleContract) : null,
-      (text) => this.conversation?.sendUserMessage?.(text),
     );
   }
-  /** QuickNode research payment: called only by the on-screen approval button, never by a voice tool. */
-  approveResearch() { return this.research.approve(); }
   /** On-screen request for an unpaid research price (never pays). */
   requestResearchQuote() { return this.research.requestQuote(); }
 

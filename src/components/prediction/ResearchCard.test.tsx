@@ -97,21 +97,16 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("ResearchCard", () => {
   it("shows the identified asset, market context and the exact cost on a separate approval button", () => {
-    const onApprove = vi.fn();
     const { container } = render(
       <ResearchCard
         research={{ quote: quote(), busy: false, message: "", canApprove: true, canQuote: false }}
-        onApprove={onApprove}
       />,
     );
     expect(screen.getByRole("heading", { name: "Bitcoin (BTC) research" })).toBeTruthy();
     expect(container.textContent).toMatch(/implied YES 60%/);
     expect(container.textContent).toMatch(/LS-LRRR-XBTUSD/);
     expect(screen.getByText("-0.39%")).toBeTruthy();
-    screen
-      .getByRole("button", { name: "Approve 0.0001 testnet USDC for Bitcoin research" })
-      .click();
-    expect(onApprove).toHaveBeenCalledOnce();
+    expect(screen.getByText(/Confirm the quoted price on your voice call/)).toBeTruthy();
     expect(screen.getByText(/never places or approves a Gemini order/)).toBeTruthy();
   });
   it("context-only shows the limitation and no payment button", () => {
@@ -126,7 +121,6 @@ describe("ResearchCard", () => {
     const { container } = render(
       <ResearchCard
         research={{ quote: q, busy: false, message: "", canApprove: false, canQuote: false }}
-        onApprove={() => {}}
       />,
     );
     expect(screen.getByRole("heading", { name: "Foocoin (FOO) research" })).toBeTruthy();
@@ -140,7 +134,6 @@ describe("ResearchCard", () => {
     const { container } = render(
       <ResearchCard
         research={{ quote: paid(), busy: false, message: "", canApprove: false, canQuote: false }}
-        onApprove={() => {}}
       />,
     );
     expect(screen.getByText("12,345 tx")).toBeTruthy();
@@ -166,7 +159,6 @@ describe("ResearchClient", () => {
       (v) => views.push(v),
       () => null,
       () => target,
-      () => {},
     );
     client.select(target);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
@@ -194,7 +186,6 @@ describe("ResearchClient", () => {
       (v) => views.push(v),
       () => "token",
       () => target,
-      () => {},
     );
     client.select(target);
     await vi.waitFor(() => expect(views.at(-1)?.quote?.status).toBe("context_only"));
@@ -229,7 +220,6 @@ describe("ResearchClient", () => {
       (v) => views.push(v),
       () => null,
       () => target,
-      () => {},
     );
     client.select(target);
     await vi.waitFor(() =>
@@ -242,7 +232,6 @@ describe("ResearchClient", () => {
     render(
       <ResearchCard
         research={{ quote: q, busy: false, message: "", canApprove: false, canQuote: true }}
-        onApprove={() => {}}
         onRequestQuote={onRequestQuote}
       />,
     );
@@ -258,7 +247,6 @@ describe("ResearchClient", () => {
       (v) => views.push(v),
       () => null,
       () => target,
-      () => {},
     );
     client.select(target);
     await vi.waitFor(() => expect(views.at(-1)).toMatchObject({ quote: null, message: "" }));

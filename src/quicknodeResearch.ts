@@ -132,11 +132,9 @@ type Json = Record<string, unknown> & {
   say?: string;
 };
 type Target = { event_ticker: string; contract_symbol: string };
-export const APPROVAL_PHRASE = "APPROVE_QUICKNODE_RESEARCH_PAYMENT";
-const PENDING = ["reserved", "sending"];
 
 async function call(
-  action: "context" | "quote" | "approve" | "status",
+  action: "context" | "quote" | "status",
   body: unknown,
   token: string | null,
 ): Promise<Json> {
@@ -149,7 +147,7 @@ async function call(
         ...(token && { Authorization: "Bearer " + token }),
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(action === "approve" ? 60_000 : 15_000),
+      signal: AbortSignal.timeout(15_000),
     });
     return (await res.json()) as Json;
   } catch {
@@ -192,14 +190,11 @@ export function agentSummary(q: ResearchQuote) {
 
 export class ResearchClient {
   private view: ResearchView = initialResearch;
-  private approving = false;
-  private keys = new Map<string, string>();
   private selection = 0;
   constructor(
     private publish: (v: ResearchView) => void,
     private token: () => string | null,
     private visible: () => Target | null,
-    private tellAgent: (text: string) => void,
   ) {}
 
   private set(patch: Partial<ResearchView>) {
@@ -351,57 +346,5 @@ export class ResearchClient {
     const next = r as unknown as ResearchQuote;
     if (this.view.quote?.quote_id === next.quote_id) this.set({ quote: next });
     return next;
-  }
-
-  /** On-screen approval button only. Retries reuse the same idempotency key; the server never pays twice. */
-  async approve() {
-    const q = this.view.quote;
-    const token = this.token();
-    if (!q || !q.quote_id || !token || this.approving || !this.view.canApprove) return;
-    const selection = this.selection;
-    const stillSelected = () => selection === this.selection && this.token() === token && this.matches(q, this.visible());
-    if (!stillSelected()) return;
-    this.approving = true;
-    let key = this.keys.get(q.quote_id);
-    if (!key) this.keys.set(q.quote_id, (key = crypto.randomUUID()));
-    this.set({ busy: true, message: "Paying QuickNode on Arc Testnet…" });
-    try {
-      const r = await call(
-        "approve",
-        {
-          quote_id: q.quote_id,
-          max_atomic: q.price_atomic,
-          confirm: APPROVAL_PHRASE,
-          idempotency_key: key,
-        },
-        token,
-      );
-      if (!stillSelected()) return;
-      if (!r.ok) {
-        // Network loss here is ambiguous: re-read status instead of resending.
-        const latest = r.error === "NETWORK" ? await this.refresh(token) : null;
-        if (!stillSelected()) return;
-        this.set({
-          busy: false,
-          message:
-            latest && latest.status !== "quoted" ? "" : (r.message ?? "Research payment refused."),
-        });
-        return;
-      }
-      let latest = r as unknown as ResearchQuote;
-      this.set({ quote: latest });
-      for (let i = 0; i < 10 && PENDING.includes(latest.status); i++) {
-        await new Promise((res) => setTimeout(res, 3000));
-        if (!stillSelected()) return;
-        latest = (await this.refresh(token)) ?? latest;
-      }
-      if (!stillSelected()) return;
-      this.set({ busy: false, message: "" });
-      this.tellAgent(
-        "Read the research result from my on-screen request. Use get_research_result and explain the measurements.",
-      );
-    } finally {
-      this.approving = false;
-    }
   }
 }

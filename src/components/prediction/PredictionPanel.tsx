@@ -90,7 +90,7 @@ export function PredictionPanel() {
         </p>
       )}
       <VoicePositions snapshot={view.positionSnapshot} />
-      {researchForShown && research && <ResearchCard research={research} onApprove={() => void voice.approveResearch()} onRequestQuote={() => void voice.requestResearchQuote()} />}
+      {researchForShown && research && <ResearchCard research={research} onRequestQuote={() => void voice.requestResearchQuote()} />}
       {(view.proposal || view.tradeMessage) && <TradeApproval
         proposal={view.proposal}
         availability={view.availability}

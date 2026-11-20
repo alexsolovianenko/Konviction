@@ -27,11 +27,9 @@ const signed = (n: number | null | undefined, unit = "%") =>
 
 export function ResearchCard({
   research,
-  onApprove,
   onRequestQuote,
 }: {
   research: ResearchView;
-  onApprove: () => void;
   /** Unpaid: asks the server for a session-bound price. Never pays. */
   onRequestQuote?: () => void;
 }) {
@@ -61,13 +59,7 @@ export function ResearchCard({
       )}
       {q?.status === "quoted" && (
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            className="btn"
-            disabled={!research.canApprove || research.busy}
-            onClick={onApprove}
-          >
-            Approve {q.price_usdc} testnet USDC for {q.research_chain} research
-          </button>
+          <p>Confirm the quoted price on your voice call to purchase this research.</p>
           <span className="text-xs text-muted-foreground">
             Paid from the server research wallet, not your trading balance.
           </span>

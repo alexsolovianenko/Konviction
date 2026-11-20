@@ -3,8 +3,7 @@
 When a user selects **any** cryptocurrency prediction in Gemini Sandbox, Konviction automatically
 identifies that exact market and its underlying coin, shows verified market context for free, and,
 when a supported paid source exists for that coin, offers one QuickNode x402 network-activity
-request paid in testnet USDC on Arc Testnet via Circle Gateway nanopayments. Paying always needs an
-explicit on-screen click. Trading is untouched: YES/NO orders keep their own proposal and confirmation.
+request paid in testnet USDC on Arc Testnet via Circle Gateway nanopayments. The voice agent offers the exact price and waits for explicit spoken approval. Trading is untouched: YES/NO orders keep their own proposal and confirmation.
 
 ## Flow
 
@@ -35,7 +34,7 @@ explicit on-screen click. Trading is untouched: YES/NO orders keep their own pro
    This list check is required because QuickNode returns 402 for *any* path, including networks it
    does not serve, so a 402 proves nothing. If any check fails, the result is `context_only` with an
    explicit limitation, and nothing is charged.
-5. **Approve** (button only) and **pay** exactly as before: durable Blob reservation, caps,
+5. **Approve** (authenticated ElevenLabs voice webhook) and **pay** exactly as before: durable Blob reservation, caps,
    idempotency, pre-signing checks, `unknown_pending` never resent.
 
 ## Routes (verified listed and quoting 0.0001 USDC on Arc Testnet, 2026-11-20)
@@ -61,9 +60,7 @@ chain means one `ROUTES` entry with a verified method; no other code changes.
   `wallet.ts` (a test enforces this). The SDK is not in the browser bundle.
 * `quote`, `approve`, `status` need the server-signed voice-session bearer. Quotes are bound to `sid`,
   the exact Gemini contract, the route and its URL, with a 4-minute TTL.
-* The agent has two read-only tools (`request_research_quote`, `get_research_result`). Only the
-  on-screen button calls `approve` with `APPROVE_QUICKNODE_RESEARCH_PAYMENT`, the exact amount and an
-  idempotency key.
+* The agent has two read-only tools (`request_research_quote`, `get_research_result`). The voice webhook verifies the signed session, call ID, exact offer and immediate caller assent with the shared Gemini confirmation verifier. It uses the stored quote amount and quote ID for idempotency.
 * Validation: resource URL equals the route URL; Arc Testnet; `exact` + `GatewayWalletBatched`; Arc
   USDC; allowlisted payee and Gateway verifier; price within the cap. At payment time the SDK is
   capped at the quoted amount and refuses any differing requirement before signing.
@@ -98,14 +95,13 @@ Never paste keys into chat, GitHub, PRs, logs or repo files.
 
 Add client tools `request_research_quote` and `get_research_result` from
 `agent/browser-client-tools.json`. Append the "Crypto research" section of `agent/system_prompt.md`.
-Add no tool that pays. Publish.
+Register the server webhook in `agent/confirm-research-purchase.json` with the same provider-only secret as Gemini call confirmation. Publish.
 
 ## Demo
 
 1. Select a BTC (or ETH, SOL, XRP, HYPE) contract. The card identifies the coin and shows context.
-2. Start voice: "Research this market." The agent fetches the unpaid quote and speaks the context
-   and the quoted 0.0001 testnet USDC.
-3. Click **Approve 0.0001 testnet USDC for Bitcoin research**. The card shows the network report and
+2. Select a market during the call or ask for more data. The first offer names QuickNode, the coin and the exact fee.
+3. Say **yes** after the exact offer. The card shows the network report and
    payment evidence, and the agent reads it with the caveat.
 4. Select a ZEC contract: context only, with the limitation and no charge.
 5. Separately: "Buy two dollars of YES" uses the existing proposal and spoken confirmation.

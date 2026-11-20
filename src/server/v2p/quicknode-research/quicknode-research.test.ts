@@ -315,11 +315,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function token(sid = crypto.randomUUID()) {
+async function token(sid = crypto.randomUUID(), cid: string | null = null) {
   const now = Date.now();
   return {
     sid,
-    token: await mintSessionToken({ v: 1, sid, cid: null, iat: now, exp: now + 3600_000 }),
+    token: await mintSessionToken({ v: 1, sid, cid, iat: now, exp: now + 3600_000 }),
   };
 }
 
@@ -353,12 +353,12 @@ function harness(o: H = {}) {
       klines: async () => KLINES,
     }),
   });
-  const post = async (action: string, body: unknown, bearer?: string) => {
+  const post = async (action: string, body: unknown, bearer?: string, headers: Record<string,string> = {}) => {
     const res = await handleQuicknodeResearch(
       new Request("https://app.test/api/public/quicknode-research/" + action, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/json", ...headers,
           ...(bearer && { Authorization: "Bearer " + bearer }),
         },
         body: JSON.stringify(body),
@@ -951,4 +951,24 @@ describe("containment", () => {
     );
     expect(toolBlock).not.toMatch(/"approve"|call\("approve"/);
   });
+});
+
+it("verifies a provider call before spending once and returning its research", async () => {
+  vi.stubEnv("ELEVENLABS_CALL_CONFIRM_SECRET", "test-webhook-secret");
+  try {
+    const h = harness();
+    const {token: auth} = await token(crypto.randomUUID(), "conv_research");
+    const {body:q} = await h.quote(auth!);
+    const headers = {"x-call-secret":"test-webhook-secret","x-trade-session-token":auth!};
+    const entries = [{role:"tool",tool_results:[{tool_name:"request_research_quote",result_value:JSON.stringify({ok:true,quote_id:q["quote_id"]})}]},
+      {role:"agent",message:q["say"]},{role:"user",message:"Yes."}];
+    const body = {quote_id:q["quote_id"], conversation_id:"conv_research",is_text_only:false,history:JSON.stringify({entries})};
+    expect((await h.post("call-confirm",body)).status).toBe(401);
+    expect((await h.post("call-confirm",{...body,conversation_id:"another"},undefined,headers)).status).toBe(403);
+    expect((await h.post("call-confirm",{...body,history:"{}"},undefined,headers)).body["ok"]).toBe(false);
+    const first = await h.post("call-confirm",body,undefined,headers);
+    expect(first.body).toMatchObject({ok:true,status:"paid",say:expect.stringContaining("Purchase successful")});
+    expect((await h.post("call-confirm",body,undefined,headers)).body["status"]).toBe("paid");
+    expect((await h.post("status",{quote_id:q["quote_id"]},auth!)).body["report"]).toBeTruthy();
+  } finally { vi.unstubAllEnvs(); }
 });
