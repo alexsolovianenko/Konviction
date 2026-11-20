@@ -2,7 +2,7 @@
 const {
   ELEVENLABS_API_KEY,
   ELEVENLABS_AGENT_ID,
-  ELEVENLABS_BRANCH_ID,
+  ELEVENLABS_PHONE_BRANCH_ID,
   TWILIO_PHONE_NUMBER,
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -11,7 +11,7 @@ if (
   ![
     ELEVENLABS_API_KEY,
     ELEVENLABS_AGENT_ID,
-    ELEVENLABS_BRANCH_ID,
+    ELEVENLABS_PHONE_BRANCH_ID,
     TWILIO_ACCOUNT_SID,
     TWILIO_AUTH_TOKEN,
   ].every(Boolean) ||
@@ -51,7 +51,7 @@ const owned = (await response.json()).incoming_phone_numbers?.find(
   (n) => n.phone_number === TWILIO_PHONE_NUMBER && n.capabilities?.voice,
 );
 if (!owned) throw Error("No matching voice-capable number in this Twilio account.");
-await api("agents/" + ELEVENLABS_AGENT_ID + "/branches/" + ELEVENLABS_BRANCH_ID);
+await api("agents/" + ELEVENLABS_AGENT_ID + "/branches/" + ELEVENLABS_PHONE_BRANCH_ID);
 let number = (await api("phone-numbers")).find((n) => n.phone_number === TWILIO_PHONE_NUMBER);
 if (number?.assigned_agent && number.assigned_agent.agent_id !== ELEVENLABS_AGENT_ID)
   throw Error("The number belongs to a different ElevenLabs agent.");
@@ -67,12 +67,12 @@ if (!number)
   });
 if (!number.phone_number_id) throw Error("Import did not return a phone number ID.");
 const path = "phone-numbers/" + encodeURIComponent(number.phone_number_id);
-if (number.assigned_agent?.branch_id !== ELEVENLABS_BRANCH_ID)
-  await api(path, "PATCH", { agent_id: ELEVENLABS_AGENT_ID, branch_id: ELEVENLABS_BRANCH_ID });
+if (number.assigned_agent?.branch_id !== ELEVENLABS_PHONE_BRANCH_ID)
+  await api(path, "PATCH", { agent_id: ELEVENLABS_AGENT_ID, branch_id: ELEVENLABS_PHONE_BRANCH_ID });
 const result = await api(path);
 if (
   result.assigned_agent?.agent_id !== ELEVENLABS_AGENT_ID ||
-  result.assigned_agent?.branch_id !== ELEVENLABS_BRANCH_ID
+  result.assigned_agent?.branch_id !== ELEVENLABS_PHONE_BRANCH_ID
 )
   throw Error("Could not verify the agent and branch assignment.");
 console.log(

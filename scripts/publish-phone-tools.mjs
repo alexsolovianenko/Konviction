@@ -18,25 +18,10 @@ async function api(path, method = "GET", body) {
 const path = "agents/" + agent + "?branch_id=" + branch;
 const live = await api(path),
   prior = live.conversation_config.agent.prompt;
-// Give the agent the actual transport before any browser-specific tool instructions.
-const channelRule = "The provider reports channel {{system__channel}}. When it is twilio, follow Native telephone calls below for all market and account actions. Use phone_search_markets even for the first market lookup. Browser client tools require a connected browser and cannot run on a telephone call.";
-const section = readFileSync("agent/phone-instructions.md", "utf8").trim();
-function routedPrompt(current) {
-  if (current.includes("Native telephone calls\n") && !current.includes(section))
-    throw Error("Existing phone instructions changed. Reconcile before publishing.");
-  const browser = current.replace(channelRule, "").replace(section, "").trim();
-  return [channelRule, section, browser].join("\n\n");
-}
-if (process.argv.includes("--prompt-only")) {
-  const prompt = routedPrompt(prior.prompt);
-  if (prompt !== prior.prompt)
-    await api(path, "PATCH", { conversation_config: { agent: { prompt: { prompt } } } });
-  const after = (await api(path)).conversation_config.agent.prompt;
-  if (after.prompt !== prompt || JSON.stringify(after.tool_ids) !== JSON.stringify(prior.tool_ids))
-    throw Error("Phone routing publication mismatch");
-  console.log("Verified phone routing on the configured agent branch.");
-  process.exit(0);
-}
+const phoneBranch = process.env.ELEVENLABS_PHONE_BRANCH_ID;
+if (!phoneBranch || phoneBranch === branch) throw Error("Set a separate ELEVENLABS_PHONE_BRANCH_ID.");
+const phonePath = "agents/" + agent + "?branch_id=" + encodeURIComponent(phoneBranch);
+await api(phonePath);
 const named = (await api("tools")).tools;
 const confirm = named.find(
   (t) => prior.tool_ids.includes(t.id) && t.tool_config.name === "confirm_hosted_sandbox_buy",
@@ -109,6 +94,21 @@ const forms = [
     ["proposal_id", "history"],
   ],
 ];
+const quoteId = { type: "string", description: "Exact quote_id returned by the telephone research quote." };
+const symbol = { type: "string", description: "Exact contract symbol returned by market search." };
+const ticker = { type: "string", description: "Exact event ticker returned by market search." };
+forms.push(
+  ["request_research_quote", "research-quote", "Get an unpaid research quote for the selected market. Speak say exactly.",
+    { event_ticker: ticker, contract_symbol: symbol, timeframe: { type: "string", enum: ["5m", "15m", "1h", "24h"], description: "Optional requested research window." } }, ["event_ticker", "contract_symbol"]],
+  ["confirm_research", "research-confirm", "Purchase the quoted research only after authentication, exact readback, and clear approval.",
+    { quote_id: quoteId, history: sys.history }, ["quote_id", "history"]],
+  ["get_research_result", "research-result", "Read the current research result without starting another payment.", { quote_id: quoteId }, ["quote_id"]],
+  ["order_result", "order-result", "Read the recorded result for this call's proposal.", { proposal_id: sys.proposal_id }, ["proposal_id"]],
+  ["build_combo", "combo", "Build a combo from the caller's selected prediction legs.", {
+    legs: { type: "array", description: "Two to six selected contracts.", items: { type: "object", description: "One selected leg.",
+      properties: { event_ticker: ticker, contract_symbol: symbol, outcome: { type: "string", description: "Caller’s chosen outcome.", enum: ["yes", "no"] } },
+      required: ["event_ticker", "contract_symbol", "outcome"] } } }, ["legs"]]
+);
 for (const [name, route, description, props, required] of forms) {
   definitions.push({
     name: "phone_" + name,
@@ -137,31 +137,30 @@ for (const definition of definitions) {
   const tool_config = {
     type: "webhook",
     pre_tool_speech: "off",
-    response_timeout_secs: 30,
+    response_timeout_secs: definition.name === "phone_confirm_research" ? 60 : 30,
     follow_redirects: false,
     ...definition,
   };
   const existing = matches[0];
-  const result = await api(
-    existing ? "tools/" + existing.id : "tools",
-    existing ? "PATCH" : "POST",
-    { tool_config },
-  );
+  if (existing && prior.tool_ids.includes(existing.id)) {
+    if (existing.tool_config.type !== "webhook" || existing.tool_config.api_schema.url !== definition.api_schema.url)
+      throw Error("Unexpected existing telephone tool " + definition.name);
+    ids.push(existing.id);
+    continue;
+  }
+  const result = await api(existing ? "tools/" + existing.id : "tools", existing ? "PATCH" : "POST", { tool_config });
   ids.push(existing?.id ?? result.id);
 }
-const current = (await api(path)).conversation_config.agent.prompt;
-const prompt = routedPrompt(current.prompt);
-const tool_ids = [...new Set([...current.tool_ids, ...ids])];
-await api(path, "PATCH", {
-  conversation_config: { agent: { prompt: { prompt, tool_ids } } },
-  platform_settings: {
-    overrides: { conversation_config_override: { agent: { first_message: true } } },
-  },
-});
-const after = await api(path);
-if (
-  after.conversation_config.agent.prompt.prompt !== prompt ||
-  !tool_ids.every((id) => after.conversation_config.agent.prompt.tool_ids.includes(id))
-)
-  throw Error("Publication mismatch");
-console.log("Verified phone tools and existing agent branch", after.version_id);
+const prompt = readFileSync("agent/912-phone.md", "utf8").trim();
+const { voice_id, speed } = live.conversation_config.tts;
+const first_message = live.conversation_config.agent.first_message;
+await api(phonePath, "PATCH", { conversation_config: {
+  tts: { voice_id, speed, supported_voices: [] },
+  agent: { first_message, prompt: { prompt, tool_ids: ids } }
+} });
+const after = (await api(phonePath)).conversation_config;
+if (after.agent.prompt.prompt !== prompt || after.tts.voice_id !== voice_id ||
+    after.agent.first_message !== first_message || after.agent.prompt.tool_ids.length !== ids.length ||
+    !ids.every(id => after.agent.prompt.tool_ids.includes(id)))
+  throw Error("Telephone publication mismatch.");
+console.log("Verified dedicated branch, regular voice, greeting and", ids.length, "telephone webhooks.");

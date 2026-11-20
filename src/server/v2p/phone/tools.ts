@@ -19,8 +19,30 @@ export async function phoneTool(req: Request, action: string) {
     const { conversation_id: cid, history, is_text_only, code, ...terms } = b;
     if (typeof cid !== "string" || is_text_only !== false) return denied();
     const call = await nativeCall(cid);
-    const owner = call && accounts().find((a) => a.phone === call.phone);
-    if (!call || !owner) return denied();
+    if (!call) return denied();
+    // Public research quotes need no private Gemini account. Bind them to this verified call.
+    async function research(route: "quote" | "status" | "call-confirm") {
+      const { handleQuicknodeResearch } = await import("../quicknode-research/handler");
+      const hex = digest("phone-research:" + cid).slice(0, 32);
+      const sid = [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+      const now = Date.now();
+      const token = await mintSessionToken({ v: 1, sid, cid, iat: now, exp: now + SESSION_TTL_MS });
+      const confirming = route === "call-confirm";
+      const headers = new Headers({ "content-type": "application/json" });
+      if (confirming) {
+        headers.set("x-call-secret", secret);
+        headers.set("x-trade-session-token", token);
+      } else headers.set("authorization", "Bearer " + token);
+      const request = new Request(req.url, { method: "POST", headers,
+        body: JSON.stringify(confirming ? { ...terms, conversation_id: cid, is_text_only, history } : terms) });
+      const response = await handleQuicknodeResearch(request, route);
+      const result = await response.json();
+      return reply(200, { ok: result.ok, quote_id: result.quote_id ?? terms.quote_id,
+        status: result.status, say: result.say ?? result.message, error: result.error });
+    }
+    if (action === "research-quote" && call.direction === "inbound") return await research("quote");
+    const owner = accounts().find((a) => a.phone === call.phone);
+    if (!owner) return reply(200, {ok:false, say:"Private trading requires an enrolled phone account. You can still ask for market quotes."});
     return await phoneAccount.run(owner, async () => {
       const store = blobStore(),
         prefix = "accounts/" + owner.id,
@@ -56,7 +78,12 @@ export async function phoneTool(req: Request, action: string) {
         return reply(200, { ok: true, authenticated: true, settlement: notice });
       }
       if (call.direction !== "inbound" && action !== "positions") return denied();
+      if (action === "research-confirm") return research("call-confirm");
+      if (action === "research-result") return research("status");
       const token = await mintSessionToken(session);
+      if (action === "combo" || action === "order-result")
+        return reply(200, await runBrowserTrading({ action: action === "combo" ? "build-combo" : action,
+          method: "POST", token, body: terms }, store));
       if (action === "positions")
         return reply(
           200,
@@ -97,7 +124,7 @@ export async function phoneTool(req: Request, action: string) {
     if (e instanceof Error && e.message.startsWith("Invalid phone enrollment:"))
       return reply(200, {ok:false, error:"PHONE_ENROLLMENT_UNAVAILABLE", say:"Phone trading is unavailable until the account administrator finishes sandbox enrollment."});
     if (e instanceof TradeError)
-      return reply(e.status, { ok: false, error: e.code, say: e.message });
+      return reply(200, { ok: false, error: e.code, say: e.message });
     return reply(503, { ok: false, say: "The phone account service is unavailable." });
   }
 }

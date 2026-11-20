@@ -19,7 +19,7 @@ export async function nativeCall(cid: string) {
   if (
     c.conversation_id !== cid ||
     c.agent_id !== process.env["ELEVENLABS_AGENT_ID"] ||
-    c.branch_id !== process.env["ELEVENLABS_BRANCH_ID"] ||
+    c.branch_id !== (process.env["ELEVENLABS_PHONE_BRANCH_ID"] || process.env["ELEVENLABS_BRANCH_ID"]) ||
     c.status !== "in-progress" ||
     !p ||
     p.type !== "twilio" ||

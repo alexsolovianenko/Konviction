@@ -5,6 +5,10 @@ import { nativeCall } from "./provider";
 import { runBrowserTrading } from "../browser-trading";
 import { phoneAccount } from "./accounts";
 
+vi.mock("../quicknode-research/handler", () => ({ handleQuicknodeResearch: vi.fn() }));
+import { handleQuicknodeResearch } from "../quicknode-research/handler";
+import { verifySessionToken } from "../browser-session";
+
 const state = vi.hoisted(() => new Map<string, unknown>());
 vi.mock("./store", () => ({
   read: async (k: string) => state.get(k) ?? null,
@@ -63,7 +67,7 @@ it("rejects anonymous, web, text-only and unregistered calls before private tool
     direction: "inbound",
     notice: null,
   });
-  expect((await invoke("authenticate", { code, phone: number })).status).toBe(403);
+  expect(await (await invoke("authenticate", { code, phone: number })).json()).toMatchObject({ok:false});
   expect(runBrowserTrading).not.toHaveBeenCalled();
 });
 it("binds positions and preparation to an authenticated caller and conversation, and refuses OTP reuse", async () => {
@@ -91,4 +95,23 @@ it("reveals the reserved settlement only after outbound authentication and refus
     settlement: { result: "win", realized_pnl_usd: "2.30" },
   });
   expect((await invoke("confirm")).status).toBe(403);
+});
+
+it("binds free quotes and approved research to the same verified inbound call", async () => {
+  const calls: { route: string; sid: string | undefined; owner: string | undefined }[] = [];
+  vi.mocked(handleQuicknodeResearch).mockImplementation(async (req, route) => {
+    const token = req.headers.get("x-trade-session-token") ?? req.headers.get("authorization")?.slice(7);
+    const session = await verifySessionToken(token);
+    expect(session?.cid).toBe(cid);
+    calls.push({ route, sid: session?.sid, owner: phoneAccount.getStore()?.id });
+    return Response.json({ ok: true, quote_id: "q", say: "Research result" });
+  });
+  expect((await (await invoke("research-quote")).json()).quote_id).toBe("q");
+  expect((await (await invoke("research-confirm")).json()).next_action).toBe("phone_authenticate");
+  await invoke("authenticate", { code });
+  await invoke("research-confirm", { quote_id: "q" });
+  expect(calls).toEqual([
+    { route: "quote", sid: expect.any(String), owner: undefined },
+    { route: "call-confirm", sid: calls[0]!.sid, owner: owner.id },
+  ]);
 });

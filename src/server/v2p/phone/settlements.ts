@@ -52,7 +52,7 @@ export async function notify(account: PhoneAccount, row: Row, reserve = claim, d
     agent_phone_number_id: process.env["ELEVENLABS_PHONE_NUMBER_ID"],
     to_number: account.phone,
     conversation_initiation_client_data: {
-      branch_id: process.env["ELEVENLABS_BRANCH_ID"],
+      branch_id: (process.env["ELEVENLABS_PHONE_BRANCH_ID"] || process.env["ELEVENLABS_BRANCH_ID"]),
       dynamic_variables: { settlement_ref: entry.id },
       conversation_config_override: {
         agent: {
