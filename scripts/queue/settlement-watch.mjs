@@ -1,19 +1,8 @@
 import { QueueClient } from "@vercel/queue";
 
-const queue = new QueueClient({ region: "iad1", deploymentId: null });
+const queue = new QueueClient({ region: "iad1" });
 const consume = queue.handleCallback(
   async () => {
-    // Unpinned messages follow the production alias on subsequent deployments.
-    const now = Date.now();
-    const next = Math.floor(now / 60000) + 1;
-    await queue.send(
-      "konviction-settlements",
-      {},
-      {
-        idempotencyKey: "minute-" + next,
-        delaySeconds: Math.ceil((next * 60000 - now) / 1000),
-      },
-    );
     const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
     const secret = process.env.CRON_SECRET;
     if (!host || !secret) throw Error("Settlement watcher configuration missing");
@@ -34,10 +23,13 @@ const consume = queue.handleCallback(
 export default async function handler(req, res) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  const response = await consume(new Request("https://queue.internal/settlement-watch", {
-    method: req.method, headers: req.headers,
-    ...(req.method === "POST" && { body: Buffer.concat(chunks) }),
-  }));
+  const response = await consume(
+    new Request("https://queue.internal/settlement-watch", {
+      method: req.method,
+      headers: req.headers,
+      ...(req.method === "POST" && { body: Buffer.concat(chunks) }),
+    }),
+  );
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
 }

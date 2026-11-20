@@ -30,8 +30,11 @@ export function settlement(row: Row, since: number) {
       outcome: held,
       resolution: winner,
       result: held === winner ? "win" : "loss",
-      realized_pnl_usd: /^-?\d+(\.\d+)?$/.test(String(pnl)) && Number.isFinite(Number(pnl)) ? String(pnl) : null,
-      ...(pnl == null && {pnl_note: "Gemini has confirmed the outcome. Realized P&L is unavailable."}),
+      realized_pnl_usd:
+        /^-?\d+(\.\d+)?$/.test(String(pnl)) && Number.isFinite(Number(pnl)) ? String(pnl) : null,
+      ...(pnl == null && {
+        pnl_note: "Gemini has confirmed the outcome. Realized P&L is unavailable.",
+      }),
       settled_at: new Date(at).toISOString(),
     },
   };
@@ -107,10 +110,14 @@ export async function checkSettlements(req: Request) {
   // Repair the worker chain after a prolonged queue outage or a fresh deployment.
   if (process.env["VERCEL_ENV"] === "production") {
     const { QueueClient } = await import("@vercel/queue");
-    const queue = new QueueClient({ region: "iad1", deploymentId: null });
-    await queue.send("konviction-settlements", {}, {
-      idempotencyKey: "minute-" + Math.floor(Date.now() / 60000),
-    });
+    const queue = new QueueClient({ region: "iad1" });
+    await queue.send(
+      "konviction-settlements",
+      {},
+      {
+        idempotencyKey: "minute-" + Math.floor(Date.now() / 60000),
+      },
+    );
   }
   let failures = 0;
   for (const owner of accounts().filter((a) => a.notifySince)) {

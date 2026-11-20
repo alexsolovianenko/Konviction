@@ -91,6 +91,20 @@ export async function watchRequest(req: Request) {
   const secret = process.env["CRON_SECRET"];
   if (!secret || !(await secretEqual(req.headers.get("authorization") ?? "", "Bearer " + secret)))
     return new Response(null, { status: 401 });
+  // Enqueue from the active production deployment so Vercel pushes the message
+  // to its registered consumer. Old workers hand off through the stable alias.
+  const { QueueClient } = await import("@vercel/queue");
+  const queue = new QueueClient({ region: "iad1" });
+  const now = Date.now();
+  const nextMinute = Math.floor(now / 60000) + 1;
+  await queue.send(
+    "konviction-settlements",
+    {},
+    {
+      idempotencyKey: "minute-" + nextMinute,
+      delaySeconds: Math.ceil((nextMinute * 60000 - now) / 1000),
+    },
+  );
   const owners = accounts().filter((owner) => owner.notifySince);
   const result = await Promise.allSettled(
     owners.map((owner) =>
