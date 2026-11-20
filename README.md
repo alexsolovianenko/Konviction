@@ -1,6 +1,16 @@
 # Voice-to-Predict
 
-The home page combines the TanStack console, Gemini Sandbox event search and contract quotes, and ElevenLabs browser voice with a live transcript and session-scoped captured intents.
+Voice-to-Predict lets you explore Gemini Sandbox prediction markets by talking to an ElevenLabs agent. Start a conversation, ask about a contract, and review the quote before confirming a sandbox order.
+
+[Open the live app](https://voice-to-predict-ebon.vercel.app/)
+
+![Home screen with the Start voice orb and navigation to Markets and Account](docs/images/voice-home.png)
+
+## Explore a market
+
+Open **Markets** or ask the agent to find a prediction. Select a contract to inspect its order book. For supported cryptocurrency markets, you can ask for QuickNode research before deciding whether to trade.
+
+![Markets screen showing a selected Bitcoin prediction contract](docs/images/prediction-market.png)
 
 ## Local setup
 
