@@ -8,7 +8,7 @@ await mkdir(dir,{recursive:true});
 await build({entryPoints:["scripts/queue/settlement-watch.mjs"],outfile:dir+"/index.cjs",bundle:true,platform:"node",format:"cjs",target:"node24",footer:{js:"module.exports = module.exports.default;"}});
 await writeFile(dir+"/.vc-config.json",JSON.stringify({
   runtime:"nodejs24.x",handler:"index.cjs",launcherType:"Nodejs",shouldAddHelpers:false,maxDuration:120,
-  experimentalTriggers:[{type:"queue/v2beta",topic:"konviction-settlements",retryAfterSeconds:3}],
+  experimentalTriggers:[{type:"queue/v2beta",topic:"konviction-settlements",consumer:"settlement-watch",retryAfterSeconds:3}],
 }));
 if(process.env.VERCEL_ENV==="production" && process.env.VERCEL_OIDC_TOKEN){
   const q=new QueueClient({region:"iad1",deploymentId:null});
