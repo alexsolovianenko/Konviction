@@ -60,29 +60,18 @@ for (const n of ["search_markets", "get_orderbook"]) {
   });
 }
 const forms = [
-  [
-    "authenticate",
-    "authenticate",
-    "Verify the caller using their current authenticator code. Speak any returned settlement only after success.",
-    {
-      code: {
-        type: "string",
-        description: "Six digits spoken by the caller, including leading zeros.",
-      },
-    },
-    ["code"],
-  ],
+  ["get_settlement", "settlement", "Read only the settlement attached to this outbound callback after the recipient asks to hear it.", {}, []],
   [
     "get_positions",
     "positions",
-    "Read the verified caller’s live Gemini Sandbox holdings.",
+    "Read the public sandbox demo holdings.",
     {},
     [],
   ],
   [
-    "prepare_trade",
+    "prepare_demo_trade",
     "prepare",
-    "Requires a successful phone_authenticate result in this call. If authentication has not succeeded, ask for the current six-digit Konviction authenticator code and call phone_authenticate first. Prepare the order once, speak say verbatim and wait for explicit confirmation. If the service fails, stop retrying.",
+    "Prepare the order once, speak say verbatim and wait for explicit confirmation. If the service fails, stop retrying.",
     client("prepare_sandbox_buy").properties,
     client("prepare_sandbox_buy").required,
   ],
@@ -100,7 +89,7 @@ const ticker = { type: "string", description: "Exact event ticker returned by ma
 forms.push(
   ["request_research_quote", "research-quote", "Get an unpaid research quote for the selected market. Speak say exactly.",
     { event_ticker: ticker, contract_symbol: symbol, timeframe: { type: "string", enum: ["5m", "15m", "1h", "24h"], description: "Optional requested research window." } }, ["event_ticker", "contract_symbol"]],
-  ["confirm_research", "research-confirm", "Purchase the quoted research only after authentication, exact readback, and clear approval.",
+  ["confirm_research", "research-confirm", "Purchase the quoted research only after exact readback and clear approval.",
     { quote_id: quoteId, history: sys.history }, ["quote_id", "history"]],
   ["get_research_result", "research-result", "Read the current research result without starting another payment.", { quote_id: quoteId }, ["quote_id"]],
   ["order_result", "order-result", "Read the recorded result for this call's proposal.", { proposal_id: sys.proposal_id }, ["proposal_id"]],

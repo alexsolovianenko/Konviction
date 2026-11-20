@@ -25,14 +25,12 @@ vi.mock("../browser-trading", () => ({
   runBrowserTrading: vi.fn(),
 }));
 const number = "+14165550123",
-  cid = "conv_test",
-  code = "287082";
+  cid = "conv_test";
 const owner = {
   id: "a",
   phone: number,
   apiKey: "private-A",
   apiSecret: "secret-A",
-  totpSecret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
 };
 const invoke = (action: string, body: Record<string, unknown> = {}, secret = "test-hook") =>
   phoneTool(
@@ -48,6 +46,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(59000);
+  vi.stubEnv("PHONE_DEMO_GEMINI_API_KEY", "demo-test");
+  vi.stubEnv("PHONE_DEMO_GEMINI_API_SECRET", "demo-secret");
+  vi.stubEnv("PHONE_SANDBOX_ACCOUNT", "phone-demo");
   vi.stubEnv("PHONE_ACCOUNTS_JSON", JSON.stringify([owner]));
   vi.stubEnv("ELEVENLABS_CALL_CONFIRM_SECRET", "test-hook");
   vi.stubEnv("VOICE_SESSION_SECRET", "x".repeat(32));
@@ -57,44 +58,42 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
-it("rejects anonymous, web, text-only and unregistered calls before private tools", async () => {
+it("requires a trusted native voice call and rejects legacy login requests", async () => {
   expect((await invoke("positions", {}, "")).status).toBe(403);
   expect((await invoke("positions", { is_text_only: true })).status).toBe(403);
   vi.mocked(nativeCall).mockResolvedValueOnce(null);
   expect((await invoke("positions")).status).toBe(403);
-  vi.mocked(nativeCall).mockResolvedValueOnce({
-    phone: "+15145550111",
-    direction: "inbound",
-    notice: null,
-  });
-  expect(await (await invoke("authenticate", { code, phone: number })).json()).toMatchObject({ok:false});
+  expect((await invoke("authenticate")).status).toBe(404);
   expect(runBrowserTrading).not.toHaveBeenCalled();
 });
-it("binds positions and preparation to an authenticated caller and conversation, and refuses OTP reuse", async () => {
-  expect(await (await invoke("positions")).json()).toMatchObject({ok:false,next_action:"phone_authenticate"});
-  expect((await invoke("authenticate", { code })).status).toBe(200);
-  vi.mocked(runBrowserTrading).mockImplementation(async ({ action }) =>
-    action === "portfolio"
-      ? { ok: true, owner: phoneAccount.getStore()?.id }
-      : { ok: true, proposal: { proposal_id: "p", voice_readback: "Read back the order." } },
-  );
-  expect(await (await invoke("positions")).json()).toMatchObject({ owner: "a" });
-  expect(await (await invoke("prepare")).json()).toMatchObject({
-    proposal_id: "p",
-    say: "Read back the order.",
-  });
-  expect(await (await invoke("positions", { conversation_id: "conv_other" })).json()).toMatchObject({ok:false,next_action:"phone_authenticate"});
-  expect((await invoke("authenticate", { conversation_id: "conv_other", code })).status).toBe(403);
+it("immediately opens isolated demo sessions without reading personal account enrollment", async () => {
+  vi.stubEnv("PHONE_ACCOUNTS_JSON", "invalid");
+  vi.mocked(runBrowserTrading).mockImplementation(async ({token}) => ({
+    ok: true, owner: phoneAccount.getStore()?.id, sid: (await verifySessionToken(token))?.sid,
+  }));
+  const first = await (await invoke("positions")).json();
+  expect(first).toMatchObject({ok:true, owner:"_phone-demo", sid: expect.any(String)});
+  expect(await (await invoke("prepare")).json()).toMatchObject({sid:first.sid});
+  expect((await (await invoke("positions", {conversation_id:"conv_other"})).json()).sid).not.toBe(first.sid);
 });
-it("reveals the reserved settlement only after outbound authentication and refuses outbound orders", async () => {
+it("reads only a settlement reserved for this outbound call", async () => {
   const id = "a".repeat(64);
-  state.set("accounts/a/notifications/" + id, { result: "win", realized_pnl_usd: "2.30" });
-  vi.mocked(nativeCall).mockResolvedValue({ phone: number, direction: "outbound", notice: id });
-  expect((await invoke("authenticate", { code: "000000" })).status).toBe(403);
-  expect(await (await invoke("authenticate", { code })).json()).toMatchObject({
-    settlement: { result: "win", realized_pnl_usd: "2.30" },
-  });
+  const path = "accounts/a/notifications/" + id;
+  state.set(path, { result: "win" });
+  vi.mocked(nativeCall).mockResolvedValue({phone:number, direction:"outbound", notice:id});
+  expect((await invoke("settlement")).status).toBe(403);
+  state.set(path + "/accepted", {conversation_id:cid});
+  expect(await (await invoke("settlement")).json()).toMatchObject({settlement:{result:"win"}});
   expect((await invoke("confirm")).status).toBe(403);
+});
+it("uses website demo keys only when the operator selects that account", async () => {
+  vi.stubEnv("PHONE_DEMO_GEMINI_API_KEY", "");
+  vi.stubEnv("GEMINI_API_KEY", "public-sandbox-key");
+  vi.stubEnv("GEMINI_API_SECRET", "public-sandbox-secret");
+  expect(await (await invoke("prepare")).json()).toMatchObject({error:"PHONE_DEMO_UNAVAILABLE"});
+  vi.stubEnv("PHONE_SANDBOX_ACCOUNT", "website-demo");
+  vi.mocked(runBrowserTrading).mockImplementation(async () => ({ok:true,owner:phoneAccount.getStore()?.id}));
+  expect(await (await invoke("positions")).json()).toMatchObject({owner:"_website-demo"});
 });
 
 it("binds free quotes and approved research to the same verified inbound call", async () => {
@@ -107,11 +106,9 @@ it("binds free quotes and approved research to the same verified inbound call", 
     return Response.json({ ok: true, quote_id: "q", say: "Research result" });
   });
   expect((await (await invoke("research-quote")).json()).quote_id).toBe("q");
-  expect((await (await invoke("research-confirm")).json()).next_action).toBe("phone_authenticate");
-  await invoke("authenticate", { code });
   await invoke("research-confirm", { quote_id: "q" });
   expect(calls).toEqual([
     { route: "quote", sid: expect.any(String), owner: undefined },
-    { route: "call-confirm", sid: calls[0]!.sid, owner: owner.id },
+    { route: "call-confirm", sid: calls[0]!.sid, owner: undefined },
   ]);
 });

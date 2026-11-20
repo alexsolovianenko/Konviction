@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 
 // One private sandbox account per enrolled subscriber. Never mutate process.env per request.
 export interface PhoneAccount {
@@ -7,7 +7,6 @@ export interface PhoneAccount {
   phone: string;
   apiKey: string;
   apiSecret: string;
-  totpSecret: string;
   notifySince?: string;
 }
 export const phoneAccount = new AsyncLocalStorage<PhoneAccount>();
@@ -36,29 +35,20 @@ export function accounts(): PhoneAccount[] {
       throw Error("Invalid phone enrollment: shared demo API key");
     if (typeof row.apiSecret !== "string" || !row.apiSecret.trim() || row.apiSecret.startsWith("<"))
       throw Error("Invalid phone enrollment: apiSecret");
-    if (!/^[A-Z2-7]{32}$/.test(row.totpSecret)) throw Error("Invalid phone enrollment: totpSecret");
     if (row.notifySince !== undefined && !Number.isFinite(Date.parse(row.notifySince)))
       throw Error("Invalid phone enrollment: notifySince");
   }
-  for (const key of ["id", "phone", "apiKey", "totpSecret"] as const)
+  for (const key of ["id", "phone", "apiKey"] as const)
     if (new Set(rows.map((row) => row[key])).size !== rows.length)
       throw Error("Duplicate phone enrollment");
   return rows;
 }
 
-export function verifyCode(base32: string, code: unknown, now: number): number | null {
-  if (typeof code !== "string" || !/^\d{6}$/.test(code)) return null;
-  const bits = [...base32]
-    .map((c) => "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".indexOf(c).toString(2).padStart(5, "0"))
-    .join("");
-  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
-  const current = Math.floor(now / 30000);
-  for (const step of [current, current - 1]) {
-    const counter = Buffer.alloc(8);
-    counter.writeBigUInt64BE(BigInt(step));
-    const hash = createHmac("sha1", key).update(counter).digest();
-    const n = (hash.readUInt32BE(hash[19]! & 15) & 0x7fffffff) % 1000000;
-    if (timingSafeEqual(Buffer.from(String(n).padStart(6, "0")), Buffer.from(code))) return step;
-  }
-  return null;
+// Only credentials explicitly designated for the public sandbox demo may be used on inbound calls.
+export function phoneDemoAccount(): PhoneAccount | null {
+  const sharedDemo = process.env["PHONE_SANDBOX_ACCOUNT"] === "website-demo";
+  const apiKey = process.env[sharedDemo ? "GEMINI_API_KEY" : "PHONE_DEMO_GEMINI_API_KEY"];
+  const apiSecret = process.env[sharedDemo ? "GEMINI_API_SECRET" : "PHONE_DEMO_GEMINI_API_SECRET"];
+  if (!apiKey?.trim() || !apiSecret?.trim()) return null;
+  return { id: sharedDemo ? "_website-demo" : "_phone-demo", phone: "", apiKey, apiSecret };
 }

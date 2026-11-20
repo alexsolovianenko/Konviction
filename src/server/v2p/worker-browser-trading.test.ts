@@ -286,12 +286,12 @@ describe("approval: the only order-submission path", () => {
   });
 
   it("accepts the native telephone preparation only with a matching readback and submits once", async () => {
-    const owner = {id: "subscriber", phone: "+14165550123", apiKey: "fixture", apiSecret: "fixture", totpSecret: "fixture"};
+    const owner = {id: "subscriber", phone: "+14165550123", apiKey: "fixture", apiSecret: "fixture"};
     await phoneAccount.run(owner, async () => {
       const {s,id} = await proposed();
       await expect(callConfirm(id,s.session_token)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
       const historyFor = (answer:string) => JSON.stringify({entries:[
-        {role:"tool",tool_results:[{tool_name:"phone_prepare_trade",result_value:{ok:true,proposal_id:id}}]},
+        {role:"tool",tool_results:[{tool_name:"phone_prepare_demo_trade",result_value:{ok:true,proposal_id:id}}]},
         {role:"agent",message:spokenProposal(store.intents.get(id))},
         {role:"user",message:answer},
       ]});

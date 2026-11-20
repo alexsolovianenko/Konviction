@@ -76,6 +76,7 @@ export async function handleQuicknodeResearch(
   req: Request,
   action: string,
   deps: Partial<Deps> = {},
+  channel: "phone" | "browser" = "browser",
 ): Promise<Response> {
   try {
     const cfg = deps.cfg ?? researchConfig();
@@ -171,7 +172,7 @@ export async function handleQuicknodeResearch(
         const quoteId = s("quote_id");
         const q = await svc.status({sid, quoteId});
         if (q.status !== "quoted") return reply(200, {ok:true, status:q.status, say:q.say});
-        if (!approvedResearch(body["history"], quoteId, q.say))
+        if (!approvedResearch(body["history"], quoteId, q.say, channel))
           return reply(200, {ok:false, say:"I missed the confirmation. No research was purchased. Ask for a fresh offer."});
         const result = await svc.approve({sid, quoteId, maxAtomic:q.price_atomic, idempotencyKey:quoteId});
         return reply(200, {ok:true, status:result.status, say:result.status === "paid" && result.report

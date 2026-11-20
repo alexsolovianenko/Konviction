@@ -275,7 +275,7 @@ async function callConfirm(store: Store, token: string | undefined, body) {
   const row = await ownedIntent(store, body.proposal_id, s);
   if (alreadyAnsweredTurn(body.history)) return { ok: true, say: "", next_action: "wait_for_user" };
   if (row.status !== "PROPOSED") return { ...await recordedResult(store, row), replayed: true };
-  if (!confirmedInCall(body.history, { toolNames: phoneAccount.getStore() ? ["phone_prepare_trade"] : ["prepare_sandbox_buy", "prepare_sandbox_remainder"],
+  if (!confirmedInCall(body.history, { toolNames: phoneAccount.getStore() ? ["phone_prepare_trade", "phone_prepare_demo_trade"] : ["prepare_sandbox_buy", "prepare_sandbox_remainder"],
     idField: "proposal_id", id: row.id, readback: spokenProposal(row), side: row.side, orderMode: row.order_mode }))
     throw new TradeError("CONFIRMATION_REQUIRED", "Confirmation missed. Order not sent.");
   const config = await availability();

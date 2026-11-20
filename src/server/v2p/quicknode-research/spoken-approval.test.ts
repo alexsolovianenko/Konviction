@@ -37,3 +37,10 @@ it("recognizes natural replies only for this research offer, including ASR fragm
   }
   expect(approved(bound, ask, reply("Yes please"), reply("actually no"))).toBe(false);
 });
+
+it("accepts the telephone quote only on the verified phone route", () => {
+  const result = { ...bound.tool_results[0], tool_name: "phone_request_research_quote" };
+  const history = JSON.stringify({entries:[{role:"tool",tool_results:[result]},ask,yes]});
+  expect(approvedResearch(history,"q",offer,"phone")).toBe(true);
+  expect(approvedResearch(history,"q",offer)).toBe(false);
+});

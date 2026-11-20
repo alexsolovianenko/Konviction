@@ -57,7 +57,7 @@ export async function notify(account: PhoneAccount, row: Row, reserve = claim, d
       conversation_config_override: {
         agent: {
           first_message:
-            "This is Konviction with a private account update. To hear it, please give your current six-digit authenticator code.",
+            "This is Konviction with a private account update. Would you like to hear your settlement update?",
         },
       },
     },

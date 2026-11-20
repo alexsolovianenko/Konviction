@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from "vitest";
-import { accounts, verifyCode, phoneAccount, type PhoneAccount } from "./accounts";
+import { accounts, phoneAccount, type PhoneAccount } from "./accounts";
 import { notify, settlement } from "./settlements";
 import { confirmedInCall } from "../call-confirmation";
 
@@ -9,7 +9,6 @@ const user: PhoneAccount = {
   phone: "+14165550123",
   apiKey: "sandbox-test-key",
   apiSecret: "sandbox-test-secret",
-  totpSecret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
   notifySince: "2026-01-01T00:00:00Z",
 };
 const row = {
@@ -29,10 +28,6 @@ it("accepts a Canadian E.164 registration and rejects duplicate or shared creden
   vi.stubEnv("GEMINI_API_KEY", "different");
   vi.stubEnv("PHONE_ACCOUNTS_JSON", JSON.stringify([user, { ...user, id: "other" }]));
   expect(() => accounts()).toThrow();
-});
-it("validates the six-digit RFC 6238 test vector and rejects expired codes", () => {
-  expect(verifyCode(user.totpSecret, "287082", 59000)).toBe(1);
-  expect(verifyCode(user.totpSecret, "287082", 150000)).toBeNull();
 });
 it("keeps concurrent account contexts isolated", async () => {
   const get = async () => {
