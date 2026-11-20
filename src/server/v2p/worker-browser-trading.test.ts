@@ -319,7 +319,8 @@ describe("approval: the only order-submission path", () => {
     const {s,id} = await proposed();
     const turns = conversationEntries(id);
     const cases = [
-      conversationEntries(id,"yes but change the price"), turns.slice(1),
+      conversationEntries(id,"yes but change the price"), conversationEntries(id,"Sure."),
+      conversationEntries(id,"I don’t think so."), turns.slice(1),
       [conversationEntries(randomUUID())[0], ...turns.slice(1)],
       [turns[0], {role:"agent",message:"Some different order"}, ...turns.slice(2)],
       [turns[0], {...turns[1],interrupted:true}, ...turns.slice(2)],
@@ -330,7 +331,7 @@ describe("approval: the only order-submission path", () => {
     expect(await run("order-result", {proposal_id:id},s.session_token)).toMatchObject({ok:true,status:"PROPOSED"});
     expect(geminiOrderCalls()).toHaveLength(0);
     vi.stubEnv("DEMO_PIN","");
-    await callConfirm(id,s.session_token);
+    await callConfirm(id,s.session_token,{history:JSON.stringify({entries:conversationEntries(id,"Yes, please.")})});
     expect(await run("order-result", {proposal_id:id},s.session_token)).toMatchObject({outcome_summary:"FILLED"});
     expect(geminiOrderCalls()).toHaveLength(1);
   });

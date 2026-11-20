@@ -275,7 +275,7 @@ async function callConfirm(store: Store, token: string | undefined, body) {
   if (alreadyAnsweredTurn(body.history)) return { ok: true, say: "", next_action: "wait_for_user" };
   if (row.status !== "PROPOSED") return { ...await recordedResult(store, row), replayed: true };
   if (!confirmedInCall(body.history, { toolNames: ["prepare_sandbox_buy", "prepare_sandbox_remainder"],
-    idField: "proposal_id", id: row.id, readback: spokenProposal(row), immediateBuy: row.side === "buy" && row.order_mode === "market" }))
+    idField: "proposal_id", id: row.id, readback: spokenProposal(row), side: row.side, orderMode: row.order_mode }))
     throw new TradeError("CONFIRMATION_REQUIRED", "Confirmation missed. Order not sent.");
   const config = await availability();
   if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);

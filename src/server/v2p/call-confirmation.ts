@@ -1,4 +1,4 @@
-import { isSpokenConfirmation } from "../../spoken-confirmation";
+import { orderAction, spokenDecision } from "../../spoken-confirmation";
 import { normalizeReadback } from "../../../server/spoken-proposal.mjs";
 
 export function confirmedInCall(history: unknown, terms: {
@@ -6,7 +6,8 @@ export function confirmedInCall(history: unknown, terms: {
   idField: string;
   id: string;
   readback: string;
-  immediateBuy?: boolean;
+  side?: string;
+  orderMode?: string;
   research?: boolean;
 }): boolean {
   if (typeof history !== "string") return false;
@@ -18,7 +19,15 @@ export function confirmedInCall(history: unknown, terms: {
     let disclosed = false;
     let requestedPurchase = false;
     const expected = terms.readback;
-    for (const turn of entries) {
+    for (let index = 0; index < entries.length; index++) {
+      let turn = entries[index];
+      // ASR may split a single answer, including its correction, into multiple entries.
+      if (turn.role === "user" && typeof turn.message === "string") {
+        let message = turn.message;
+        while (entries[index + 1]?.role === "user" && typeof entries[index + 1].message === "string")
+          message += " " + entries[++index].message;
+        turn = { ...turn, message };
+      }
       for (const result of turn.role === "tool" || turn.role === "agent" ? turn.tool_results ?? [] : []) {
         if (!terms.toolNames.includes(result.tool_name)) {
           if (terms.research && result.tool_name !== "skip_turn") {
@@ -57,16 +66,16 @@ export function confirmedInCall(history: unknown, terms: {
           const purchase = /^(?:(?:yes|please|sure) )?(?:(?:go ahead and )?(?:buy|purchase) (?:it|the (?:research|data)))(?: please)?$/.test(words);
           const info = /^(?:that sounds interesting )?(?:tell me more(?: about it)?|what is it|what does (?:it|the research) (?:show|include)|what do i get)$/.test(words);
           const explainThenBuy = /^(?:(?:sure|please) )?(?:go ahead and )?(?:purchase|buy) the (?:data|research) and read it (?:out )?to me(?: so i can make (?:a )+decision(?: here)?)?$/.test(words);
-          if (steps === 2 && (isSpokenConfirmation(turn.message) || purchase)) steps = 3;
+          if (steps === 2 && spokenDecision(turn.message, "research") === "yes") steps = 3;
           else steps = 0;
-          requestedPurchase = disclosed && (purchase || explainThenBuy);
+          requestedPurchase = disclosed && !/[?？]/.test(turn.message) && (purchase || explainThenBuy);
           if (!steps && !requestedPurchase && !info) { disclosed = false; bound = false; }
           // "Buy it" can itself approve, or the agent can follow it with a short confirmation.
         }
         continue;
       }
       if (turn.role === "agent" && bound && !turn.interrupted && normalizeReadback(turn.message) === normalizeReadback(expected)) steps = 2;
-      else if (turn.role === "user" && steps === 2 && isSpokenConfirmation(turn.message, terms.immediateBuy)) steps = 3;
+      else if (turn.role === "user" && steps === 2 && spokenDecision(turn.message, orderAction(terms.side, terms.orderMode)) === "yes") steps = 3;
       else {
         steps = 0;
         // A status question or hesitation can be followed by a fresh, exact readback.

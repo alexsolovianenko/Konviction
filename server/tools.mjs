@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { api, requireRule, validIntent } from './contracts.mjs';
+import { spokenDecision } from '../src/spoken-confirmation.ts';
+import { requireRule, validIntent } from './contracts.mjs';
 
 const bounded = (text, max) => Array.from(text).slice(0, max).join('');
-const { yes_words, allowed_fillers } = api['x-confirmation-enforcement'].explicit_yes;
 const fold = (s) =>
   s
     .normalize('NFKC')
@@ -140,13 +140,10 @@ export function runTool(repo, name, p, session, transcript, now, market, legacyM
     const received = confirmation && repo.receivedAt(session, confirmation.seq);
     const age = received == null ? Infinity : now - received;
     const answer = run.map((entry) => entry.text).join(' ');
-    const words = plain(answer).split(' ');
     requireRule(
       age >= 0 &&
         age <= 120000 &&
-        !/[?？]/u.test(answer) &&
-        words.some((w) => yes_words.includes(w)) &&
-        words.every((w) => yes_words.includes(w) || allowed_fillers.includes(w)),
+        spokenDecision(answer) === 'yes',
       'confirmation_missing',
     );
     const readback = speech[readbackIndex];

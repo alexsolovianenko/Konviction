@@ -56,7 +56,7 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
       opts.onMessage({role:'agent',message:'Here are the Bitcoin measurements.',event_id:2});
       opts.onMessage({role:'user',message:'Place my original order.'});
     } else {
-      opts.onMessage({role:'user',message:'No thanks.'});
+      opts.onMessage({role:'user',message:'I don’t think so.'});
     }
     expect(trade.mock.calls.map(([path])=>path)).not.toContain('proposals');
     const reply = await prepare();

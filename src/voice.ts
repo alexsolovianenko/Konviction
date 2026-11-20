@@ -1,4 +1,4 @@
-import { isSpokenConfirmation } from "./spoken-confirmation";
+import { spokenDecision, orderAction } from "./spoken-confirmation";
 import { spokenFill } from './spoken-fill';
 import { ResearchClient, type ResearchView } from './quicknodeResearch';
 import { tradingRequest, type Proposal, type Availability } from './browserTrading';
@@ -360,7 +360,7 @@ export class Voice {
           if (role === 'user' && decision === 'reported' && /[a-z0-9]/i.test(message))
             this.researchDecisions.set(selected, 'done');
           if (role === 'user' && decision === 'offered' &&
-              /^(?:(?:uh|um|okay)[, ]+)*(?:no(?:pe)?\b|nah\b|skip\b|pass\b|no research\b|just (?:buy|trade)\b|(?:i(?:'ll| will) )?decline\b)/i.test(message.trim()))
+              spokenDecision(message, 'research') === 'no')
             this.researchDecisions.set(selected, 'done');
           if (role === 'agent') {
             if (pendingUser || (draftEvent !== undefined && draftEvent !== event_id)) finishTurn();
@@ -372,7 +372,7 @@ export class Voice {
               this.orderReported = false;
               this.postOrderIdle();
               confirmedThisTurn = false;
-              preparedThisTurn = isSpokenConfirmation(message, this.currentProposal?.side === "buy" && this.currentProposal.order_mode === "market");
+              preparedThisTurn = spokenDecision(message, orderAction(this.currentProposal?.side, this.currentProposal?.order_mode)) === "yes";
             }
             if (endsConversation(message)) {
               finishTurn();

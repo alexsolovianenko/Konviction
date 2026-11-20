@@ -1,5 +1,5 @@
 import { normalizeReadback, spokenProposal } from "./spoken-proposal.mjs";
-import { isSpokenConfirmation } from "../src/spoken-confirmation.ts";
+import { spokenDecision, orderAction } from "../src/spoken-confirmation.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { TradeError } from "./trading-repository.mjs";
 
@@ -60,14 +60,16 @@ export class TrustedDevices {
     if (row.confirmation_seq === seq) return;
     const entries = this.repo.transcript(owner).filter(entry => entry.role !== "tool");
     const answer = entries.at(-1);
-    const readback = entries.at(-2);
+    const readbackIndex = entries.findLastIndex(entry => entry.role === "agent");
+    const readback = entries[readbackIndex];
+    const reply = entries.slice(readbackIndex + 1).map(entry => entry.text).join(" ");
     const terms = JSON.parse(row.terms);
     const received = this.repo.receivedAt(owner, seq);
     if (row.confirmation_seq !== null || !received || Date.now() - received > 30000 || received > Date.now() ||
-        answer?.role !== "user" || answer.seq !== seq || !isSpokenConfirmation(answer.text, terms.side === "buy" && terms.order_mode === "market" && terms.voice_readback === spokenProposal(terms)) ||
+        answer?.role !== "user" || answer.seq !== seq || spokenDecision(reply, orderAction(terms.side, terms.voice_readback === spokenProposal(terms) ? terms.order_mode : undefined)) !== "yes" ||
         readback?.role !== "agent" || readback.seq <= row.min_seq || readback.interrupted ||
         normalizeReadback(readback.text) !== normalizeReadback(terms.voice_readback))
-      throw new TradeError("CONFIRMATION_REQUIRED", "Listen to the complete order and say confirm.", 409);
+      throw new TradeError("CONFIRMATION_REQUIRED", "Listen to the complete order and approve it in your own words.", 409);
     const updated = this.db.prepare("UPDATE OR IGNORE browser_voice_approvals SET confirmation_seq=? WHERE proposal=? AND confirmation_seq IS NULL").run(seq, id);
     if (updated.changes !== 1) throw new TradeError("CONFIRMATION_USED", "That confirmation has already been used.");
   }

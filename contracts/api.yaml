@@ -876,18 +876,13 @@ x-confirmation-enforcement:
     - code: confirmation_already_used
       rule: "C has not already confirmed a different intent (see x-idempotency)."
   explicit_yes:
-    normalization: "Quote folding (x-normalization quote_characters), lower case, strip punctuation, collapse whitespace. The question check below runs before punctuation is stripped."
+    normalization: "Normalize Unicode and apostrophes, lower case, collapse whitespace and ignore declarative punctuation. Preserve question marks and amounts."
     rule: >
-      All three must hold for the text of C. (1) No entry of C contains a question mark (U+003F
-      or U+FF1F): a question is not a confirmation, even 'yes?'. (2) At least one word is a yes
-      word. (3) Every other word is an allowed filler. Anything else is not a confirmation,
-      including a yes combined with a change ('yes but make it ten'), a negation in any position
-      ('no yes', 'yes no wait'), a number, or a vague assent on its own ('okay', 'sure',
-      'sounds good'). The lists are closed: a word that is on neither list fails the check.
-    yes_words: ["yes", "yeah", "yep", "yup"]
-    allowed_fillers: ["please", "confirm", "confirmed", "i", "correct", "thats", "that", "is", "right", "go", "ahead", "and", "do", "it", "thanks", "thank", "you", "sure", "absolutely", "definitely", "ok", "okay", "uh", "um", "er", "ah"]
-    examples_accept: ["Yes.", "yes please", "Yeah, that's right.", "Yes, confirm.", "yep go ahead", "um, yes", "Yes, go ahead and do it.", "entries ['um', 'yes']", "entries ['yes', 'yes please']"]
-    examples_reject: ["okay", "sure", "sounds good", "yes but make it ten", "yes, no wait", "I guess", "do it", "confirm", "Yes?", "yes, right?", "no yes", "entries ['yes', 'but make it two']", "entries ['no', 'yes']", "entries ['yes', 'actually no']", "entries ['yes', 'wait what was the price?']"]
+      Interpret the complete reply to the current readback, joining consecutive user fragments.
+      Clear affirmative phrases may authorize the disclosed action. Bare "sure" is a decline.
+      A question, condition, changed terms, mixed answer or silence cannot authorize an action.
+    examples_accept: ["Yes, please", "Yeah, that's right", "Go ahead and do it", "That sounds good to me", "I confirm", "entries ['um', 'yes']"]
+    examples_reject: ["sure", "I don't think so", "yes but make it ten", "yes contracts", "Yes?", "entries ['yes', 'actually no']"]
   readback_templates:
     note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence. Orders are prediction contracts only, so there is no spot template."
     prediction_order: "Confirming: buy {quantity} {side} contracts of {event_title}, {contract_label} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
