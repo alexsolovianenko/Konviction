@@ -7,6 +7,7 @@
 // There is deliberately NO execute tool: the language model can never submit an order.
 // Hosted orders use a verified voice session and a single-use spoken confirmation.
 
+import { marketTitle } from "./market-title";
 import {
   contractTradable, getUsdAvailable, gPrivate, listActiveEvents, quoteFor,
   type Contract, type GEvent,
@@ -150,8 +151,8 @@ async function findMarket(b: Body) {
     const minutes = Math.round((expiryMs - now) / 60000);
     return {
       event_ticker: ev.ticker,
-      event_title: ev.title,
-      contract_label: c.label ?? c.abbreviatedName ?? null,
+      event_title: marketTitle(ev.title ?? "", c.expiryDate ?? ev.expiryDate),
+      contract_label: marketTitle(c.label ?? c.abbreviatedName ?? "", c.expiryDate ?? ev.expiryDate) || null,
       instrument_symbol: c.instrumentSymbol,
       expires_spoken: speakTime(c.expiryDate ?? ev.expiryDate),
       minutes_to_expiry: minutes,

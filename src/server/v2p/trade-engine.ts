@@ -1,4 +1,5 @@
 // @ts-nocheck -- shared with the mechanically ported phone backend.
+import { marketTitle } from "./market-title";
 import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
 import { spokenBudgetFill, spokenFill } from "../../spoken-fill";
 import { liquiditySnapshot } from "./book-liquidity";
@@ -75,7 +76,8 @@ export async function prepareTrade(b: Body, saveProposal) {
   if (expiryIso && Date.parse(expiryIso) - Date.now() <= BUY_CUTOFF_MS)
     return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   const q = quoteFor(c, outcome as "yes" | "no");
-  const label = c.label ?? c.ticker ?? symbol;
+  const label = marketTitle(c.label ?? c.ticker ?? symbol, expiryIso);
+  const title = marketTitle(event.title ?? eventTicker, expiryIso);
   const outcomeText = outcome === "yes" ? `YES (${label})` : `NO (not ${label})`;
 
   let quantity: number, limit: number, quotePrice: number | null;
@@ -147,7 +149,7 @@ export async function prepareTrade(b: Body, saveProposal) {
   const expiresAt = new Date(Math.min(confirmationEnd, Number.isFinite(marketCutoff) ? marketCutoff : Infinity)).toISOString();
   const readback =
     side === "buy"
-      ? `Buy ${quantity} ${outcomeText} on "${event.title}" at up to ${cents(limit)}. Confirm?`
+      ? `Buy ${quantity} ${outcomeText} on "${title}" at up to ${cents(limit)}. Confirm?`
       : `Sell ${quantity} ${outcomeText} ${market ? "at market" : "at " + cents(limit) + " or more"}. Confirm?`;
 
   return saveProposal({
@@ -157,7 +159,7 @@ export async function prepareTrade(b: Body, saveProposal) {
     time_in_force: market ? "immediate-or-cancel" : "good-til-cancel",
     event_ticker: eventTicker,
     instrument_symbol: symbol,
-    title: event.title,
+    title,
     contract_label: label,
     outcome,
     quantity,

@@ -1,3 +1,4 @@
+import { marketTitle } from "./market-title";
 import type { MarketContract, MarketEvent, MarketsSnapshot } from "../../components/console/types";
 import { featuredListingPage, geminiReadError, gPublic } from "./gemini";
 
@@ -39,12 +40,12 @@ export function dashboardMarketsFrom(data: unknown): MarketEvent[] | null {
         const strikeValue = nonnegative(strike?.["value"]);
         contracts.push({
           ...(typeof strike?.["type"] === "string" && strikeValue !== null && {strike:{type:strike["type"],value:strikeValue}}),
-          symbol, label: text(c['label']), status: text(c['status']), market_state: text(c['marketState']),
+          symbol, label: typeof c['label'] === 'string' && c['label'].trim() ? marketTitle(c['label'], c['expiryDate']) : null, status: text(c['status']), market_state: text(c['marketState']),
           expiry: text(c['expiryDate']), buy: quote(prices?.['buy']), sell: quote(prices?.['sell']),
         });
       }
       const tags = [...(Array.isArray(e["tags"]) ? e["tags"] : []), ...(Array.isArray(e["eventTags"]) ? e["eventTags"].map(t => record(t)?.["name"]) : [])].filter((t): t is string => typeof t === "string");
-      events.push({ tags, series:text(e["series"]), start_time:text(e["startTime"]), ticker, title, category: text(e['category']), status: text(e['status']), volume_usd: nonnegative(e['volume']),
+      events.push({ tags, series:text(e["series"]), start_time:text(e["startTime"]), ticker, title: marketTitle(title, e["expiryDate"] ?? contracts[0]?.expiry), category: text(e['category']), status: text(e['status']), volume_usd: nonnegative(e['volume']),
         volume_24h_usd: nonnegative(e['volume24h']), created_at: text(e['createdAt']), contracts });
     }
     const children = e?.['events'];

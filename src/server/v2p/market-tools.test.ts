@@ -266,3 +266,13 @@ it('prioritizes tight two-sided markets and displayed size for a broad topic', a
   const result=await (await marketTool('search_markets',new URLSearchParams({query:'energy'}))).json();
   expect(result.events.map((e:{ticker:string})=>e.ticker)).toEqual(['DEEP','THIN','WIDE']);
 });
+
+it.each([
+  ['BTC price today at 2am EST', '2026-11-20T07:00:00Z', 'BTC price Nov 20 at 1:00 AM Central time'],
+  ['BTC price today at 12:15am EDT', '2026-07-21T04:15:00Z', 'BTC price Jul 20 at 11:15 PM Central time'],
+])('returns the Austin closing time in the spoken quote for %s', async (title, expiryDate, expected) => {
+  const event = {ticker:'BTC', title, contracts:[{instrumentSymbol:'BTC-UP', label:'Up', expiryDate}]};
+  vi.stubGlobal('fetch', async (url: URL) => Response.json(url.pathname.includes('/book/') ? {} : {data:event}));
+  const response = await marketTool('get_orderbook', new URLSearchParams({event_ticker:'BTC',contract_symbol:'BTC-UP'}));
+  expect((await response.json()).title).toBe(expected);
+});

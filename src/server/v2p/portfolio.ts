@@ -1,3 +1,4 @@
+import { marketTitle } from "./market-title";
 import { gPrivate } from "./gemini";
 
 const fields = {
@@ -18,8 +19,8 @@ async function accountSection(path: string, kind: keyof typeof fields) {
         if (typeof row?.[key] === "string" || typeof row?.[key] === "number") result[key] = row[key];
       }
       const metadata = row?.contractMetadata;
-      if (typeof metadata?.eventName === "string") result["event_title"] = metadata.eventName;
-      if (typeof metadata?.contractName === "string") result["contract_label"] = metadata.contractName;
+      if (typeof metadata?.eventName === "string") result["event_title"] = marketTitle(metadata.eventName, metadata.expiryDate);
+      if (typeof metadata?.contractName === "string") result["contract_label"] = marketTitle(metadata.contractName, metadata.expiryDate);
       if (kind === "positions" && ["yes", "no"].includes(String(row?.outcome).toLowerCase())) {
         const bid = row.prices?.sell?.[row.outcome.toLowerCase()];
         if (typeof bid === "string" || typeof bid === "number") result["current_bid"] = bid;
