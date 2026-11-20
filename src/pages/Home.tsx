@@ -5,7 +5,7 @@ import { ActivityPanel } from '../components/voice/ActivityPanel';
 import { PredictionPanel } from '../components/prediction/PredictionPanel';
 
 export function Home() {
-  const { voice, view, status, market, mommyMode, setMommyMode } = useVoice();
+  const { voice, view, status, market } = useVoice();
   const orb = useRef<HTMLSpanElement>(null);
   const turns = view.entries.filter(entry => entry.role !== 'tool');
   const caption = view.draft || turns.at(-1)?.text;
@@ -39,7 +39,7 @@ export function Home() {
           onClick={() => {
             if (idle) {
               market.reset();
-              void voice.start(mommyMode);
+              void voice.start();
             } else void voice.stop();
           }}>
           <span className="ink-orb" ref={orb} data-phase={speaking ? 'speaking' : status.phase} aria-hidden="true"><i /></span>
@@ -53,11 +53,6 @@ export function Home() {
         </div>
         {view.error && <p className="voice-state" role="alert">{view.error}</p>}
       </div>
-      <button type="button" className="mommy-mode" aria-pressed={mommyMode} disabled={!idle}
-        title={idle ? 'Ivanna · slower speech and gentle encouragement' : 'End the call to change voice mode'}
-        onClick={() => setMommyMode(!mommyMode)}>
-        <span aria-hidden="true">{mommyMode ? '♥' : '♡'}</span> Mommy mode
-      </button>
       <PredictionPanel key={market.selected?.symbol} />
       <MarketDiscoveryPanel />
       {turns.length > 0 && <details className="voice-transcript"><summary>Full transcript</summary>

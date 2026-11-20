@@ -45,7 +45,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div data-voice-home={home} className="min-h-dvh">
         <header className="workspace-bar">
           <Link to="/" className="workspace-brand">
-            <AudioLines aria-hidden="true" /> Voice-to-Predict
+            <AudioLines aria-hidden="true" /> Call Mommy
           </Link>
           <nav aria-label="Primary" className="workspace-dock">
             {nav.map(({ to, label, icon: Icon }) => (

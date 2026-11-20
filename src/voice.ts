@@ -157,7 +157,7 @@ export class Voice {
     return this.conversation?.getOutputVolume?.() ?? 0;
   }
 
-  async start(mommyMode = false) {
+  async start() {
     if (this.active) return;
     this.researchDecisions.clear();
     this.researchClient = undefined;
@@ -430,7 +430,7 @@ export class Voice {
       };
       const conversation = await Conversation.startSession({
         signedUrl: credentials.signed_url,
-        ...(mommyMode && {overrides: {tts: {voiceId: 'tQ4MEZFJOzsahSEEZtHK', speed: 0.9}}}),
+        overrides: {tts: {voiceId: 'tQ4MEZFJOzsahSEEZtHK', speed: 0.9}},
         connectionType: 'websocket',
         dynamicVariables: {secret__trade_session_token: workerTrading ? (credentials.session_token || 'quotes-only') : 'local'},
         clientTools: {
@@ -493,7 +493,7 @@ export class Voice {
         return;
       }
       this.conversation = conversation;
-      if (mommyMode) conversation.sendContextualUpdate?.(
+      conversation.sendContextualUpdate?.(
         'Mommy mode is enabled for this call. Speak warmly and patiently. When explaining a concept, ' +
         'occasionally offer brief encouragement like “Take your time” or “That’s a good question.” ' +
         'Keep exact readbacks and order results verbatim. Encourage learning, never a trade.',

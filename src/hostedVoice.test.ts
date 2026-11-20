@@ -6,7 +6,7 @@ const {start, trade} = vi.hoisted(() => ({start:vi.fn(), trade:vi.fn()}));
 vi.mock('@elevenlabs/client', () => ({Conversation:{startSession:start}}));
 vi.mock('./browserTrading', () => ({workerTrading:true, tradingRequest:trade}));
 
-it.each([false, true])('keeps voice settings and confirmations scoped to Mommy mode = %s', async (mommyMode) => {
+it.each([false, true])('uses the original Mommy voice with research purchase = %s', async (buyResearch) => {
   vi.clearAllMocks();
   vi.useFakeTimers();
   const original = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
@@ -27,10 +27,10 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
   const context = vi.fn();
   start.mockResolvedValue({endSession:vi.fn(),sendContextualUpdate:context});
   try {
-    await voice.start(mommyMode);
+    await voice.start();
     const opts = start.mock.calls[0]![0];
-    expect(opts.overrides).toEqual(mommyMode ? {tts:{voiceId:'tQ4MEZFJOzsahSEEZtHK',speed:0.9}} : undefined);
-    expect(context.mock.calls.some(([message]) => message.includes('Mommy mode is enabled'))).toBe(mommyMode);
+    expect(opts.overrides).toEqual({tts:{voiceId:'tQ4MEZFJOzsahSEEZtHK',speed:0.9}});
+    expect(context.mock.calls.some(([message]) => message.includes('Mommy mode is enabled'))).toBe(true);
     expect(opts.dynamicVariables.secret__trade_session_token).toBe(credentials.session_token);
     const order = {event_ticker:'EVENT', contract_symbol:'GEMI-C',quantity:1,limit_price:.4};
     const prepare = async () => JSON.parse(await opts.clientTools.prepare_sandbox_buy(order));
@@ -45,7 +45,7 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
     expect(await prepare()).toMatchObject({next_action:'request_research_quote'});
     await opts.clientTools.request_research_quote();
     expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
-    if (mommyMode) {
+    if (buyResearch) {
       opts.onMessage({role:'agent',message:'Would you like real DEX buy and sell volume for BTC from QuickNode?',event_id:1});
       opts.onMessage({role:'user',message:'Buy the research.'});
       expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});

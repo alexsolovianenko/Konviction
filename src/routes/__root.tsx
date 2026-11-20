@@ -78,7 +78,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Voice-to-Predict" },
+      { title: "Call Mommy" },
       { name: "description", content: "Live console for voice-driven prediction market trades." },
       { name: "theme-color", content: "#252525" },
       { property: "og:type", content: "website" },
