@@ -14,20 +14,31 @@ export const phoneAccount = new AsyncLocalStorage<PhoneAccount>();
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export function accounts(): PhoneAccount[] {
-  const rows: PhoneAccount[] = JSON.parse(process.env["PHONE_ACCOUNTS_JSON"] || "[]");
+  let rows: PhoneAccount[];
+  try {
+    rows = JSON.parse(process.env["PHONE_ACCOUNTS_JSON"] || "[]");
+  } catch {
+    throw Error("Invalid phone enrollment: malformed JSON");
+  }
   if (!Array.isArray(rows)) throw Error("Invalid phone account configuration");
   for (const row of rows) {
-    if (
-      !row ||
-      !/^[a-z0-9-]{1,64}$/.test(row.id) ||
-      !/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(row.phone) ||
-      !row.apiKey ||
-      row.apiKey === process.env["GEMINI_API_KEY"] ||
-      !row.apiSecret ||
-      !/^[A-Z2-7]{32}$/.test(row.totpSecret) ||
-      (row.notifySince !== undefined && !Number.isFinite(Date.parse(row.notifySince)))
-    )
-      throw Error("Invalid phone account configuration");
+    // Diagnostic messages contain field names only. Never log enrollment values.
+    if (!row || !/^[a-z0-9-]{1,64}$/.test(row.id)) throw Error("Invalid phone enrollment: id");
+    if (typeof row.phone === "string") {
+      const digits = row.phone.replace(/[ ()-]/g, "");
+      if (/^(?:\+?1)?[2-9]\d{2}[2-9]\d{6}$/.test(digits)) row.phone = "+1" + digits.slice(-10);
+    }
+    if (!/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(row.phone))
+      throw Error("Invalid phone enrollment: phone");
+    if (typeof row.apiKey !== "string" || !row.apiKey.trim() || row.apiKey.startsWith("<"))
+      throw Error("Invalid phone enrollment: apiKey");
+    if (row.apiKey === process.env["GEMINI_API_KEY"])
+      throw Error("Invalid phone enrollment: shared demo API key");
+    if (typeof row.apiSecret !== "string" || !row.apiSecret.trim() || row.apiSecret.startsWith("<"))
+      throw Error("Invalid phone enrollment: apiSecret");
+    if (!/^[A-Z2-7]{32}$/.test(row.totpSecret)) throw Error("Invalid phone enrollment: totpSecret");
+    if (row.notifySince !== undefined && !Number.isFinite(Date.parse(row.notifySince)))
+      throw Error("Invalid phone enrollment: notifySince");
   }
   for (const key of ["id", "phone", "apiKey", "totpSecret"] as const)
     if (new Set(rows.map((row) => row[key])).size !== rows.length)

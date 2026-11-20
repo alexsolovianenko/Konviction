@@ -78,7 +78,7 @@ const forms = [
   [
     "prepare_trade",
     "prepare",
-    "Prepare the caller’s requested order. Speak say verbatim and wait for explicit confirmation.",
+    "Requires a successful phone_authenticate result in this call. If authentication has not succeeded, ask for the current six-digit Konviction authenticator code and call phone_authenticate first. Prepare the order once, speak say verbatim and wait for explicit confirmation. If the service fails, stop retrying.",
     client("prepare_sandbox_buy").properties,
     client("prepare_sandbox_buy").required,
   ],
