@@ -2,7 +2,7 @@
 //
 //   npx tsx scripts/arc-research-smoke.ts                     # free: unpaid 402 probe + Gemini market + wallet balance
 //   npx tsx scripts/arc-research-smoke.ts --new-wallet        # writes a fresh key to .arc-research-key (gitignored), prints address only
-//   ARC_RESEARCH_PAYMENTS=true ARC_CONFIRM_SPEND=YES \
+//   ARC_RESEARCH_PAYMENTS=true ARC_CONFIRM_SPEND=YES BLOB_READ_WRITE_TOKEN=... \
 //     npx tsx scripts/arc-research-smoke.ts --pay [EVENT_TICKER]   # ONE real $0.0085 payment on Arc mainnet
 //
 // The key is read from ARC_RESEARCH_PRIVATE_KEY or .arc-research-key. It is never printed.
@@ -37,7 +37,7 @@ const { researchConfig, formatUsdcAtomic, ARC_USDC } =
 const { parsePaymentRequired, selectRequirement } =
   await import("../src/server/v2p/arc-research/x402");
 const { researchService } = await import("../src/server/v2p/arc-research/service");
-const { memoryIO, researchStore } = await import("../src/server/v2p/arc-research/store");
+const { blobIO, researchStore } = await import("../src/server/v2p/arc-research/store");
 const { researchAccount } = await import("../src/server/v2p/arc-research/wallet");
 const { listActiveEvents } = await import("../src/server/v2p/gemini");
 
@@ -99,8 +99,13 @@ if (process.env["ARC_CONFIRM_SPEND"] !== "YES" || !cfg.paymentsEnabled || !acct)
   );
   process.exit(1);
 }
+// Real payments use the same durable store as the server, never per-process memory.
+if (!process.env["BLOB_READ_WRITE_TOKEN"] && !process.env["BLOB_STORE_ID"]) {
+  console.log("Refusing to pay: set BLOB_READ_WRITE_TOKEN so the payment is recorded in persistent storage.");
+  process.exit(1);
+}
 const sid = crypto.randomUUID();
-const svc = researchService({ store: researchStore(memoryIO()), cfg, account: researchAccount });
+const svc = researchService({ store: researchStore(blobIO), cfg, account: researchAccount });
 const q = await svc.quote({ sid, eventTicker: ticker });
 console.log("Quote:", q.price_usd, q.network, "for", q.gemini.title, q.gemini.contractLabel);
 const started = Date.now();

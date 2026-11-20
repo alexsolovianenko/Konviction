@@ -13,6 +13,7 @@ Optional "second opinion" for a Gemini prediction market. The voice agent can qu
 ## Safety rules enforced in code
 
 - Payments are off unless `ARC_RESEARCH_PAYMENTS` is exactly `true` and a wallet key is set.
+- Payments fail closed without persistent storage: approval refuses with `STORAGE_REQUIRED` unless the purchase store is Vercel Blob. In-memory storage can quote but never pay, and quotes then report `payments_enabled: false`.
 - Provider host allowlist: HTTPS on `arc.blockrun.ai` only, no port or credentials, whatever `ARC_RESEARCH_URL` says.
 - Allowlisted network, asset (Arc USDC `0x3600000000000000000000000000000000000000`), recipient and scheme (`exact`, EIP-3009). Re-checked at approval.
 - Hard caps: $0.01 per call and $0.25 per UTC day. Env can only lower them.
@@ -42,7 +43,7 @@ Shared files touched minimally: `package.json` / `package-lock.json` (adds `viem
 ## Integration requirements
 
 - **Voice session:** the endpoints accept only the server-signed voice session bearer from `browser-session.ts` (`VOICE_SESSION_SECRET`), the same token browser trading uses.
-- **Durable store before enabling payments:** set `BLOB_READ_WRITE_TOKEN` (or link a Blob store, `BLOB_STORE_ID`). Without it the handler falls back to an **in-memory store**, which is fine for local tests but on serverless hosting is per instance: the daily cap and duplicate-payment protection would not be shared. Do not set `ARC_RESEARCH_PAYMENTS=true` on a deployment without Blob. There is no Supabase-backed research store.
+- **Persistent store for payments:** set `BLOB_READ_WRITE_TOKEN` (or link a Blob store, `BLOB_STORE_ID`). Without it, quotes still work from per-process memory but every approval is refused with `STORAGE_REQUIRED` and nothing is signed, because the daily cap and duplicate-payment protection are only reliable in one shared store. `GET /api/public/arc-research/config` reports `persistent_storage`. There is no Supabase-backed research store. The smoke script's `--pay` mode also requires Blob.
 - **ElevenLabs agent:** add `request_research_quote` and `get_research_result` from `agent/browser-client-tools.json` as client tools and append `agent/arc-research-prompt.md` to the system prompt.
 - **Gemini data:** uses `getEvent` from `src/server/v2p/gemini.ts` (public sandbox reads). Crypto price markets only (BTC, ETH, SOL, XRP, DOGE).
 

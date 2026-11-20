@@ -42,6 +42,12 @@ type State = { version: 1; purchases: Record<string, Purchase> };
 const empty = (): State => ({ version: 1, purchases: {} });
 
 export type StoreIO = {
+  /**
+   * True only for storage shared by every server instance with conditional writes (Vercel Blob).
+   * Real payments require it: the daily cap, nonce uniqueness and single-signature guarantees are
+   * only as strong as the store. In-memory storage is per process and never durable.
+   */
+  readonly durable: boolean;
   read(): Promise<{ state: State; etag?: string } | null>;
   write(state: State, etag?: string): Promise<boolean>;
   putResponse(id: string, body: string): Promise<void>;
@@ -51,6 +57,7 @@ export type StoreIO = {
 const PATH = "arc-research/v1/purchases.json";
 
 export const blobIO: StoreIO = {
+  durable: true,
   async read() {
     const blob = await get(PATH, {
       access: "private",
@@ -98,11 +105,13 @@ export const blobIO: StoreIO = {
   },
 };
 
+/** Per-process storage for quotes, local runs and tests. Never durable: approval refuses to pay with it. */
 export function memoryIO(): StoreIO & { responses: Map<string, string> } {
   let snap: { state: State; etag: string } | null = null;
   let n = 0;
   const responses = new Map<string, string>();
   return {
+    durable: false,
     responses,
     async read() {
       return snap ? { state: structuredClone(snap.state), etag: snap.etag } : null;

@@ -165,7 +165,7 @@ export function researchService(deps: Deps) {
     const p = await store.get(id);
     return {
       ...publicView(p as Purchase, cfg),
-      payments_enabled: cfg.paymentsEnabled,
+      payments_enabled: cfg.paymentsEnabled && store.io.durable,
       say: `I can check Kalshi and Polymarket for similar contracts. It costs ${formatUsdcAtomic(v.requirement.amount)} in USDC on Arc from the research wallet, not your trading balance. Approve it on screen if you want it.`,
     };
   }
@@ -190,6 +190,14 @@ export function researchService(deps: Deps) {
       throw new ResearchError(
         "PAYMENTS_DISABLED",
         "Research payments are switched off on this server. Nothing was paid.",
+        503,
+      );
+    // Fail closed: never pay with per-process storage. The daily cap, unique nonces and the
+    // single-signature guarantee only hold when every instance shares one durable store.
+    if (!store.io.durable)
+      throw new ResearchError(
+        "STORAGE_REQUIRED",
+        "Research payments need persistent storage (Vercel Blob). Nothing was paid.",
         503,
       );
     const acct = account();

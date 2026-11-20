@@ -9,6 +9,8 @@ import { researchService, type Deps } from "./service";
 import { researchAccount } from "./wallet";
 
 let memoryStore: ResearchStore | null = null;
+// Without Vercel Blob, quotes still work from per-process memory, but approval refuses to pay
+// (StoreIO.durable is false), so a missing store can never weaken the payment guarantees.
 const defaultStore = (): ResearchStore => {
   if (env("BLOB_READ_WRITE_TOKEN") || env("BLOB_STORE_ID")) return researchStore(blobIO);
   return (memoryStore ??= researchStore(memoryIO()));
@@ -36,7 +38,11 @@ export async function handleArcResearch(
     if (req.method === "GET" && action === "config") {
       return reply(200, {
         ok: true,
-        payments_enabled: cfg.paymentsEnabled && Boolean((deps?.account ?? researchAccount)()),
+        payments_enabled:
+          cfg.paymentsEnabled &&
+          Boolean((deps?.account ?? researchAccount)()) &&
+          (deps?.store ?? defaultStore()).io.durable,
+        persistent_storage: (deps?.store ?? defaultStore()).io.durable,
         networks: cfg.networks,
         asset: cfg.asset,
         max_per_call_usd: formatUsdcAtomic(cfg.maxPerCallAtomic),

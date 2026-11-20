@@ -8,7 +8,14 @@ import { parsePaymentRequired, selectRequirement, parseSettlementResponse } from
 import { buildAuthorization, signAuthorization, TRANSFER_WITH_AUTHORIZATION } from "./eip3009";
 import { verifyTransfer } from "./verify";
 import { compare, extractMarkets, spokenSummary, type GeminiSide } from "./compare";
-import { memoryIO, researchStore } from "./store";
+import { blobIO, memoryIO, researchStore } from "./store";
+
+/**
+ * TEST-ONLY stand-in for Vercel Blob: the in-memory backend already enforces the same ETag
+ * conditional writes; marking it durable lets payment-path tests run without a real Blob store.
+ * Production code never builds this; the server only treats blobIO as durable.
+ */
+const durableTestIO = () => ({ ...memoryIO(), durable: true });
 import { researchService, geminiSide } from "./service";
 
 // Captured verbatim from the unpaid probe of arc.blockrun.ai/api/v1/pm/markets/search on 2026-11-19.
@@ -278,7 +285,7 @@ describe("cross-venue comparison", () => {
 function harness(
   over: { paymentsEnabled?: boolean; paidResponse?: () => Response | Promise<Response> } = {},
 ) {
-  const io = memoryIO();
+  const io = durableTestIO();
   const store = researchStore(io);
   const calls = { probe: 0, paid: 0, rpc: 0 };
   const tx = "0x" + "ef".repeat(32);
@@ -397,7 +404,7 @@ describe("research purchase flow", () => {
   it("enforces the daily budget", async () => {
     const { svc } = harness();
     const s = researchService({
-      store: (svc as unknown as { store?: never }).store ?? researchStore(memoryIO()),
+      store: (svc as unknown as { store?: never }).store ?? researchStore(durableTestIO()),
       cfg: cfg({ maxPerDayAtomic: 8_500n }),
       fetchImpl: vi.fn(async (_u: string, init?: RequestInit) =>
         new Headers(init?.headers).get("PAYMENT-SIGNATURE")
@@ -542,7 +549,7 @@ describe("payment hardening", () => {
   });
 
   it("many sessions approving at once cannot exceed the shared daily budget", async () => {
-    const io = memoryIO();
+    const io = durableTestIO();
     const store = researchStore(io);
     let paid = 0;
     let nonce = 0;
@@ -567,5 +574,69 @@ describe("payment hardening", () => {
     expect(committed).toBeLessThanOrEqual(250_000n);
     const nonces = Object.values(state.purchases).map((p) => p.eip3009_nonce).filter(Boolean);
     expect(new Set(nonces).size).toBe(nonces.length);
+  });
+});
+
+describe("payments fail closed without persistent storage", () => {
+  it("only Vercel Blob storage counts as durable", () => {
+    expect(blobIO.durable).toBe(true);
+    expect(memoryIO().durable).toBe(false);
+  });
+
+  it("refuses to sign or pay with in-memory storage even when payments and the wallet are enabled", async () => {
+    const calls = { probe: 0, paid: 0 };
+    const store = researchStore(memoryIO());
+    const svc = researchService({
+      store, cfg: cfg({ paymentsEnabled: true }), account: () => account,
+      loadEvent: async () => ({ event: geminiEvent }),
+      fetchImpl: vi.fn(async (_u: string, init?: RequestInit) => {
+        if (new Headers(init?.headers).get("PAYMENT-SIGNATURE")) { calls.paid++; return new Response("{}", { status: 200 }); }
+        calls.probe++;
+        return new Response("{}", { status: 402, headers: liveHeaders() });
+      }) as unknown as typeof fetch,
+    });
+    const q = await svc.quote({ sid: SID, eventTicker: "BTC2611192200" });
+    expect(q.status).toBe("quoted"); // quoting is free and still works
+    expect(q.payments_enabled).toBe(false); // the card never offers a payment it would refuse
+    for (let i = 0; i < 3; i++)
+      await expect(svc.approve({ sid: SID, quoteId: q.quote_id, maxAtomic: "10000" })).rejects.toMatchObject({ code: "STORAGE_REQUIRED", status: 503 });
+    const p = await store.get(q.quote_id);
+    expect(p).toMatchObject({ status: "quoted", eip3009_nonce: null, payer: null }); // nothing reserved or signed
+    expect(calls).toEqual({ probe: 1, paid: 0 });
+  });
+
+  it("the HTTP handler without a Blob store reports payments off and refuses approval, even with the flag and a key set", async () => {
+    const saved = { ...process.env };
+    try {
+      process.env["VOICE_SESSION_SECRET"] = "y".repeat(40);
+      process.env["ARC_RESEARCH_PAYMENTS"] = "true";
+      process.env["ARC_RESEARCH_PRIVATE_KEY"] = TEST_KEY;
+      delete process.env["BLOB_READ_WRITE_TOKEN"];
+      delete process.env["BLOB_STORE_ID"];
+      vi.resetModules();
+      const { mintSessionToken } = await import("../browser-session");
+      const { handleArcResearch } = await import("./handler");
+      const token = await mintSessionToken({ v: 1, sid: SID, cid: null, iat: Date.now(), exp: Date.now() + 60_000 });
+      const paid = vi.fn();
+      const fetchImpl = vi.fn(async (_u: string, init?: RequestInit) => {
+        if (new Headers(init?.headers).get("PAYMENT-SIGNATURE")) { paid(); return new Response("{}", { status: 200 }); }
+        return new Response("{}", { status: 402, headers: liveHeaders() });
+      }) as unknown as typeof fetch;
+      const deps = { cfg: cfg({ paymentsEnabled: true }), fetchImpl, loadEvent: async () => ({ event: geminiEvent }) };
+      const post = (action: string, body: unknown) => handleArcResearch(new Request("https://x/api/public/arc-research/" + action, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify(body) }), action, deps);
+
+      const config = await (await handleArcResearch(new Request("https://x/api/public/arc-research/config"), "config", deps)).json();
+      expect(config).toMatchObject({ payments_enabled: false, persistent_storage: false });
+      const quote = await (await post("quote", { event_ticker: "BTC2611192200" })).json();
+      expect(quote).toMatchObject({ ok: true, status: "quoted", payments_enabled: false });
+      const r = await post("approve", { quote_id: quote.quote_id, max_atomic: "10000", confirm: "APPROVE_RESEARCH_PAYMENT" });
+      expect(r.status).toBe(503);
+      expect(await r.json()).toMatchObject({ ok: false, error: "STORAGE_REQUIRED" });
+      expect(paid).not.toHaveBeenCalled();
+    } finally {
+      process.env = saved;
+      vi.resetModules();
+    }
   });
 });
