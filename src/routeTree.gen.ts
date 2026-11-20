@@ -18,6 +18,7 @@ import { Route as ApiPublicDashboardStateRouteImport } from './routes/api/public
 import { Route as ApiPublicAgentToolsToolRouteImport } from './routes/api/public/agent-tools/$tool'
 import { Route as ApiPublicBrowserTradingActionRouteImport } from './routes/api/public/browser-trading/$action'
 import { Route as ApiPublicMarketToolsToolRouteImport } from './routes/api/public/market-tools/$tool'
+import { Route as ApiPublicPhoneActionRouteImport } from './routes/api/public/phone/$action'
 import { Route as ApiPublicQuicknodeResearchActionRouteImport } from './routes/api/public/quicknode-research/$action'
 
 const IndexRoute = IndexRouteImport.update({
@@ -67,6 +68,11 @@ const ApiPublicMarketToolsToolRoute =
     path: '/api/public/market-tools/$tool',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicPhoneActionRoute = ApiPublicPhoneActionRouteImport.update({
+  id: '/api/public/phone/$action',
+  path: '/api/public/phone/$action',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicQuicknodeResearchActionRoute =
   ApiPublicQuicknodeResearchActionRouteImport.update({
     id: '/api/public/quicknode-research/$action',
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
   '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
   '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
+  '/api/public/phone/$action': typeof ApiPublicPhoneActionRoute
   '/api/public/quicknode-research/$action': typeof ApiPublicQuicknodeResearchActionRoute
 }
 export interface FileRoutesByTo {
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
   '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
   '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
+  '/api/public/phone/$action': typeof ApiPublicPhoneActionRoute
   '/api/public/quicknode-research/$action': typeof ApiPublicQuicknodeResearchActionRoute
 }
 export interface FileRoutesById {
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
   '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
   '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
+  '/api/public/phone/$action': typeof ApiPublicPhoneActionRoute
   '/api/public/quicknode-research/$action': typeof ApiPublicQuicknodeResearchActionRoute
 }
 export interface FileRouteTypes {
@@ -123,6 +132,7 @@ export interface FileRouteTypes {
     | '/api/public/agent-tools/$tool'
     | '/api/public/browser-trading/$action'
     | '/api/public/market-tools/$tool'
+    | '/api/public/phone/$action'
     | '/api/public/quicknode-research/$action'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -135,6 +145,7 @@ export interface FileRouteTypes {
     | '/api/public/agent-tools/$tool'
     | '/api/public/browser-trading/$action'
     | '/api/public/market-tools/$tool'
+    | '/api/public/phone/$action'
     | '/api/public/quicknode-research/$action'
   id:
     | '__root__'
@@ -147,6 +158,7 @@ export interface FileRouteTypes {
     | '/api/public/agent-tools/$tool'
     | '/api/public/browser-trading/$action'
     | '/api/public/market-tools/$tool'
+    | '/api/public/phone/$action'
     | '/api/public/quicknode-research/$action'
   fileRoutesById: FileRoutesById
 }
@@ -160,6 +172,7 @@ export interface RootRouteChildren {
   ApiPublicAgentToolsToolRoute: typeof ApiPublicAgentToolsToolRoute
   ApiPublicBrowserTradingActionRoute: typeof ApiPublicBrowserTradingActionRoute
   ApiPublicMarketToolsToolRoute: typeof ApiPublicMarketToolsToolRoute
+  ApiPublicPhoneActionRoute: typeof ApiPublicPhoneActionRoute
   ApiPublicQuicknodeResearchActionRoute: typeof ApiPublicQuicknodeResearchActionRoute
 }
 
@@ -228,6 +241,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicMarketToolsToolRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/phone/$action': {
+      id: '/api/public/phone/$action'
+      path: '/api/public/phone/$action'
+      fullPath: '/api/public/phone/$action'
+      preLoaderRoute: typeof ApiPublicPhoneActionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/quicknode-research/$action': {
       id: '/api/public/quicknode-research/$action'
       path: '/api/public/quicknode-research/$action'
@@ -248,6 +268,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicAgentToolsToolRoute: ApiPublicAgentToolsToolRoute,
   ApiPublicBrowserTradingActionRoute: ApiPublicBrowserTradingActionRoute,
   ApiPublicMarketToolsToolRoute: ApiPublicMarketToolsToolRoute,
+  ApiPublicPhoneActionRoute: ApiPublicPhoneActionRoute,
   ApiPublicQuicknodeResearchActionRoute: ApiPublicQuicknodeResearchActionRoute,
 }
 export const routeTree = rootRouteImport

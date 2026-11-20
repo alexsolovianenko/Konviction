@@ -21,6 +21,7 @@ import { buildSandboxCombo } from "./build-combo";
 import { sandboxPortfolio } from "./portfolio";
 import { blobStore } from "./blob-ledger";
 import { createReceipt } from "./receipts";
+import { phoneAccount } from "./phone/accounts";
 import { getUsdAvailable, hasCredentials } from "./gemini";
 import { prepareTrade, executeTrade, remainderBuy } from "./trade-engine";
 import { supabaseLedger } from "./ledger";
@@ -259,7 +260,7 @@ function alreadyAnsweredTurn(history: unknown) {
     for (const entry of [...entries].reverse()) {
       if (entry.role === "user" && /[\p{L}\p{N}]/u.test(entry.message ?? "")) return false;
       if ((entry.role === "tool" || entry.role === "agent") && Array.isArray(entry.tool_results) &&
-          entry.tool_results.some(result => result.tool_name === "confirm_hosted_sandbox_buy")) return true;
+          entry.tool_results.some(result => result.tool_name === (phoneAccount.getStore() ? "phone_confirm_trade" : "confirm_hosted_sandbox_buy"))) return true;
     }
   } catch { /* Invalid evidence is rejected by the confirmation check. */ }
   return false;
@@ -274,7 +275,7 @@ async function callConfirm(store: Store, token: string | undefined, body) {
   const row = await ownedIntent(store, body.proposal_id, s);
   if (alreadyAnsweredTurn(body.history)) return { ok: true, say: "", next_action: "wait_for_user" };
   if (row.status !== "PROPOSED") return { ...await recordedResult(store, row), replayed: true };
-  if (!confirmedInCall(body.history, { toolNames: ["prepare_sandbox_buy", "prepare_sandbox_remainder"],
+  if (!confirmedInCall(body.history, { toolNames: phoneAccount.getStore() ? ["phone_prepare_trade"] : ["prepare_sandbox_buy", "prepare_sandbox_remainder"],
     idField: "proposal_id", id: row.id, readback: spokenProposal(row), side: row.side, orderMode: row.order_mode }))
     throw new TradeError("CONFIRMATION_REQUIRED", "Confirmation missed. Order not sent.");
   const config = await availability();
@@ -312,7 +313,7 @@ async function portfolio(store: Store, body) {
 
 export async function runBrowserTrading(
   { action, method, token, body, callSecret }: { action: string; method: string; token?: string; body?: unknown; callSecret?: string },
-  store: Store = defaultStore(),
+  store: Store | ReturnType<typeof blobStore> = defaultStore(),
   fetchImpl?: typeof fetch,
 ) {
   if (method === "GET" && action === "availability") return availability();

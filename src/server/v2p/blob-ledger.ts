@@ -12,13 +12,14 @@ interface Intent {
 }
 interface Order { raw?: { result?: {order_mode?: string; est_fee_usd?: number} }; gemini_order_id?: string; intent_id: string; outcome_summary: string; filled_notional_usd: number; created_at: number }
 interface State { version: 1; guards: Record<string, Guard>; intents: Record<string, Intent>; orders: Record<string, Order> }
-const path = "browser-trading/v1/account.json";
+import { phoneAccount } from "./phone/accounts";
+const root = () => phoneAccount.getStore() ? "phone/v1/accounts/" + phoneAccount.getStore()!.id + "/trading" : "browser-trading/v1";
 const empty = (): State => ({ version: 1, guards: {}, intents: {}, orders: {} });
 
 const backend = {
   async read() {
     // A compressed response can have a weak ETag, which cannot authorize an ifMatch write.
-    const blob = await get(path, { access: "private", useCache: false, headers: { "Accept-Encoding": "identity" } });
+    const blob = await get(root() + "/account.json", { access: "private", useCache: false, headers: { "Accept-Encoding": "identity" } });
     if (!blob) return null;
     if (blob.statusCode !== 200 || !blob.blob.etag) throw new Error("Ledger read unavailable");
     const state = await new Response(blob.stream).json() as State;
@@ -27,7 +28,7 @@ const backend = {
   },
   async write(state: State, etag?: string) {
     try {
-      await put(path, JSON.stringify(state), { access: "private", addRandomSuffix: false, contentType: "application/json",
+      await put(root() + "/account.json", JSON.stringify(state), { access: "private", addRandomSuffix: false, contentType: "application/json",
         allowOverwrite: Boolean(etag), ...(etag && { ifMatch: etag }) });
       return true;
     } catch (error) {
@@ -92,7 +93,7 @@ export function blobStore(io = backend) {
   const read = async () => (await io.read())?.state ?? empty();
   const guard = (phone: string, expires: number | null): Guard => ({ phone, expires, pin_failures: 0, locked_until: null });
   async function archive(name: string, data: unknown) {
-    await put("browser-trading/v1/" + name + ".json", JSON.stringify(data), {
+    await put(root() + "/" + name + ".json", JSON.stringify(data), {
       access: "private", addRandomSuffix: false, allowOverwrite: false, contentType: "application/json",
     });
   }

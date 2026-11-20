@@ -2,6 +2,7 @@
 // Gemini Prediction Markets client — SANDBOX ONLY.
 // Auth: base64(JSON{request, nonce, ...fields}) in X-GEMINI-PAYLOAD,
 // hex HMAC-SHA384 of that base64 string in X-GEMINI-SIGNATURE, key in X-GEMINI-APIKEY.
+import { phoneAccount } from "./phone/accounts";
 import { env } from "./util";
 
 const SANDBOX_ORIGIN = "https://api.sandbox.gemini.com";
@@ -32,7 +33,7 @@ export type GeminiResult = {
 };
 
 export function hasCredentials(): boolean {
-  return Boolean(env("GEMINI_API_KEY") && env("GEMINI_API_SECRET"));
+  return Boolean(phoneAccount.getStore() || env("GEMINI_API_KEY") && env("GEMINI_API_SECRET"));
 }
 
 // Large int64 ids (orderId > 2^53) must never pass through a JS number.
@@ -146,8 +147,8 @@ async function signedOnce(
 ): Promise<GeminiResult> {
   const url = sandboxUrl(path, query);
   if (!url) return invalidOrigin();
-  const apiKey = env("GEMINI_API_KEY");
-  const secret = env("GEMINI_API_SECRET");
+  const apiKey = phoneAccount.getStore()?.apiKey ?? env("GEMINI_API_KEY");
+  const secret = phoneAccount.getStore()?.apiSecret ?? env("GEMINI_API_SECRET");
   if (!apiKey || !secret) {
     return { ok: false, status: 0, data: null, text: "", error: "GEMINI_API_KEY / GEMINI_API_SECRET not configured" };
   }
