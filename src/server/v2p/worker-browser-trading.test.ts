@@ -17,6 +17,7 @@ vi.mock("./gemini", async (importOriginal) => ({
   getUsdAvailable: async () => ({ usd: 5 }),
 }));
 
+import { phoneAccount } from "./phone/accounts";
 import { getEvent, gPrivate, gPublic } from "./gemini";
 import { spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { runBrowserTrading, type Store } from "./browser-trading";
@@ -270,6 +271,25 @@ describe("approval: the only order-submission path", () => {
     });
     expect(store.intents.get(id).status).toBe("DONE");
     expect(store.orders[0]).toMatchObject({ gemini_order_id: "73797746498585286", outcome_summary: "FILLED" });
+  });
+
+  it("accepts the native telephone preparation only with a matching readback and submits once", async () => {
+    const owner = {id: "subscriber", phone: "+14165550123", apiKey: "fixture", apiSecret: "fixture", totpSecret: "fixture"};
+    await phoneAccount.run(owner, async () => {
+      const {s,id} = await proposed();
+      await expect(callConfirm(id,s.session_token)).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+      const historyFor = (answer:string) => JSON.stringify({entries:[
+        {role:"tool",tool_results:[{tool_name:"phone_prepare_trade",result_value:{ok:true,proposal_id:id}}]},
+        {role:"agent",message:spokenProposal(store.intents.get(id))},
+        {role:"user",message:answer},
+      ]});
+      await expect(callConfirm(id,s.session_token,{history:historyFor("change the quantity")})).rejects.toMatchObject({code:"CONFIRMATION_REQUIRED"});
+      expect(geminiOrderCalls()).toHaveLength(0);
+      const proof = {history:historyFor("yes")};
+      expect(await callConfirm(id,s.session_token,proof)).toMatchObject({outcome_summary:"FILLED"});
+      expect(await callConfirm(id,s.session_token,proof)).toMatchObject({replayed:true});
+      expect(geminiOrderCalls()).toHaveLength(1);
+    });
   });
 
   it("replaying an approval returns the recorded result and never places a second order", async () => {

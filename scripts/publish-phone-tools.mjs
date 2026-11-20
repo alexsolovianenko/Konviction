@@ -28,18 +28,30 @@ const origin = new URL(confirm.api_schema.url).origin,
 if (!secret?.secret_id || !origin.startsWith("https://"))
   throw Error("Invalid existing webhook configuration.");
 const clients = JSON.parse(readFileSync("agent/browser-client-tools.json")).tools;
-const client = (n) => clients.find((t) => t.name === n).parameters;
+// ElevenLabs webhook literal schemas accept a subset of browser JSON Schema.
+const client = (n) => {
+  const { properties, required } = clients.find((t) => t.name === n).parameters;
+  return {
+    required,
+    properties: Object.fromEntries(
+      Object.entries(properties).map(([name, p]) => [
+        name,
+        { type: p.type, description: p.description, ...(p.enum && { enum: p.enum }) },
+      ]),
+    ),
+  };
+};
 const sys = confirm.api_schema.request_body_schema.properties;
 const definitions = [];
 for (const n of ["search_markets", "get_orderbook"]) {
-  const { type, properties, required } = client(n);
+  const { properties, required } = client(n);
   definitions.push({
     name: "phone_" + n,
     description: "On a Twilio call only. " + clients.find((t) => t.name === n).description,
     api_schema: {
       url: origin + "/api/public/market-tools/" + n,
       method: "GET",
-      query_params_schema: { type, properties, required },
+      query_params_schema: { properties, required },
     },
   });
 }
