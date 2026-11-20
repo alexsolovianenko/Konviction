@@ -172,6 +172,7 @@ export async function runSolana(
   // 1. List the pool's signatures newest-first until the window start (bounded pages).
   const sigs: Sig[] = [];
   let reachedStart = false;
+  let malformed = 0;
   let before: string | undefined;
   try {
     for (let page = 0; page < SIG_PAGES[tf]; page++) {
@@ -185,6 +186,7 @@ export async function runSolana(
       const list = (res as Array<Record<string, unknown>>).filter(
         (s) => typeof s?.["signature"] === "string" && SIG.test(s["signature"] as string),
       );
+      malformed += res.length - list.length;
       if (list.length !== res.length)
         warnings.push(`${res.length - list.length} signature entries were malformed; the reported window may be incomplete.`);
       for (const s of list)
@@ -285,7 +287,7 @@ export async function runSolana(
   return {
     ...common,
     window: from < now && !nothingDecoded ? { from, to: now } : null,
-    complete: reachedStart && missingTimes === 0 && covered === inWindow.length,
+    complete: reachedStart && malformed === 0 && missingTimes === 0 && covered === inWindow.length,
     legs,
     poolTxCount: reachedStart ? inWindow.length : null,
     warnings,

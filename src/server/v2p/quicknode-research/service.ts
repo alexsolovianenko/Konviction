@@ -123,7 +123,7 @@ export function purchaseView(p: Purchase, cfg: ResearchConfig) {
   const route = routeById(p.route_id);
   const price = formatUsdc(p.price_atomic);
   const maxAtomic = p.max_atomic ?? p.price_atomic;
-  const r = p.report;
+  const r = p.report?.kind === "dex_volume" ? p.report : null;
   const tf = p.timeframe ?? defaultTimeframe(p.context);
   const asset = p.context.asset.symbol;
   const calls = p.evidence?.calls_signed ?? null;
@@ -482,7 +482,7 @@ export function researchService(d: Deps) {
       if (!outcome.signed) {
         // No payment payload was ever created, so nothing can have been charged.
         fields =
-          outcome.callsOk > 0 && report
+          outcome.callsOk > 0 && report && report.completeness !== "unavailable"
             ? { status: "free", report, evidence: ev, price_atomic: "0", error: null }
             : {
                 status: "failed",
@@ -492,7 +492,7 @@ export function researchService(d: Deps) {
                   (outcome.error ?? `HTTP ${res?.status ?? "error"}`) +
                   " — refused before signing. Nothing was paid.",
               };
-      } else if (outcome.callsOk > 0 && report) {
+      } else if (outcome.callsOk > 0 && report && report.completeness !== "unavailable") {
         fields = {
           status: "paid",
           report,
@@ -504,6 +504,7 @@ export function researchService(d: Deps) {
         // Signed but no data at all: keep holding the full approved budget.
         fields = {
           status: "unknown_pending",
+          report,
           evidence: ev,
           error:
             (outcome.error ?? `HTTP ${res?.status}`) +

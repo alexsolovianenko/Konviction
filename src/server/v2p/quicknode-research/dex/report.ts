@@ -128,7 +128,7 @@ export function buildReport(i: ReportInput): ResearchReport {
   const t = aggregate(i.legs, i.window.from, i.window.to);
   const measured = i.window.to - i.window.from;
   // Anything short of the requested span is partial, even if every fetched call succeeded.
-  const complete = i.complete && measured >= requested - 30;
+  const complete = i.complete && measured >= requested;
   const span = complete
     ? `the last ${label}`
     : `the most recent ${duration(measured)} (partial; ${label} requested)`;

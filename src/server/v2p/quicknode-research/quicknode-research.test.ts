@@ -911,7 +911,8 @@ describe("approve", () => {
     });
     const { token: t } = await token();
     const a = await h.approve(t, (await h.quote(t, ETH)).body);
-    expect(a.body["status"]).toBe("paid");
+    expect(a.body["status"]).toBe("unknown_pending");
+    expect(a.body["price_usdc"]).toBe(a.body["max_price_usdc"]);
     expect(a.body["report"]).toMatchObject({ completeness: "unavailable", buy_usd: null, sell_usd: null });
     expect(a.body["report"]["headline"]).toMatch(/unavailable/);
     expect(a.body["evidence"]["rpc_error"]).toMatch(/-32005/);

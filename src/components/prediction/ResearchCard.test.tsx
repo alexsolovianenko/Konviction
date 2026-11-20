@@ -182,7 +182,7 @@ describe("ResearchCard", () => {
     expect(container.textContent).toMatch(/not a price forecast/);
     expect(container.textContent).not.toMatch(/mempool|TPS|gas utilization/i);
     expect(container.textContent).toMatch(/observed deduction 0\.0003 USDC/);
-    expect(container.textContent).toMatch(/3 sent · 3 returned data · 3 payments created/);
+    expect(container.textContent).toMatch(/3 sent · 3 HTTP 200 responses · 3 payments created/);
     expect(container.textContent).toMatch(/no per-request on-chain transaction is claimed/);
     expect(container.textContent).not.toMatch(/settled on-?chain|order (placed|filled)/i);
     expect(screen.queryByRole("button")).toBeNull();

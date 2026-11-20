@@ -298,7 +298,7 @@ describe("reports never present incomplete totals as complete", () => {
   };
   const legs: SwapLeg[] = [{ tx: "a", leg: "0", time: 3500, asset: 1, usd: 10, pool: "p" }];
   it("labels a short measured span as partial even if every call succeeded", () => {
-    const r = buildReport({ ...base, window: { from: 2000, to: 3600 }, complete: true, legs });
+    const r = buildReport({ ...base, window: { from: 1, to: 3600 }, complete: true, legs });
     expect(r.completeness).toBe("partial");
     expect(r.headline).toMatch(/partial; 1 hour requested/);
   });

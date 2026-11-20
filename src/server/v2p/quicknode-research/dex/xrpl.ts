@@ -174,7 +174,9 @@ export async function runXrpl(
     warnings.push(`AMM transaction history unavailable: ${(e as Error).message}`);
   }
   const times = entries.map((x) => entryFields(x).time).filter((t): t is number => t !== null);
-  if (!reachedStart && !times.length)
+  const missingTimes = entries.length - times.length;
+  if (missingTimes) warnings.push(`${missingTimes} transactions lacked timestamps; coverage is incomplete.`);
+  if ((!reachedStart || entries.length > 0) && !times.length)
     return { ...common, window: null, complete: false, legs: [], poolTxCount: null, warnings };
   if (!reachedStart && !failed)
     warnings.push(
@@ -201,7 +203,7 @@ export async function runXrpl(
   return {
     ...common,
     window: from < now ? { from, to: now } : null,
-    complete: reachedStart,
+    complete: reachedStart && missingTimes === 0 && unvalidated === 0,
     legs,
     poolTxCount: reachedStart
       ? entries.filter((e) => {

@@ -214,7 +214,7 @@ export function agentSummary(q: ResearchQuote) {
     dex_volume: r
       ? {
           completeness: r.completeness,
-          measured: r.measured_seconds ? `${Math.round(r.measured_seconds / 60)} minutes` : null,
+          measured: r.measured_seconds ? `${r.measured_seconds} seconds` : null,
           buy_usd: r.buy_usd,
           sell_usd: r.sell_usd,
           net_buy_usd: r.net_buy_usd,
