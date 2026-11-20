@@ -31,7 +31,8 @@ it("recognizes natural replies only for this research offer, including ASR fragm
   const reply = (message: string) => ({role: "user", message});
   expect(approved(bound, ask, reply("Um, yes"), reply("please."))).toBe(true);
   expect(approved(bound, ask, reply("Yeah, go ahead and purchase the research."))).toBe(true);
-  for (const words of ["Sure", "I don’t think so", "Yes, if it is free", "Buy it?", "Sell it"]) {
+  expect(approved(bound, ask, reply("Sure."))).toBe(true);
+  for (const words of ["Not sure", "I don’t think so", "Yes, if it is free", "Buy it?", "Sell it"]) {
     expect(approved(bound, ask, reply(words))).toBe(false);
   }
   expect(approved(bound, ask, reply("Yes please"), reply("actually no"))).toBe(false);

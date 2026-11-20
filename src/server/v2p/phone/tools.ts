@@ -41,8 +41,9 @@ export async function phoneTool(req: Request, action: string) {
         if (!(await claim(path, session))) return denied();
       }
       if (!session)
-        return reply(403, {
+        return reply(200, {
           ok: false,
+          next_action: "phone_authenticate",
           say: "Use your authenticator code to verify this call first.",
         });
       if (action === "authenticate") {
@@ -93,6 +94,8 @@ export async function phoneTool(req: Request, action: string) {
       return reply(404, { ok: false });
     });
   } catch (e) {
+    if (e instanceof Error && e.message.startsWith("Invalid phone enrollment:"))
+      return reply(200, {ok:false, error:"PHONE_ENROLLMENT_UNAVAILABLE", say:"Phone trading is unavailable until the account administrator finishes sandbox enrollment."});
     if (e instanceof TradeError)
       return reply(e.status, { ok: false, error: e.code, say: e.message });
     return reply(503, { ok: false, say: "The phone account service is unavailable." });

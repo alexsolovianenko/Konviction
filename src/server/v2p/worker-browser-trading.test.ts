@@ -217,6 +217,18 @@ describe("proposals (voice-reachable) never submit orders", () => {
     expect(proposal.voice_readback).toBe("Market odds thirty percent. Up to one dollar. Buy now?");
   });
 
+  it("quotes a NO market buy from the executable YES bid before approval", async () => {
+    const s = await startSession();
+    vi.mocked(gPublic).mockResolvedValueOnce({ok:true,status:200,text:"",data:{
+      bids:[{price:"0.42",amount:"3"}], asks:[{price:"0.48",amount:"4"}]
+    }});
+    const {proposal} = await run("proposals", {event_ticker:order.event_ticker,
+      contract_symbol:order.contract_symbol,outcome:"no",budget_usd:2,order_mode:"market"},s.session_token) as any;
+    expect(proposal.quote_price).toBe(0.58);
+    expect(proposal.limit_price).toBe(0.58);
+    expect(geminiOrderCalls()).toHaveLength(0);
+  });
+
   it("binds buy now to the exact spoken immediate quote and submits once", async () => {
     const s = await startSession();
     const request = {event_ticker:order.event_ticker,contract_symbol:order.contract_symbol,outcome:"yes",budget_usd:0.35};
@@ -339,7 +351,7 @@ describe("approval: the only order-submission path", () => {
     const {s,id} = await proposed();
     const turns = conversationEntries(id);
     const cases = [
-      conversationEntries(id,"yes but change the price"), conversationEntries(id,"Sure."),
+      conversationEntries(id,"yes but change the price"), conversationEntries(id,"Not sure."),
       conversationEntries(id,"I don’t think so."), turns.slice(1),
       [conversationEntries(randomUUID())[0], ...turns.slice(1)],
       [turns[0], {role:"agent",message:"Some different order"}, ...turns.slice(2)],
@@ -351,7 +363,7 @@ describe("approval: the only order-submission path", () => {
     expect(await run("order-result", {proposal_id:id},s.session_token)).toMatchObject({ok:true,status:"PROPOSED"});
     expect(geminiOrderCalls()).toHaveLength(0);
     vi.stubEnv("DEMO_PIN","");
-    await callConfirm(id,s.session_token,{history:JSON.stringify({entries:conversationEntries(id,"Yes, please.")})});
+    await callConfirm(id,s.session_token,{history:JSON.stringify({entries:conversationEntries(id,"Sure.")})});
     expect(await run("order-result", {proposal_id:id},s.session_token)).toMatchObject({outcome_summary:"FILLED"});
     expect(geminiOrderCalls()).toHaveLength(1);
   });

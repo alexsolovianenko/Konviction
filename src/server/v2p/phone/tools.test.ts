@@ -67,7 +67,7 @@ it("rejects anonymous, web, text-only and unregistered calls before private tool
   expect(runBrowserTrading).not.toHaveBeenCalled();
 });
 it("binds positions and preparation to an authenticated caller and conversation, and refuses OTP reuse", async () => {
-  expect((await invoke("positions")).status).toBe(403);
+  expect(await (await invoke("positions")).json()).toMatchObject({ok:false,next_action:"phone_authenticate"});
   expect((await invoke("authenticate", { code })).status).toBe(200);
   vi.mocked(runBrowserTrading).mockImplementation(async ({ action }) =>
     action === "portfolio"
@@ -79,7 +79,7 @@ it("binds positions and preparation to an authenticated caller and conversation,
     proposal_id: "p",
     say: "Read back the order.",
   });
-  expect((await invoke("positions", { conversation_id: "conv_other" })).status).toBe(403);
+  expect(await (await invoke("positions", { conversation_id: "conv_other" })).json()).toMatchObject({ok:false,next_action:"phone_authenticate"});
   expect((await invoke("authenticate", { conversation_id: "conv_other", code })).status).toBe(403);
 });
 it("reveals the reserved settlement only after outbound authentication and refuses outbound orders", async () => {

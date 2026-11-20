@@ -2,7 +2,7 @@
 import { marketTitle } from "./market-title";
 import { contractTradable, gPublic, findContract, getEvent, gPrivate, quoteFor } from "./gemini";
 import { spokenBudgetFill, spokenFill } from "../../spoken-fill";
-import { liquiditySnapshot } from "./book-liquidity";
+import { liquiditySnapshot, topBookPrice } from "./book-liquidity";
 import { comboEligibility } from "./native-combo";
 import { BUY_CUTOFF_MS, cents, feeEstimate, hashPhone, json, LIMITS, num, round2 } from "./util";
 type Body = Record<string, any>;
@@ -34,6 +34,12 @@ function budgetQuantity(budget: number, limit: number): number {
     else high = qty - 1;
   }
   return low;
+}
+
+async function marketPrice(symbol, outcome, side, fallback) {
+  const book = await gPublic("/v1/book/" + encodeURIComponent(symbol), {limit_bids: 1, limit_asks: 1});
+  const price = book?.ok && book.data ? topBookPrice(book.data, outcome, side) : undefined;
+  return price === undefined ? fallback : price;
 }
 
 export async function prepareTrade(b: Body, saveProposal) {
@@ -76,6 +82,7 @@ export async function prepareTrade(b: Body, saveProposal) {
   if (expiryIso && Date.parse(expiryIso) - Date.now() <= BUY_CUTOFF_MS)
     return err("TOO_CLOSE_TO_EXPIRY", "Ten seconds or less remain in this market.");
   const q = quoteFor(c, outcome as "yes" | "no");
+  if (market) q[side] = await marketPrice(symbol, outcome, side, q[side]);
   const label = marketTitle(c.label ?? c.ticker ?? symbol, expiryIso);
   const title = marketTitle(event.title ?? eventTicker, expiryIso);
   const outcomeText = outcome === "yes" ? `YES (${label})` : `NO (not ${label})`;
@@ -459,7 +466,7 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
       if (Number.isFinite(expiry)) submitBefore = Math.min(submitBefore ?? Infinity, expiry - BUY_CUTOFF_MS);
     }
     if (submitBefore !== undefined && Date.now() >= submitBefore) { reason = "Market cutoff reached."; break; }
-    const quote = quoteFor(contract, it.outcome)[buy ? "buy" : "sell"];
+    const quote = buy ? limit : await marketPrice(it.instrument_symbol, it.outcome, "sell", quoteFor(contract, it.outcome).sell);
     if (!buy && quote === null) { reason = "No current bid."; break; }
     const price = buy ? limit : Math.floor(quote * 100 + 1e-9) / 100;
     if (!buy && price < limit) {

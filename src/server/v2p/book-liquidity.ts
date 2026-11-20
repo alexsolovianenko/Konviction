@@ -21,6 +21,14 @@ function levels(raw: unknown, complement: boolean): Level[] | null {
   return result;
 }
 
+export function topBookPrice(book: { bids?: unknown; asks?: unknown }, outcome: string, side: string) {
+  const no = outcome === "no";
+  const rows = levels((side === "buy") !== no ? book.asks : book.bids, no);
+  if (!rows) return undefined;
+  if (!rows.length) return null;
+  return rows.reduce((best, row) => side === "buy" ? Math.min(best, row.price) : Math.max(best, row.price), rows[0]!.price);
+}
+
 export function liquiditySnapshot(book: { bids?: unknown; asks?: unknown } | null, query: LiquidityQuery) {
   const no = query.outcome === 'no';
   const asks = levels(no ? book?.bids : book?.asks, no)?.sort((a,b) => a.price - b.price);

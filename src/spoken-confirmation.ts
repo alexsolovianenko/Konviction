@@ -8,9 +8,9 @@ export function orderAction(side?: string, mode?: string): Action {
 
 // Match the whole answer as a sequence of conversational phrases. Unconsumed
 // words (a condition, a different action, a number, etc.) cannot authorize it.
-const courtesy = /^(?:uh|um|erm?|ah|oh|well|okay|ok|please(?! do(?: |$))|thanks|thank you|sure)\b\s*/;
+const courtesy = /^(?:uh|um|erm?|ah|oh|well|please(?! do(?: |$))|thanks|thank you)\b\s*/;
 const assent = [
-  /^(?:yes|yeah?|yep|yup|absolutely|definitely|affirmative|of course|for sure|correct)\b\s*/,
+  /^(?:yes|yeah?|yep|yup|absolutely|definitely|affirmative|of course|(?:for )?sure(?: thing)?|okay|ok|correct)\b\s*/,
   /^(?:(?:i )?(?:confirm|approve)(?: (?:it|that))?|confirmed|i agree|i do|i(?:'d| would) (?:like|love) that)\b\s*/,
   /^(?:(?:that |it )?(?:sounds|looks) good(?: to me)?|(?:that |it )?works for me|(?:that would|that'd) be (?:great|fine)|(?:that's|thats|that is) (?:right|correct|fine(?: (?:with|by) me)?))\b\s*/,
   /^(?:(?:go (?:right )?ahead|proceed)(?: with (?:it|that))?|(?:let's |lets |let us )?do (?:it|that)|please do(?: (?:it|that))?|let's go ahead|go for it|go through with it|you have my (?:approval|permission)|make it happen)\b\s*/,
@@ -24,7 +24,6 @@ const actions: Partial<Record<Action, RegExp>> = {
 };
 
 const declines = [
-  /^(?:sure|sure thing)(?: please| thanks| thank you)?$/,
   /^(?:no|nope|nah|not (?:now|today|this time|interested|for me)|maybe later|never ?mind)\b/,
   /^(?:skip|pass|stop|hold off|forget it|leave it|don'?t|do not|(?:i )?decline)\b/,
   /^i (?:don'?t|do not) (?:think so|want to|want it)\b/,

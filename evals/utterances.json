@@ -5809,8 +5809,7 @@
         }
       },
       "expect": {
-        "status": 422,
-        "code": "confirmation_missing"
+        "status": 201
       }
     },
     {

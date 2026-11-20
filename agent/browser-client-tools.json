@@ -161,7 +161,7 @@
     {
       "type": "client",
       "name": "prepare_sandbox_remainder",
-      "description": "Only on an explicit request to retry the unfilled sandbox buy, prepare its exact remaining whole contracts at the original cap. Speak the returned say verbatim and wait for fresh approval.",
+      "description": "Only if the previous result supplied a remainder and the caller requests it, prepare its exact remaining whole contracts at the original cap. Speak the returned say verbatim and wait for fresh approval.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 20,

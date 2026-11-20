@@ -879,10 +879,10 @@ x-confirmation-enforcement:
     normalization: "Normalize Unicode and apostrophes, lower case, collapse whitespace and ignore declarative punctuation. Preserve question marks and amounts."
     rule: >
       Interpret the complete reply to the current readback, joining consecutive user fragments.
-      Clear affirmative phrases may authorize the disclosed action. Bare "sure" is a decline.
+      Clear affirmative phrases may authorize the disclosed action. "Sure" and "sure thing" approve.
       A question, condition, changed terms, mixed answer or silence cannot authorize an action.
     examples_accept: ["Yes, please", "Yeah, that's right", "Go ahead and do it", "That sounds good to me", "I confirm", "entries ['um', 'yes']"]
-    examples_reject: ["sure", "I don't think so", "yes but make it ten", "yes contracts", "Yes?", "entries ['yes', 'actually no']"]
+    examples_reject: ["not sure", "I don't think so", "yes but make it ten", "yes contracts", "Yes?", "entries ['yes', 'actually no']"]
   readback_templates:
     note: "The agent must speak these sentences. Numbers are written as digits. The backend matches terms, not the whole sentence. Orders are prediction contracts only, so there is no spot template."
     prediction_order: "Confirming: buy {quantity} {side} contracts of {event_title}, {contract_label} on Gemini prediction at a limit of {limit_price_in_cents} cents each. Say yes to confirm."
