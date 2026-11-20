@@ -94,6 +94,7 @@ export class Voice {
   private session: WorkerSession | LocalSession | undefined;
   private conversation: undefined | { endSession: () => Promise<void>; getOutputVolume: () => number; sendContextualUpdate: (text: string) => void; sendUserMessage: (text: string) => void };
   private visibleContract = "";
+  private activeMarketTools = 0;
   private selectionRevision = 0;
   private currentProposal: Proposal | null = null;
   private approving = false;
@@ -141,7 +142,7 @@ export class Voice {
     }
     this.remainder = null;
     this.update({proposal:this.currentProposal, tradeMessage:'', remainderQuantity:null, positionSnapshot:null});
-    if (selection && this.conversation) this.offerResearch();
+    if (selection && this.conversation && !this.activeMarketTools) this.offerResearch();
     this.conversation?.sendContextualUpdate?.(selection
       ? "Contract on screen (silent tool context): " + selection
       : "The contract chart is no longer visible.");
@@ -431,8 +432,12 @@ export class Voice {
           get_sandbox_positions: async () => JSON.stringify(current()
             ? await this.readPositions() : {ok:false, say:'Session ended.'}),
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
-            name, async (params: Record<string, unknown>) => JSON.stringify(current()
-              ? await this.marketAction(name, params) : { ok: false, error: 'Session ended.' }),
+            name, async (params: Record<string, unknown>) => {
+              if (!current()) return JSON.stringify({ok:false, error:'Session ended.'});
+              this.activeMarketTools++;
+              try { return JSON.stringify(await this.marketAction(name, params)); }
+              finally { this.activeMarketTools--; }
+            },
           ])),
         },
         ...callbacks,

@@ -1,7 +1,7 @@
 {
   "type": "webhook",
   "name": "confirm_research_purchase",
-  "description": "Only after the caller hears the exact QuickNode research offer and explicitly says yes or confirm, purchase this quote once. Wait for the returned result. Never places a Gemini order.",
+  "description": "Only after the caller hears the exact QuickNode research offer and explicitly says buy it, yes or confirm (including a yes to a short research confirmation following a purchase request), purchase this quote once. Wait for the returned result. Never places a Gemini order.",
   "pre_tool_speech": "off",
   "response_timeout_secs": 60,
   "follow_redirects": false,

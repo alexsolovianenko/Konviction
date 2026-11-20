@@ -15,3 +15,14 @@ it("requires the matching quote, exact price, uninterrupted offer and immediate 
   expect(approved(bound,ask,{...yes,message:"Buy ten dollars of YES"},yes)).toBe(false);
   expect(approved(bound,ask,yes,{...yes,message:"Wait"})).toBe(false);
 });
+it("accepts buy it and a short reconfirmation for only the already disclosed research", () => {
+  const buy = {role:"user",message:"Buy it."};
+  const confirm = {role:"agent",message:"Confirm?"};
+  expect(approved(bound,ask,buy)).toBe(true);
+  expect(approved(bound,ask,buy,confirm,yes)).toBe(true);
+  expect(approved(bound,ask,{role:"user",message:"Tell me more about it."},{role:"agent",message:"It measures network activity."},buy,confirm,yes)).toBe(true);
+  expect(approved(bound,ask,{role:"user",message:"Buy $5 of XRP"},confirm,yes)).toBe(false);
+  expect(approved(bound,buy,confirm,yes)).toBe(false);
+  expect(approved(bound,ask,buy,{role:"agent",message:"Buy it for 5 USDC?"},yes)).toBe(false);
+  expect(approved(bound,{role:"agent",message:"I missed the confirmation, so no research was purchased. "+offer},yes)).toBe(true);
+});
