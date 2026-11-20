@@ -472,8 +472,25 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
   expect(requests.at(-1)).toBe('/api/public/market-tools/get_orderbook?event_ticker=E&contract_symbol=C&outcome=no&side=buy&quantity=4&limit_price=0.62');
 });
 
+async function selectMarketWithoutPaidResearch(f: ReturnType<typeof fixture>, sdk: Awaited<ReturnType<typeof f.begin>>) {
+  const original = f.fetchMock.getMockImplementation()!;
+  f.fetchMock.mockImplementation(async (path, init) => {
+    if (path.includes('/market-tools/get_orderbook')) return Response.json({
+      ok:true, event_ticker:'E', title:'Event', contract:{symbol:'C', label:'Threshold', buy:{yes:.4,no:.6}, sell:{yes:.3,no:.5}},
+    });
+    if (path.includes('/quicknode-research/')) return Response.json({ok:false,error:'NOT_CRYPTO'});
+    return original(path,init);
+  });
+  await act(async () => {
+    await sdk.clientTools['get_orderbook']!({event_ticker:'E',contract_symbol:'C'});
+    await sdk.clientTools['request_research_quote']!({});
+  });
+  f.fetchMock.mockImplementation(original);
+}
+
 it('offers a short spoken confirmation even when the browser clock is ahead', async () => {
   const f = fixture(), sdk = await f.begin();
+  await selectMarketWithoutPaidResearch(f,sdk);
   const readback = 'Buy two yes contracts at up to forty cents. Say confirm.';
   const serverNow = Date.now() - 300000;
   const proposal = {proposal_id:'id',title:'Event',contract_label:'Threshold',outcome:'yes',quantity:2,limit_price:.4,quote_price:.39,notional_usd:.8,est_fee_usd:.04,
@@ -492,6 +509,7 @@ it('offers a short spoken confirmation even when the browser clock is ahead', as
 
 it.each([false, true])('requests one fresh remainder proposal after spoken approval (retry by voice %s)', async (retryByVoice) => {
   const f = fixture(), sdk = await f.begin();
+  await selectMarketWithoutPaidResearch(f,sdk);
   const originalFetch = f.fetchMock.getMockImplementation()!;
   const requests: Record<string, unknown>[] = [];
   const approved: string[] = [];
@@ -550,6 +568,7 @@ it.each([false, true])('requests one fresh remainder proposal after spoken appro
 
 it('requires the caller’s entry and preserves their cap when preparing', async () => {
   const f = fixture(), sdk = await f.begin();
+  await selectMarketWithoutPaidResearch(f,sdk);
   let body: unknown;
   f.fetchMock.mockImplementation(async (_path, init) => {
     body = JSON.parse(String(init.body));
