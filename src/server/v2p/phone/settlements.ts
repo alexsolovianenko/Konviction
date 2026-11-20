@@ -68,36 +68,57 @@ export async function notify(account: PhoneAccount, row: Row, reserve = claim, d
   });
 }
 
+export async function scanSettlements(
+  owner: PhoneAccount,
+  since: number,
+  seen = new Set<string>(),
+) {
+  let failures = 0;
+  for (let offset = 0; ; offset += 100) {
+    const r = await gPrivate(
+      "/v1/prediction-markets/positions/settled",
+      {},
+      { query: { sort: "-date", offset, limit: 100 } },
+    );
+    const rows: Row[] = r.data?.positions;
+    if (!r.ok || !Array.isArray(rows)) throw Error("Settlement feed unavailable");
+    for (const row of rows) {
+      try {
+        const entry = settlement(row, since);
+        if (entry && !seen.has(entry.id)) {
+          await notify(owner, row);
+          seen.add(entry.id);
+        }
+      } catch {
+        failures++;
+      }
+    }
+    if (
+      rows.length < 100 ||
+      (rows.length && Date.parse(String(rows.at(-1)?.["settledAt"])) < since)
+    )
+      break;
+  }
+  return failures;
+}
+
 export async function checkSettlements(req: Request) {
   const key = process.env["CRON_SECRET"];
   if (!key || !(await secretEqual(req.headers.get("authorization") ?? "", "Bearer " + key)))
     return new Response(null, { status: 401 });
+  // Repair the worker chain after a prolonged queue outage or a fresh deployment.
+  if (process.env["VERCEL_ENV"] === "production") {
+    const { QueueClient } = await import("@vercel/queue");
+    const queue = new QueueClient({ region: "iad1", deploymentId: null });
+    await queue.send("konviction-settlements", {}, {
+      idempotencyKey: "minute-" + Math.floor(Date.now() / 60000),
+    });
+  }
   let failures = 0;
   for (const owner of accounts().filter((a) => a.notifySince)) {
     try {
       await phoneAccount.run(owner, async () => {
-        for (let offset = 0; ; offset += 100) {
-          const r = await gPrivate(
-            "/v1/prediction-markets/positions/settled",
-            {},
-            { query: { sort: "-date", offset, limit: 100 } },
-          );
-          const rows: Row[] = r.data?.positions;
-          if (!r.ok || !Array.isArray(rows)) throw Error("Settlement feed unavailable");
-          for (const row of rows) {
-            try {
-              await notify(owner, row);
-            } catch {
-              failures++;
-            }
-          }
-          if (
-            rows.length < 100 ||
-            (rows.length &&
-              Date.parse(String(rows.at(-1)?.["settledAt"])) < Date.parse(owner.notifySince!))
-          )
-            break;
-        }
+        failures += await scanSettlements(owner, Date.parse(owner.notifySince!));
       });
     } catch {
       failures++;
