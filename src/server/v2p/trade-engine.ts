@@ -203,7 +203,8 @@ function rejectionMessage(data: Record<string, unknown> | null, status: number):
 export function classifyExchangeOrder(order, quantity: number, resting = true) {
   const status = String(order?.status ?? "").toLowerCase();
   const filled = exchangeQuantity(order?.filledQuantity);
-  if (filled === null || filled < 0 || filled > quantity) return "PENDING_UNKNOWN";
+  if (status === "rejected" && (filled === 0 || filled === null)) return "EXCHANGE_REJECTED";
+  if (!order?.orderId || filled === null || filled < 0 || filled > quantity) return "PENDING_UNKNOWN";
   if (filled === quantity) return "FILLED";
   if (resting && order?.orderId && status === "open") return "OPEN";
   if (["cancelled", "canceled", "closed"].includes(status)) return filled === 0 ? "NOT_FILLED" : "PARTIAL";
@@ -504,6 +505,11 @@ async function executeMarketOrder(it, caller, contract, submitBefore, { finish, 
         continue;
       }
       if (rejected) reason = rejectionMessage(order, placed.status);
+      break;
+    }
+    if (summary === "EXCHANGE_REJECTED") {
+      rejected = true;
+      reason = rejectionMessage(order, placed.status);
       break;
     }
     const amount = exchangeQuantity(order?.filledQuantity);

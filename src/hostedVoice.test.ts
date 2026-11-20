@@ -37,7 +37,7 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
     expect(await prepare()).toMatchObject({next_action:'select_market'});
     const fetchMock = vi.spyOn(globalThis,'fetch').mockImplementation(async () => Response.json({
       ok:true, status:'quoted',quote_id:'research-q',payments_enabled:true,price_usdc:'0.0001',
-      expires_at:new Date(Date.now()+60000).toISOString(),say:'Buy QuickNode research?',context:{
+      expires_at:new Date(Date.now()+60000).toISOString(),say:'Would you like real DEX buy and sell volume for BTC from QuickNode?',context:{
         market:{event_ticker:'EVENT',contract_symbol:'GEMI-C'},asset:{name:'Bitcoin',symbol:'BTC'}
       }
     }));
@@ -45,7 +45,7 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
     expect(await prepare()).toMatchObject({next_action:'request_research_quote'});
     await opts.clientTools.request_research_quote();
     expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
-    opts.onMessage({role:'agent',message:'Buy QuickNode research?',event_id:1});
+    opts.onMessage({role:'agent',message:'Would you like real DEX buy and sell volume for BTC from QuickNode?',event_id:1});
     if (mommyMode) {
       opts.onMessage({role:'user',message:'Buy the research.'});
       expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});

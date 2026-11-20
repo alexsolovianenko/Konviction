@@ -353,7 +353,7 @@ export class Voice {
           if (!current()) return;
           const selected = this.visibleContract;
           const decision = this.researchDecisions.get(selected);
-          if (role === 'agent' && decision === 'quoted' && /quick\s*node/i.test(message) && /research/i.test(message))
+          if (role === 'agent' && decision === 'quoted' && /quick\s*node/i.test(message) && /research|buy and sell volume/i.test(message))
             this.researchDecisions.set(selected, 'offered');
           if (role === 'agent' && decision === 'report' && message.trim())
             this.researchDecisions.set(selected, 'reported');

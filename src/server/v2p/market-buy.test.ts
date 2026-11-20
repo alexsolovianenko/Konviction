@@ -61,3 +61,11 @@ it("closes an exact fractional holding when Gemini omits the increment", async (
   expect(result).toMatchObject({outcome_summary:"FILLED",filled_quantity:.65});
   expect(vi.mocked(gPrivate).mock.calls[1]?.[1]?.["quantity"]).toBe("0.65");
 });
+
+it("reports an explicit Gemini rejection even on a successful HTTP response", async () => {
+  const proposal = await prepareTrade(request, async (terms: Record<string, unknown>) => terms);
+  vi.mocked(gPrivate).mockResolvedValueOnce(fill("A",0,0,"rejected"));
+  const result = await (await executeTrade(proposal,"test",hooks)).json();
+  expect(result).toMatchObject({ok:false,outcome_summary:"EXCHANGE_REJECTED",filled_quantity:0});
+  expect(gPrivate).toHaveBeenCalledTimes(1);
+});
