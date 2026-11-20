@@ -1,69 +1,43 @@
 # Voice-to-Predict
 
-Voice-to-Predict lets you explore Gemini Sandbox prediction markets by talking to an ElevenLabs agent. Start a conversation, ask about a contract, and review the quote before confirming a sandbox order.
+Explore Gemini Sandbox prediction markets with an ElevenLabs voice agent. Ask for a market, hear the price of a YES or NO contract, and review the terms before confirming a trade. **All trades use sandbox test funds.** Public market browsing works without an account or API keys.
 
-[Open the live app](https://voice-to-predict-ebon.vercel.app/)
+[Open the live app](https://voice-to-predict-ebon.vercel.app/) · [Browse markets](https://voice-to-predict-ebon.vercel.app/markets) · [How to use](#how-to-use)
 
-![Home screen with the Start voice orb and navigation to Markets and Account](docs/images/voice-home.png)
+| Start a voice session | Inspect a prediction market |
+| --- | --- |
+| [![Voice dashboard with the Start voice control and Markets and Account navigation](docs/images/voice-home.png)](docs/images/voice-home.png) | [![Markets dashboard showing a Bitcoin prediction contract and its order book](docs/images/prediction-market.png)](docs/images/prediction-market.png) |
 
-## Explore a market
+## How it works
 
-Open **Markets** or ask the agent to find a prediction. Select a contract to inspect its order book. For supported cryptocurrency markets, you can ask for QuickNode research before deciding whether to trade.
-
-![Markets screen showing a selected Bitcoin prediction contract](docs/images/prediction-market.png)
-
-## Local setup
-
-Use Node 24.10 or newer with npm. From this directory:
-
-```sh
-npm ci
-npm run dev
+```mermaid
+flowchart LR
+    Browser[Browser voice] --> Agent[ElevenLabs agent]
+    Phone[Twilio phone call] --> Agent
+    Agent --> Markets[Gemini Sandbox search and quotes]
+    Markets --> Proposal[Expiring trade proposal]
+    Proposal --> Confirm[Spoken confirmation]
+    Confirm --> Checks[Server checks session, price and limits]
+    Checks --> Exchange[Gemini Sandbox order]
+    Exchange --> Ledger[Trade ledger]
+    Ledger --> Account[Account: positions and history]
+    Ledger -. optional .-> Receipts[Solana devnet receipts]
+    Agent -. optional .-> Research[QuickNode research]
 ```
 
-Open http://127.0.0.1:5173. The launcher starts a private loopback capture service on an ephemeral port and forwards its API paths through the same origin. It loads server settings from the environment, then the local .env, then ../UBC-Hackathon/.env for missing values. Set SERVER_ENV_FILE to choose another fallback file. Keep secrets out of VITE-prefixed variables. To test and build, run `npm test` and `npm run build`. Use `npm run preview -- --port 5173` to serve the built app with the capture service. For the Cloudflare worker target, run `npm run build:worker`. A standalone worker deployment needs a separate persistent Node/SQLite capture service and same-origin routing for /api/voice, /api/transcripts, /api/intents and /api/tools.
+| Capability | Details |
+| --- | --- |
+| Market data | Search active events and inspect fresh YES/NO quotes, spreads and available liquidity. The dashboard displays cents per contract. |
+| Trading | Buy immediately with a price cap, set a limit in one-cent increments from 1¢ to 99¢, or sell held contracts. Immediate orders can fill partially. A limit buy can remain open. |
+| Crypto research | View free market context. On supported assets, request a QuickNode research quote and approve payment separately in Arc testnet USDC. [Research and pricing](docs/quicknode-research.md) |
+| Phone and receipts | A configured Twilio number reaches a dedicated ElevenLabs branch. Optional receipt anchoring uses a funded Solana devnet wallet. [Phone setup](docs/phone-calls.md) |
+| Setup and deployment | Local trading uses SQLite. Hosted trading uses private storage and server-side credentials. Execution defaults off. [Setup, environment variables, API and troubleshooting](docs/setup-and-operations.md) · [Feature roadmap](feature-roadmap.md) |
 
-## Public market data
+## How to use
 
-No keys, wallet, account or database are necessary for market reads. Search markets queries the current listing of up to 100 active Gemini Sandbox events. An empty search returns the first results. Matching uses event titles, tickers, category, contract labels and symbols. Results include up to eight matching events and eight contracts per event. Select a quote to fetch the event again. Prices come from Gemini in dollars per YES or NO contract and the UI shows cents. Missing quotes and upstream failures are displayed explicitly.
+1. Open **Markets** and select a contract, or choose **Start voice** and say **“Find Bitcoin prediction markets.”**
+2. Ask **“Show the order book for this contract.”** To investigate a supported crypto market, ask **“What would research on this market cost?”**
+3. Try **“Buy 10 YES contracts at a limit of 42 cents.”** Review the contract, quantity, price, estimated fee and expiry. Confirm the exact terms in the same voice session to submit an eligible sandbox order.
+4. Open **Account** to check fills, open orders and positions. To exit a holding, say **“Sell my entire position”** and review the new proposal. Hosted users share the demo sandbox account.
 
-The browser and voice use the same handlers and results. The client tools are `search_markets({query})` and `get_orderbook({event_ticker, contract_symbol, outcome?, side?, quantity?, limit_price?})`. Both use fresh public GETs via /api/public/market-tools. The console's separate overview polls /api/public/dashboard-state and caches the public event listing for 15 seconds.
-
-## Optional private features
-
-- Set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID for signed browser voice sessions. Register the tools in agent/browser-client-tools.json plus capture_order_intent, capture_cancel_intent and get_order_status. Enable the ElevenLabs skip_turn and end_call system tools. Set the first message to “Would you like to place an order?”, both silence waits to 7 seconds and skip_turn.wait_timeout_secs to -1. Starting voice uses the microphone and the provider account.
-- Captures use local SQLite, a bearer token scoped to the browser session and recorded confirmation evidence. A new order intent requires a recognized open Gemini prediction contract. Status and cancellation refer to captured intents. Legacy capture tools only record intents. Separate local browser trading is documented below. Server files and SQLite storage must remain private.
-- The account strip and positions require Gemini Sandbox API credentials with appropriate roles. Only the sandbox origin is accepted. Activity, trades and receipts require the existing Supabase schema, SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. See .env.example. A missing private dependency leaves the public console usable.
-- David's private phone tools require a server-supplied x-tool-secret header matching TOOL_SHARED_SECRET. Configure trusted caller and conversation variables on the provider side. Keep the secret, Gemini signing keys, Supabase service key and PIN on the server. Execution requires EXECUTION_ENABLED=true, an explicitly true database execution_enabled setting, the PIN, credentials and the server-side proposal checks. Execution defaults off. Receipt anchoring additionally uses Solana devnet and a funded signing wallet. The public dashboard does not retry anchoring.
-- Historical simulated API examples and evaluation fixtures describe the earlier capture prototype. The former simulated market routes return HTTP 410 in the running app. Private account, telephony, paid voice and exchange execution require separate integration verification when credentials are available.
-
-## Local browser sandbox trading
-
-Start the local launcher with `npm run dev`, or run `npm run build` and `npm run preview -- --port 5173`. Browser proposals and spoken confirmations use persistent SQLite at SQLITE_PATH. They reuse the phone backend's fresh quote, fee estimate, readback, re-quote and limit-order execution code. Supabase, telephony and Solana are optional for the browser path. The browser records proposals and results in SQLite. The launcher disables the separate Supabase execution path. Run one trading authority per sandbox account and share the SQLite file across local processes.
-
-The client tool `prepare_sandbox_buy` prepares buys and held-position exits. Set `side: "sell"` with a quantity or `close_all: true` to sell available holdings. Choose `order_mode: "market"` to use the current ask or bid, or supply a price for a resting limit. Both identifiers are exact strings from a market lookup. Outcome is yes or no, buy quantity a positive integer, and limit_price is a cent increment from 0.01 to 0.99 dollars per contract. The proposal appears on the current console or focused voice page with the actual contract, fresh quote, limit, quantity, estimated fee, readback and expiry. After the quote, say “Buy now” for an immediate buy, or confirm the exact limit order in the same voice session. The backend checks the order terms, expiry and single-use claim.
-
-Set the server's Gemini sandbox credentials and EXECUTION_ENABLED=true to enable submission. Use a persistent writable SQLITE_PATH. The caller’s dollar budget includes estimated fees. A confirmed limit buy can rest until filled, cancelled or the market closes. An immediate buy submits once at the approved maximum price. Gemini cancels any remainder and reports how much filled.
-
-Local HTTP operations all return JSON with cache-control no-store:
-
-| Operation | Authentication and inputs | Result |
-| --- | --- | --- |
-| GET /api/trading/availability | Local origin | Execution readiness and missing configuration |
-| POST /api/trading/proposals | Active voice session bearer; UUIDv4 Idempotency-Key header; five prepare_sandbox_buy fields | Exact fresh proposal, proposal_id, expires_at and readiness |
-| POST /api/trading/voice-confirm | Active session bearer, proposal ID and confirmation transcript sequence | Verified spoken confirmation and sandbox exchange result |
-| POST /api/trading/portfolio | Empty JSON object | Allowlisted account fields from sandbox active orders, positions and order history, with per-feed errors |
-
-Open Account at /dashboard to see order history and positions. The former /open-trades address redirects there. Account reads show the shared sandbox account without a PIN. Only same-origin loopback clients can use browser trading. The standalone public worker serves none of these local endpoints and its public dashboard omits private account data. The legacy Supabase phone integration has separate credentials and an independent database execution switch.
-
-### Vercel
-
-Use Node 24 and npm. `npm run build:vercel` creates the static site and Node function in `.vercel/output`. Vercel serves the UI and the public API from the same origin. The local launcher uses SQLite. Hosted trading uses the configured Supabase ledger or a linked private Vercel Blob store. Anyone with access to the hosted voice app can confirm a test-funds trade in the shared sandbox account. The hosted Account page and voice position tool read the same shared sandbox account. Use one trading ledger per Gemini sandbox account so confirmations and fills share the same history.
-
-Set the production secrets in the Vercel project. Browsing markets uses public Gemini Sandbox data. Voice requires ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID from the same workspace. Set ELEVENLABS_BRANCH_ID to the branchId in the agent link to follow that branch’s latest published version. Hosted orders require VOICE_SESSION_SECRET, GEMINI_API_KEY, GEMINI_API_SECRET, EXECUTION_ENABLED=true and private order storage. Register agent/confirm-hosted-sandbox-buy.json as a server tool on the active ElevenLabs agent. Use the ID of an ElevenLabs workspace secret whose value matches ELEVENLABS_CALL_CONFIRM_SECRET on Vercel. The server checks the provider's current voice-call history, session and proposal before submitting once. Redeploy after changing variables.
-
-For a rejected call, run `npm run voice:doctor -- <conversation-id>` with the server environment. Omit the ID to inspect the latest call. The command reads ElevenLabs metadata without starting a call or placing an order.
-
-If ElevenLabs returns only code 3000, add `--probe-audio` to check speech synthesis in the configured workspace. This sends one short “Hi.” to the synthesis API and may consume credits. It can reveal account restrictions that the call log omits.
-
-If you use the alternative Supabase backend with the original integer quantity schema, apply [the fractional position quantity update](scripts/supabase-fractional-position-quantities.sql) to support closing fractional positions. The Vercel Blob and local SQLite backends already store decimal quantities.
+To run locally with Node 24.10 or newer, run `npm ci`, then `npm run dev`, and open [localhost:5173](http://127.0.0.1:5173).
