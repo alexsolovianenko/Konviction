@@ -11,10 +11,10 @@
 //   POST portfolio               sanitized shared sandbox Gemini open orders, positions, order history
 //
 // The ElevenLabs system injects the conversation history and call ID into its server webhook.
-import { isSpokenConfirmation } from "../../spoken-confirmation";
+import { confirmedInCall } from "./call-confirmation";
 import { spokenBudgetFill, spokenFill } from "../../spoken-fill";
 import { validOrderKeys } from "./browser-order-input";
-import { hasSpokenMarketName, normalizeReadback, spokenProposal } from "../../../server/spoken-proposal.mjs";
+import { hasSpokenMarketName, spokenProposal } from "../../../server/spoken-proposal.mjs";
 import { db, executionEnabled, logActivity } from "./db";
 import { settledOpenOrders } from "./reconcile-open";
 import { buildSandboxCombo } from "./build-combo";
@@ -249,42 +249,6 @@ async function recordedResult(store: Store, row) {
   return { ok: false, error, status: row.status, message: say, say };
 }
 
-function confirmedInCall(history: unknown, row): boolean {
-  if (typeof history !== "string") return false;
-  try {
-    const { entries } = JSON.parse(history);
-    if (!Array.isArray(entries)) return false;
-    let bound = false;
-    let steps = 0;
-    const expected = spokenProposal(row);
-    for (const turn of entries) {
-      for (const result of turn.role === "tool" || turn.role === "agent" ? turn.tool_results ?? [] : []) {
-        if (!["prepare_sandbox_buy", "prepare_sandbox_remainder"].includes(result.tool_name)) continue;
-        // An interrupted preparation returns a plain-text error. Only its own attempt is invalid.
-        bound = false;
-        steps = 0;
-        if (result.is_error) continue;
-        let data = result.result_value;
-        if (typeof data === "string") {
-          try { data = JSON.parse(data); } catch { continue; }
-        }
-        bound = data?.ok === true && data.proposal_id === row.id;
-      }
-      if (typeof turn.message !== "string" || !turn.message.trim()) continue;
-      if (turn.role === "tool") continue;
-      if (turn.role === "agent" && bound && !turn.interrupted && normalizeReadback(turn.message) === normalizeReadback(expected)) steps = 2;
-      else if (turn.role === "user" && steps === 2 && isSpokenConfirmation(turn.message, row.side === "buy" && row.order_mode === "market")) steps = 3;
-      else {
-        steps = 0;
-        // A status question or hesitation can be followed by a fresh, exact readback.
-        // A cancellation or changed terms require another preparation.
-        if (turn.role === "user" && !/^(?:(?:maybe|wait|not yet|hold on|yes|confirm)[.,!? ]*)?(?:(?:did you (?:buy|sell|place|submit) it(?: already)?|is (?:it|my order) (?:filled|done))\??)?[.!? ]*$/i.test(turn.message.trim())) bound = false;
-      }
-    }
-    return steps === 3;
-  } catch { return false; }
-}
-
 // The provider includes completed tool calls in history when the agent retries
 // without another caller turn. That turn already received its decision.
 function alreadyAnsweredTurn(history: unknown) {
@@ -310,7 +274,8 @@ async function callConfirm(store: Store, token: string | undefined, body) {
   const row = await ownedIntent(store, body.proposal_id, s);
   if (alreadyAnsweredTurn(body.history)) return { ok: true, say: "", next_action: "wait_for_user" };
   if (row.status !== "PROPOSED") return { ...await recordedResult(store, row), replayed: true };
-  if (!confirmedInCall(body.history, row))
+  if (!confirmedInCall(body.history, { toolNames: ["prepare_sandbox_buy", "prepare_sandbox_remainder"],
+    idField: "proposal_id", id: row.id, readback: spokenProposal(row), immediateBuy: row.side === "buy" && row.order_mode === "market" }))
     throw new TradeError("CONFIRMATION_REQUIRED", "Confirmation missed. Order not sent.");
   const config = await availability();
   if (!config.execution_enabled) throw new TradeError("EXECUTION_DISABLED", config.message, 503);
