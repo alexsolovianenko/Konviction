@@ -293,14 +293,14 @@ const columns: { key: SortKey; label: string; num?: boolean }[] = [
   { key: "noAsk", label: "NO ask", num: true },
   { key: "noBid", label: "NO bid", num: true },
   { key: "volume", label: "Event volume", num: true },
-  { key: "expiry", label: "Expires (UTC)" },
+  { key: "expiry", label: "Expires (CT)" },
   { key: "status", label: "Availability" },
 ];
 function expiryText(v: string | null) {
   if (!v) return "—";
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
-  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Chicago" });
 }
 const Price = ({ v, tone }: { v: number | null; tone: string }) => (v === null || v === undefined ? <span className="text-muted-foreground">—</span> : <span className={tone}>{cents(v)}</span>);
 
@@ -389,7 +389,7 @@ export function MarketsTable({ market, onQuote }: { market: MarketTools; onQuote
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{contract.label ?? contract.symbol}</div>
                   <div className="truncate text-xs text-muted-foreground">{event.title}</div>
-                  <div className="tnum text-xs text-muted-foreground">{expiryText(contract.expiry)} UTC · {usd(sort.key === "volume_24h" ? event.volume_24h_usd : event.volume_usd)} {sort.key === "volume_24h" ? "24h" : "event"} volume · {tradable(contract) ? "open" : state(contract)}</div>
+                  <div className="tnum text-xs text-muted-foreground">{expiryText(contract.expiry)} CT · {usd(sort.key === "volume_24h" ? event.volume_24h_usd : event.volume_usd)} {sort.key === "volume_24h" ? "24h" : "event"} volume · {tradable(contract) ? "open" : state(contract)}</div>
                 </div>
                 <div className="shrink-0 text-right font-mono text-xs">
                   <div>YES <Price v={contract.buy.yes} tone="text-success" /> / <Price v={contract.sell.yes} tone="text-success" /></div>

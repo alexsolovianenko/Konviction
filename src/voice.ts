@@ -420,6 +420,13 @@ export class Voice {
         return;
       }
       this.conversation = conversation;
+      const localStart = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Chicago', dateStyle: 'full', timeStyle: 'long',
+      }).format(new Date());
+      conversation.sendContextualUpdate?.(
+        'The caller uses Central time (America/Chicago). Session started ' + localStart +
+        '. Interpret unqualified times in Central time. Preserve explicit time zones in searches.',
+      );
       if (this.visibleContract) conversation.sendContextualUpdate?.("Contract on screen (silent tool context): " + this.visibleContract);
     } catch (error) {
       if (!current()) return;

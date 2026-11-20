@@ -1,8 +1,8 @@
 import type { MarketContract, MarketEvent } from "../components/console/types";
 import { normalizeMarketQuery } from "./market-sort";
 
-const eastern = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/New_York",
+const calendarFormat = (timeZone: string) => new Intl.DateTimeFormat("en-CA", {
+  timeZone,
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
@@ -10,9 +10,13 @@ const eastern = new Intl.DateTimeFormat("en-CA", {
   minute: "2-digit",
   hourCycle: "h23",
 });
-function easternCalendar(at: number) {
+const central = calendarFormat("America/Chicago");
+const eastern = calendarFormat("America/New_York");
+const zonePattern = /\b(central|eastern)(?: (?:standard|daylight))?(?: time)?\b|\b(?:cst|cdt|ct|est|edt|et)\b/;
+
+function calendar(at: number, format: Intl.DateTimeFormat) {
   const p = Object.fromEntries(
-    eastern.formatToParts(at).map(({ type, value }) => [type, Number(value)]),
+    format.formatToParts(at).map(({ type, value }) => [type, Number(value)]),
   );
   return {
     year: p["year"]!,
@@ -68,7 +72,10 @@ export function marketSearch(raw: string, now: number) {
     )
     .replace(/\bi (?:think|believe)\b/g, " ");
   q = q.replace(/\bat or (above|below)\b/g, "$1").replace(/(\d)\s+dollars?\b/g, "$1");
-  const today = easternCalendar(now);
+  const zone = q.match(zonePattern)?.[0];
+  const format = zone?.startsWith("e") ? eastern : central;
+  q = q.replace(zonePattern, " ");
+  const today = calendar(now, format);
   let date: { year?: number; month: number; day: number } | null = null;
   let clock: { hour: number; minute: number } | null = null;
   let strike: { direction: string; value: number } | null = null;
@@ -122,7 +129,7 @@ export function marketSearch(raw: string, now: number) {
     });
   const words = q
     .replace(
-      /\b(?:find|show|pull up|please|me|which|the|a|an|market[s]?|contracts?|predictions?|for|at|on|in|of|by|will|finish(?:es)?|finishing|ends?|ending|expire[s]?|expiring|price|is|be|eastern(?: time)?|est|edt|et)\b/g,
+      /\b(?:find|show|pull up|please|me|which|the|a|an|market[s]?|contracts?|predictions?|for|at|on|in|of|by|will|finish(?:es)?|finishing|ends?|ending|expire[s]?|expiring|price|is|be)\b/g,
       " ",
     )
     .replace(/\b(?:fifteen|15)[ -]?(?:minutes?|mins?|m)\b/g, "15m")
@@ -135,7 +142,7 @@ export function marketSearch(raw: string, now: number) {
     if (date || clock) {
       const expiry = Date.parse(contract.expiry ?? "");
       if (!Number.isFinite(expiry) || expiry <= now) return false;
-      const closing = easternCalendar(expiry);
+      const closing = calendar(expiry, format);
       if (
         date &&
         (date.month !== closing.month ||
