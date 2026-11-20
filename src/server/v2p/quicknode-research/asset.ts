@@ -13,6 +13,8 @@ export type AssetIdentity = {
 
 export type MarketSelection = {
   event_ticker: string;
+  /** Gemini series (e.g. BTC05M, ETH15M, SOL1H); sets the default research timeframe. */
+  series: string | null;
   contract_symbol: string;
   title: string | null;
   contract_label: string | null;
@@ -131,6 +133,7 @@ export function identifyMarket(
   const label = str(c["label"]);
   const market: MarketSelection = {
     event_ticker: eventTicker,
+    series: str(ev["series"])?.slice(0, 40) ?? null,
     contract_symbol: contractSymbol,
     title: title ? marketTitle(title, expiry).slice(0, 200) : null,
     contract_label: label ? marketTitle(label, expiry).slice(0, 200) : null,

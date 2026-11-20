@@ -408,9 +408,11 @@ export class Voice {
       const { Conversation } = await import('@elevenlabs/client');
       if (!current()) return;
       const researchTools = this.research.tools(current);
-      const trackResearch = async (tool: keyof typeof researchTools) => {
+      const trackResearch = async (tool: keyof typeof researchTools, params?: Record<string, unknown>) => {
         const key = this.visibleContract;
-        const value = await researchTools[tool]();
+        const value = await (tool === 'request_research_quote'
+          ? researchTools.request_research_quote(params)
+          : researchTools.get_research_result());
         if (key && key === this.visibleContract && current()) {
           const result = JSON.parse(value);
           if (tool === 'request_research_quote') {
@@ -469,7 +471,7 @@ export class Voice {
             preparedThisTurn = true;
             return JSON.stringify(await this.confirmByVoice());
           },
-          request_research_quote: () => trackResearch('request_research_quote'),
+          request_research_quote: (params: Record<string, unknown>) => trackResearch('request_research_quote', params),
           get_research_result: () => trackResearch('get_research_result'),
           get_sandbox_positions: async () => JSON.stringify(current()
             ? await this.readPositions() : {ok:false, say:'Session ended.'}),

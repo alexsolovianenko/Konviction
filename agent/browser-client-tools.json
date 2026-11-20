@@ -201,20 +201,31 @@
     {
       "name": "request_research_quote",
       "type": "client",
-      "description": "Read-only. On a new market selection or a research request, get the exact selected market’s unpaid quote. If it returns ask_for_voice_approval, speak its say verbatim, alone, and wait. Never speak quote_id. No payment or trade occurs here.",
+      "description": "Read-only. On a new market selection or a research request, get the exact selected market's unpaid quote for real DEX buy and sell volume. Omit timeframe to use the prediction's own duration; pass timeframe only when the caller asks for a different window. If it returns ask_for_voice_approval, speak its say verbatim, alone, and wait. Never speak quote_id. No payment or trade occurs here.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,
       "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "timeframe": {
+            "type": "string",
+            "enum": [
+              "5m",
+              "15m",
+              "1h",
+              "24h"
+            ],
+            "description": "Optional window the caller asked for: 5m, 15m, 1h or 24h. Omit to use the selected prediction's duration."
+          }
+        },
         "required": []
       }
     },
     {
       "name": "get_research_result",
       "type": "client",
-      "description": "Read-only. Read the latest research for the selected cryptocurrency prediction, including any paid QuickNode network-activity result. Never pays and never trades. Report only returned facts with the caveat that this is market context and network activity, not a price prediction.",
+      "description": "Read-only. Read the latest research for the selected cryptocurrency prediction, including any paid DEX buy and sell volume. Never pays and never trades. Report only returned facts: bought, sold, net buy volume, buy share, the measured window and whether it was partial. Buy/sell flow is context, not a price forecast.",
       "expects_response": true,
       "pre_tool_speech": "off",
       "response_timeout_secs": 15,

@@ -99,12 +99,12 @@ vi.mock("../trade-engine", () => tradeEngine);
 vi.mock("../gemini", () => gemini);
 
 import { mintSessionToken } from "../browser-session";
-import { evmReport, solanaReport, utxoReport, xrplReport } from "./aggregate";
 import { identifyMarket } from "./asset";
 import { researchConfig } from "./config";
 import { spotFromKlines } from "./context";
 import { APPROVAL_PHRASE, handleQuicknodeResearch } from "./handler";
 import type { SdkClient, SdkFactory } from "./paid-request";
+import { bodyAllowed, DEX_MARKETS } from "./dex";
 import { routeBody, ROUTES } from "./routes";
 import type { Deps } from "./service";
 import { memoryIO, researchStore } from "./store";
@@ -129,58 +129,120 @@ const BASE_SEPOLIA = {
   network: "eip155:84532",
   asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 };
-const LISTED = [
-  "btc-mainnet",
-  "ethereum-mainnet",
-  "solana-mainnet",
-  "xrp-mainnet",
-  "hype-mainnet",
-  "ltc-mainnet",
-  "doge-mainnet",
-  "bch-mainnet",
-  "bsc-mainnet",
-  "matic-mainnet",
-];
+const LISTED = ["btc-mainnet", "ethereum-mainnet", "solana-mainnet", "xrp-mainnet", "hype-mainnet"];
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64");
 
-const RESULTS: Record<string, unknown> = {
-  solana: Array.from({ length: 120 }, (_, i) => ({
-    slot: 1_000_000 - i * 150,
-    numTransactions: 180_000,
-    numNonVoteTransactions: i < 60 ? 60_000 : 75_000,
-    numSlots: 150,
-    samplePeriodSecs: 60,
-  })),
-  evm: {
-    oldestBlock: "0x10",
-    baseFeePerGas: Array.from({ length: 121 }, () => "0x3b9aca00"),
-    gasUsedRatio: Array.from({ length: 120 }, (_, i) => (i < 60 ? 0.4 : 0.5)),
-  },
-  utxo: {
-    loaded: true,
-    size: 12_345,
-    bytes: 6_500_000,
-    usage: 1,
-    total_fee: 0.5,
-    mempoolminfee: 0.00001,
-  },
-  xrpl: {
-    current_ledger_size: "40",
-    current_queue_size: "2",
-    expected_ledger_size: "80",
-    drops: { base_fee: "10", median_fee: "5000", open_ledger_fee: "10" },
-    status: "success",
-  },
+// ------------------------------------------------------------------ fake mainnet (realistic shapes)
+const HEAD = 24_000_000;
+const word = (v: bigint) => (v < 0n ? (1n << 256n) + v : v).toString(16).padStart(64, "0");
+const swapData = (a0: bigint, a1: bigint) =>
+  "0x" + word(a0) + word(a1) + word(1n << 96n) + word(10n ** 18n) + word(0n);
+const SWAP = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+const ETH_POOL = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"; // token0 USDC, token1 WETH
+const BTC_POOL = "0x99ac8ca7087fa4a2a1fb6357269965a2014abc35"; // token0 WBTC, token1 USDC
+const SOL_SIG1 = "5".repeat(87);
+const SOL_SIG2 = "6".repeat(87);
+const XRP_HASH = "AB".repeat(32);
+const evmLogs = (from: number, to: number, addresses: string[]) =>
+  [
+    // Trader BUYS 1 WETH for 3000 USDC: pool +3000 USDC (token0), -1 WETH (token1).
+    { address: ETH_POOL, block: HEAD, tx: "0x" + "e1".repeat(32), a0: 3000n * 10n ** 6n, a1: -(10n ** 18n) },
+    // Trader SELLS 0.5 WBTC for 45000 USDC: pool +0.5 WBTC (token0), -45000 USDC (token1).
+    { address: BTC_POOL, block: HEAD - 1, tx: "0x" + "b1".repeat(32), a0: 5n * 10n ** 7n, a1: -45000n * 10n ** 6n },
+  ]
+    .filter((l) => addresses.includes(l.address) && l.block >= from && l.block <= to)
+    .map((l, i) => ({
+      address: l.address,
+      topics: [SWAP, "0x" + "0".repeat(64), "0x" + "0".repeat(64)],
+      data: swapData(l.a0, l.a1),
+      blockNumber: "0x" + l.block.toString(16),
+      transactionHash: l.tx,
+      logIndex: "0x" + i.toString(16),
+      removed: false,
+    }));
+const solTx = (sig: string, now: number) => {
+  const swap = sig === SOL_SIG1;
+  const bal = (idx: number, mint: string, amount: bigint, decimals: number) => ({
+    accountIndex: idx,
+    mint,
+    owner: "FwewVm8u6tFPGewAyHmWAqad9hmF7mvqxK4mJ7iNqqGC",
+    uiTokenAmount: { amount: amount.toString(), decimals },
+  });
+  const SOLM = "So11111111111111111111111111111111111111112";
+  const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  return {
+    blockTime: now - (swap ? 10 : 20),
+    meta: {
+      err: null,
+      // SIG1: pool sends 2 SOL and receives 300 USDT (a BUY). SIG2: both vaults rise (liquidity add).
+      preTokenBalances: [bal(1, SOLM, 1000n * 10n ** 9n, 9), bal(2, USDT, 150000n * 10n ** 6n, 6)],
+      postTokenBalances: swap
+        ? [bal(1, SOLM, 998n * 10n ** 9n, 9), bal(2, USDT, 150300n * 10n ** 6n, 6)]
+        : [bal(1, SOLM, 1001n * 10n ** 9n, 9), bal(2, USDT, 150150n * 10n ** 6n, 6)],
+      loadedAddresses: { writable: [], readonly: [] },
+    },
+    transaction: {
+      message: {
+        accountKeys: [
+          "Trader1111111111111111111111111111111111111",
+          "BFAWVmF5aoALggQ9Y2RpTijpYKRESxcdNe6JDNZEpoxC",
+          "B1qD7GDsKN4kz2ehks71eEpVhUzqaTVXaWfCxXykRAA9",
+        ],
+      },
+    },
+  };
 };
+const xrpEntries = (now: number) => [
+  {
+    validated: true,
+    hash: XRP_HASH,
+    tx_json: { TransactionType: "OfferCreate", date: now - 30 - 946684800 },
+    meta: {
+      TransactionResult: "tesSUCCESS",
+      AffectedNodes: [
+        // AMM sends 100 XRP and receives 50 RLUSD: the trader BOUGHT XRP for $50.
+        { ModifiedNode: { LedgerEntryType: "AccountRoot", FinalFields: { Account: "rhWTXC2m2gGGA9WozUaoMm6kLAVPb1tcS3", Balance: "900000000" }, PreviousFields: { Balance: "1000000000" } } },
+        { ModifiedNode: { LedgerEntryType: "RippleState", FinalFields: { Balance: { currency: "524C555344000000000000000000000000000000", issuer: "rrrrrrrrrrrrrrrrrrrrBZbvji", value: "1050" }, HighLimit: { currency: "524C555344000000000000000000000000000000", issuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De", value: "0" }, LowLimit: { currency: "524C555344000000000000000000000000000000", issuer: "rhWTXC2m2gGGA9WozUaoMm6kLAVPb1tcS3", value: "0" } }, PreviousFields: { Balance: { currency: "524C555344000000000000000000000000000000", issuer: "rrrrrrrrrrrrrrrrrrrrBZbvji", value: "1000" } } } },
+      ],
+    },
+  },
+];
+/** JSON-RPC result for an allowlisted DEX body on a QuickNode network, from the fake chain. */
+function chainResult(network: string, body: string): unknown {
+  const j = JSON.parse(body);
+  const now = Math.floor(Date.now() / 1000);
+  if (network === "ethereum-mainnet") {
+    if (j.method === "eth_getBlockByNumber") {
+      const n = j.params[0] === "latest" ? HEAD : Number.parseInt(j.params[0], 16);
+      return { number: "0x" + n.toString(16), timestamp: "0x" + (now - (HEAD - n) * 12).toString(16) };
+    }
+    const f = j.params[0];
+    return evmLogs(Number.parseInt(f.fromBlock, 16), Number.parseInt(f.toBlock, 16), f.address);
+  }
+  if (network === "solana-mainnet") {
+    if (j.method === "getSignaturesForAddress")
+      return [
+        { signature: SOL_SIG1, blockTime: now - 10, err: null },
+        { signature: SOL_SIG2, blockTime: now - 20, err: null },
+      ];
+    return solTx(j.params[0], now);
+  }
+  return { transactions: xrpEntries(now), status: "success" };
+}
 const routeOf = (url: string) =>
   ROUTES.find((r) => url === `https://x402.quicknode.com/${r.network}`)!;
-const resultFor = (url: string) => {
-  const route = routeOf(url);
-  const result = RESULTS[route.family];
-  return route.family === "xrpl"
+const resultFor = (url: string, body: string) => {
+  const network = url.replace("https://x402.quicknode.com/", "");
+  const result = chainResult(network, body);
+  return network === "xrp-mainnet"
     ? JSON.stringify({ result })
     : JSON.stringify({ jsonrpc: "2.0", id: 1, result });
 };
+/** Every paid body must be allowlisted for some market on that URL's network. */
+const anyMarketAllows = (url: string, body: string) =>
+  Object.values(DEX_MARKETS).some(
+    (m) => url === `https://x402.quicknode.com/${m.network}` && bodyAllowed(m, body),
+  );
 
 function probe(
   kind: { status: number; accepts?: unknown[]; resourceUrl?: string } = { status: 402 },
@@ -201,7 +263,9 @@ function probe(
         headers: { "payment-required": b64(doc) },
       });
     }
-    return new Response(kind.status === 200 ? resultFor(u) : "nope", { status: kind.status });
+    return new Response(kind.status === 200 ? resultFor(u, String(init?.body)) : "nope", {
+      status: kind.status,
+    });
   });
 }
 
@@ -218,6 +282,7 @@ function mockSdk(o: SdkOpts = {}) {
     fetch: 0,
     signed: 0,
     urls: [] as string[],
+    bodies: [] as string[],
     configs: [] as unknown[],
     spend: [] as unknown[],
   };
@@ -248,7 +313,8 @@ function mockSdk(o: SdkOpts = {}) {
         calls.fetch++;
         const u = String(url);
         calls.urls.push(u);
-        expect(init?.body).toBe(routeBody(routeOf(u)));
+        expect(anyMarketAllows(u, String(init?.body))).toBe(true);
+        calls.bodies.push(String(init?.body));
         if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
         let reqs = (o.accepts ?? [BASE_SEPOLIA, ARC_ACCEPT]) as Array<Record<string, unknown>>;
         for (const p of policies) {
@@ -264,7 +330,7 @@ function mockSdk(o: SdkOpts = {}) {
         calls.signed++;
         available -= BigInt(String(reqs[0]!["amount"]));
         if (o.throwAfterSign) throw new Error("socket hang up");
-        return new Response(o.body ?? resultFor(u), {
+        return new Response(o.body ?? resultFor(u, String(init?.body)), {
           status: o.status ?? 200,
           headers:
             o.paymentResponse === false
@@ -397,16 +463,16 @@ function harness(o: H = {}) {
 
 // ------------------------------------------------------------------ identification and routing
 describe("market identification from Gemini metadata", () => {
+  // Fixture series are <SYM>1H, so the default timeframe is 1 hour.
   it.each([
-    ["BTC", BTC, "Bitcoin", "btc-mainnet", "Bitcoin"],
-    ["BTC 5-minute", BTC5, "Bitcoin", "btc-mainnet", "Bitcoin"],
-    ["ETH", ETH, "Ether", "ethereum-mainnet", "Ethereum"],
-    ["SOL", SOL, "Solana", "solana-mainnet", "Solana"],
-    ["XRP", XRP, "XRP", "xrp-mainnet", "XRP Ledger"],
-    ["HYPE", HYPE, "Hyperliquid", "hype-mainnet", "HyperEVM"],
+    ["BTC", BTC, "Bitcoin", "ethereum-mainnet", "btc", 3],
+    ["BTC 5-minute", BTC5, "Bitcoin", "ethereum-mainnet", "btc", 3],
+    ["ETH", ETH, "Ether", "ethereum-mainnet", "eth", 4],
+    ["SOL", SOL, "Solana", "solana-mainnet", "sol", 77],
+    ["XRP", XRP, "XRP", "xrp-mainnet", "xrp", 2],
   ])(
-    "%s: identifies the asset and quotes its own chain only",
-    async (_label, ev, name, network, chain) => {
+    "%s: identifies the asset and quotes its own DEX plan with an exact call estimate",
+    async (_label, ev, name, network, route, calls) => {
       const h = harness();
       const q = await h.quote((await token()).token, ev);
       expect(q.status).toBe(200);
@@ -419,16 +485,47 @@ describe("market identification from Gemini metadata", () => {
         strike_type: "above",
         settlement_index: ev.sourceDetails.index,
       });
+      const tf = ev === BTC5 ? "5m" : "1h";
       expect(q.body).toMatchObject({
         status: "quoted",
         quicknode_network: network,
-        research_chain: chain,
-        price_usdc: "0.0001",
+        route_id: route,
+        timeframe: tf,
+        calls_planned: route === "btc" || route === "eth" ? expect.any(Number) : calls,
+        per_call_usdc: "0.0001",
       });
+      const planned = q.body["calls_planned"] as number;
+      if (ev !== BTC5) expect(planned).toBe(calls);
+      expect(BigInt(q.body["price_atomic"])).toBe(100n * BigInt(planned));
+      expect(q.body["say"]).toContain(`up to ${planned} paid data calls`);
+      expect(q.body["say"]).toContain(`at most ${q.body["max_price_usdc"]} testnet USDC`);
       expect(String(h.fetchImpl.mock.calls[0]![0])).toBe(`https://x402.quicknode.com/${network}`);
       expect(h.sdk.factory).not.toHaveBeenCalled();
     },
   );
+
+  it("defaults the timeframe to the prediction's duration and accepts the four timeframes", async () => {
+    const h = harness();
+    const { token: t } = await token();
+    expect((await h.quote(t, BTC5)).body["timeframe"]).toBe("5m");
+    for (const tf of ["5m", "15m", "1h", "24h"]) {
+      const q = await h.post("quote", { event_ticker: XRP.ticker, contract_symbol: sym(XRP), timeframe: tf }, t);
+      expect(q.body).toMatchObject({ status: "quoted", timeframe: tf });
+    }
+    const bad = await h.post("quote", { event_ticker: XRP.ticker, contract_symbol: sym(XRP), timeframe: "7d" }, t);
+    expect(bad.status).toBe(400);
+    // ETH 24h: 2 headers + 25 log chunks = 27 calls = 0.0027 USDC, under the 0.01 cap.
+    const eth24 = await h.post("quote", { event_ticker: ETH.ticker, contract_symbol: sym(ETH), timeframe: "24h" }, t);
+    expect(eth24.body).toMatchObject({ calls_planned: 27, price_atomic: "2700", max_price_usdc: "0.0027" });
+  });
+
+  it("refuses to quote a timeframe whose estimated cost exceeds the per-request cap", async () => {
+    process.env["QUICKNODE_RESEARCH_MAX_PER_REQUEST_ATOMIC"] = "1000";
+    const h = harness();
+    const q = await h.post("quote", { event_ticker: ETH.ticker, contract_symbol: sym(ETH), timeframe: "24h" }, (await token()).token);
+    expect(q.body["status"]).toBe("context_only");
+    expect(q.body["limitations"].join(" ")).toMatch(/needs up to 27 paid calls \(0\.0027 USDC\), above the 0\.001 USDC per-request cap/);
+  });
 
   it("builds verified market context: prices, implied probability, index change, volatility, strike distance", async () => {
     const h = harness();
@@ -463,7 +560,7 @@ describe("market identification from Gemini metadata", () => {
       route_id: null,
     });
     expect(q.body["limitations"].join(" ")).toMatch(
-      /No supported paid QuickNode x402 research source for Foocoin \(FOO\)/,
+      /covers ETH, BTC, SOL and XRP only, not Foocoin \(FOO\)/,
     );
     expect(q.body["say"]).toMatch(/Nothing was charged/);
     expect(h.fetchImpl).not.toHaveBeenCalled();
@@ -471,20 +568,22 @@ describe("market identification from Gemini metadata", () => {
     expect(h.sdk.factory).not.toHaveBeenCalled();
   });
 
-  it("a Gemini coin without a QuickNode network (ZEC) gets context only", async () => {
+  it("only ETH, BTC, SOL and XRP are supported: HYPE and ZEC get context only", async () => {
     const h = harness();
-    const q = await h.quote((await token()).token, ZEC);
-    expect(q.body).toMatchObject({ status: "context_only" });
-    expect(q.body["context"]["spot"]).not.toBeNull();
+    for (const ev of [HYPE, ZEC]) {
+      const q = await h.quote((await token()).token, ev);
+      expect(q.body).toMatchObject({ status: "context_only", route_id: null });
+      expect(q.body["context"]["spot"]).not.toBeNull();
+    }
     expect(h.fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("unsupported data providers: unlisted network, unavailable list, provider HTTP error", async () => {
+  it("unsupported data providers: unlisted network, unavailable list, provider HTTP error, free answer", async () => {
     const t = (await token()).token;
-    let h = harness({ networks: LISTED.filter((n) => n !== "btc-mainnet") });
-    let q = await h.quote(t, BTC);
+    let h = harness({ networks: LISTED.filter((n) => n !== "solana-mainnet") });
+    let q = await h.quote(t, SOL);
     expect(q.body["status"]).toBe("context_only");
-    expect(q.body["limitations"].join(" ")).toMatch(/does not currently list btc-mainnet/);
+    expect(q.body["limitations"].join(" ")).toMatch(/does not currently list solana-mainnet/);
     expect(h.fetchImpl).not.toHaveBeenCalled();
     h = harness({ networks: null });
     q = await h.quote(t, ETH);
@@ -493,6 +592,10 @@ describe("market identification from Gemini metadata", () => {
     q = await h.quote(t, SOL);
     expect(q.body["status"]).toBe("context_only");
     expect(q.body["limitations"].join(" ")).toMatch(/returned HTTP 404/);
+    h = harness({ probe: { status: 200 } });
+    q = await h.quote(t, ETH);
+    expect(q.body["status"]).toBe("context_only");
+    expect(q.body["limitations"].join(" ")).toMatch(/without a payment request/);
     expect(h.sdk.factory).not.toHaveBeenCalled();
   });
 
@@ -500,7 +603,7 @@ describe("market identification from Gemini metadata", () => {
     const h = harness();
     const q = await h.quote((await token()).token, SOLAR);
     expect(q.body["status"]).toBe("context_only");
-    expect(q.body["limitations"].join(" ")).toMatch(/does not match the Solana network/);
+    expect(q.body["limitations"].join(" ")).toMatch(/does not match SOL/);
     expect(h.fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -528,6 +631,8 @@ describe("market identification from Gemini metadata", () => {
       { method: "sendTransaction" },
       { body: "{}" },
       { network: "zcash-mainnet" },
+      { timeframe: "1w" },
+      { timeframe: 5 },
     ]) {
       expect(
         (
@@ -553,7 +658,8 @@ describe("quote validation", () => {
     expect((await h.quote("")).status).toBe(401);
     expect((await h.quote("forged.token")).status).toBe(401);
     const c = await h.context(SOL);
-    expect(c.body).toMatchObject({ status: "context_only", route_id: "sol" });
+    expect(c.body).toMatchObject({ status: "context_only", route_id: "sol", timeframe: "1h" });
+    expect(c.body["limitations"].join(" ")).toMatch(/DEX buy and sell volume/);
     expect(h.fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -601,58 +707,25 @@ describe("quote validation", () => {
     process.env["QUICKNODE_RESEARCH_MAX_PER_REQUEST_ATOMIC"] = "50";
     expect((await harness().quote((await token()).token)).body["error"]).toBe("OVER_CAP");
   });
-
-  it("shows a free response as free and never charges", async () => {
-    const h = harness({ probe: { status: 200 } });
-    const { token: t } = await token();
-    const q = await h.quote(t, ETH);
-    expect(q.body).toMatchObject({ status: "free", price_atomic: "0" });
-    expect(q.body["report"]["comparison"]["change_pct"]).toBe(25);
-    expect((await h.approve(t, q.body)).status).toBe(409);
-    expect(h.sdk.factory).not.toHaveBeenCalled();
-  });
 });
 
 // ------------------------------------------------------------------ approve
 describe("approve", () => {
   it.each([
-    [
-      "SOL",
-      SOL,
-      "solana-mainnet",
-      (r: any) =>
-        expect(r.comparison).toMatchObject({ recent: 1000, previous: 1250, change_pct: -20 }),
-    ],
-    [
-      "ETH",
-      ETH,
-      "ethereum-mainnet",
-      (r: any) =>
-        expect(r.comparison).toMatchObject({ recent: 50, previous: 40, change_pct: 25, unit: "%" }),
-    ],
-    [
-      "BTC",
-      BTC,
-      "btc-mainnet",
-      (r: any) =>
-        expect(r.metrics[0]).toMatchObject({ label: "Pending transactions", value: 12345 }),
-    ],
-    [
-      "XRP",
-      XRP,
-      "xrp-mainnet",
-      (r: any) => expect(r.metrics[1]).toMatchObject({ value: 50, unit: "%" }),
-    ],
-    ["HYPE", HYPE, "hype-mainnet", (r: any) => expect(r.warnings.join(" ")).toMatch(/HyperCore/)],
+    ["ETH", ETH, "ethereum-mainnet", 4, { buy_usd: 3000, sell_usd: 0, net_buy_usd: 3000, buy_pct: 100, trade_count: 1 }],
+    ["BTC", BTC, "ethereum-mainnet", 3, { buy_usd: 0, sell_usd: 45000, net_buy_usd: -45000, buy_pct: 0, trade_count: 1 }],
+    ["SOL", SOL, "solana-mainnet", 3, { buy_usd: 300, sell_usd: 0, net_buy_usd: 300, buy_pct: 100, trade_count: 1, pool_tx_count: 2 }],
+    ["XRP", XRP, "xrp-mainnet", 1, { buy_usd: 50, sell_usd: 0, net_buy_usd: 50, buy_pct: 100, trade_count: 1 }],
   ])(
-    "%s: pays once on the quote's own route with the proven SDK flow",
-    async (label, ev, network, check) => {
+    "%s: runs the allowlisted plan on the quote's own route and reports real buy/sell volume",
+    async (label, ev, network, calls, totals) => {
       const h = harness();
       const { token: t } = await token();
-      const a = await h.approve(t, (await h.quote(t, ev)).body);
+      const q = (await h.quote(t, ev)).body;
+      const a = await h.approve(t, q);
       expect(a.status).toBe(200);
       expect(a.body["status"]).toBe("paid");
-      expect(h.sdk.calls.urls).toEqual([`https://x402.quicknode.com/${network}`]);
+      expect(h.sdk.calls.urls).toEqual(Array(calls).fill(`https://x402.quicknode.com/${network}`));
       expect(h.sdk.calls.configs).toEqual([
         {
           baseUrl: "https://x402.quicknode.com",
@@ -672,13 +745,24 @@ describe("approve", () => {
           ],
         },
       ]);
-      check(a.body["report"]);
+      const r = a.body["report"];
+      expect(r).toMatchObject({ kind: "dex_volume", asset: label, completeness: "complete", timeframe: "1h", calls_used: calls, ...totals });
+      expect(r["measured_seconds"]).toBeGreaterThanOrEqual(3600);
+      expect(r["examples"][0]["url"]).toMatch(/^https:\/\/(etherscan\.io|solscan\.io|livenet\.xrpl\.org)\//);
+      // No retired network-activity metrics anywhere in the result.
+      expect(JSON.stringify(r)).not.toMatch(/\bTPS\b|gas utilization|mempool|base fee|non-vote/);
       expect(a.body["context"]["asset"]["symbol"]).toBe(label);
+      // Unused budget is released: held = per-call price x payments actually created.
+      expect(a.body["price_atomic"]).toBe(String(100 * calls));
+      expect(a.body["max_price_usdc"]).toBe(q["max_price_usdc"]);
       expect(a.body["evidence"]).toMatchObject({
         signed: true,
         http_status: 200,
         payment_response_present: true,
-        gateway_deduction_atomic: "100",
+        gateway_deduction_atomic: String(100 * calls),
+        calls_sent: calls,
+        calls_ok: calls,
+        calls_signed: calls,
       });
       expect(a.body["evidence"]["payment_response"]).toMatchObject({
         success: true,
@@ -687,9 +771,20 @@ describe("approve", () => {
       const text = JSON.stringify(a.body);
       expect(text).not.toContain("SECRET.JWT.TOKEN");
       expect(text).not.toContain("11".repeat(32));
-      expect(a.body["say"]).toMatch(/not a price signal/);
+      expect(a.body["say"]).toMatch(/not a price forecast/);
+      if (label === "BTC") expect(r["headline"]).toMatch(/Wrapped Bitcoin \(WBTC\)/);
     },
   );
+
+  it("never signs more payments than the approved plan, even if the work tries more calls", async () => {
+    const h = harness();
+    const { token: t } = await token();
+    const a = await h.approve(t, (await h.quote(t, XRP)).body);
+    expect(a.body["status"]).toBe("paid");
+    // XRP 1h plan allows 2 pages; the fake ledger ends after one, so only one is paid.
+    expect(h.sdk.calls.signed).toBe(1);
+    for (const b of h.sdk.calls.bodies) expect(JSON.parse(b).method).toBe("account_tx");
+  });
 
   it("rejects an expired quote without touching the SDK", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -717,7 +812,7 @@ describe("approve", () => {
           "approve",
           {
             quote_id: q.body["quote_id"],
-            max_atomic: "200",
+            max_atomic: "100",
             confirm: APPROVAL_PHRASE,
             idempotency_key: crypto.randomUUID(),
           },
@@ -746,7 +841,7 @@ describe("approve", () => {
     expect(h.sdk.factory).not.toHaveBeenCalled();
   });
 
-  it("concurrent approvals of one quote send at most one paid request", async () => {
+  it("concurrent approvals of one quote run at most one paid session", async () => {
     const h = harness({ sdk: { delayMs: 20 } });
     const { token: t } = await token();
     const q = await h.quote(t, ETH);
@@ -757,22 +852,25 @@ describe("approve", () => {
       h.approve(t, q.body),
       h.approve(t, q.body),
     ]);
-    expect(h.sdk.calls.fetch).toBe(1);
+    expect(h.sdk.factory).toHaveBeenCalledTimes(1);
+    expect(h.sdk.calls.fetch).toBe(4); // one ETH 1h plan
     expect(results.filter((r) => r.status === 409).length).toBe(2);
     expect(results.filter((r) => r.status === 200).length).toBe(2);
   });
 
-  it("an ambiguous payment becomes unknown_pending, is never resent, and still holds budget", async () => {
+  it("an ambiguous payment becomes unknown_pending, is never resent, and still holds the full budget", async () => {
     const h = harness({ sdk: { throwAfterSign: true } });
     const { token: t } = await token();
     const q = await h.quote(t, BTC);
     const key = crypto.randomUUID();
-    expect((await h.approve(t, q.body, key)).body["status"]).toBe("unknown_pending");
+    const a = await h.approve(t, q.body, key);
+    expect(a.body["status"]).toBe("unknown_pending");
+    expect(a.body["price_atomic"]).toBe("300");
     expect((await h.approve(t, q.body, key)).body["status"]).toBe("unknown_pending");
     expect((await h.approve(t, q.body)).status).toBe(409);
     expect(h.sdk.calls.fetch).toBe(1);
-    process.env["QUICKNODE_RESEARCH_MAX_PER_SESSION_ATOMIC"] = "100";
-    expect((await h.approve(t, (await h.quote(t, ETH)).body)).body["error"]).toBe("SESSION_CAP");
+    process.env["QUICKNODE_RESEARCH_MAX_PER_SESSION_ATOMIC"] = "300";
+    expect((await h.approve(t, (await h.quote(t, XRP)).body)).body["error"]).toBe("SESSION_CAP");
   });
 
   it("refuses at signing time if the fresh 402 differs from the quote, and releases the budget", async () => {
@@ -780,35 +878,28 @@ describe("approve", () => {
     const { token: t } = await token();
     const a = await h.approve(t, (await h.quote(t)).body);
     expect(a.body["status"]).toBe("failed");
+    expect(a.body["price_atomic"]).toBe("0");
     expect(a.body["evidence"]["signed"]).toBe(false);
     expect(h.sdk.calls.signed).toBe(0);
   });
 
-  it("enforces per-session and per-UTC-day budgets across assets", async () => {
-    process.env["QUICKNODE_RESEARCH_MAX_PER_SESSION_ATOMIC"] = "200";
-    process.env["QUICKNODE_RESEARCH_MAX_PER_DAY_ATOMIC"] = "300";
+  it("enforces per-session and per-UTC-day budgets across assets, holding only what was spent", async () => {
+    // BTC 1h = 3 calls (300), ETH 1h = 4 calls (400), XRP 1h reserves 200 and spends 100.
+    process.env["QUICKNODE_RESEARCH_MAX_PER_SESSION_ATOMIC"] = "700";
+    process.env["QUICKNODE_RESEARCH_MAX_PER_DAY_ATOMIC"] = "900";
     const h = harness();
     const s1 = await token();
-    expect((await h.approve(s1.token, (await h.quote(s1.token, BTC)).body)).body["status"]).toBe(
-      "paid",
-    );
-    expect((await h.approve(s1.token, (await h.quote(s1.token, ETH)).body)).body["status"]).toBe(
-      "paid",
-    );
-    expect((await h.approve(s1.token, (await h.quote(s1.token, SOL)).body)).body["error"]).toBe(
-      "SESSION_CAP",
-    );
+    expect((await h.approve(s1.token, (await h.quote(s1.token, BTC)).body)).body["status"]).toBe("paid");
+    expect((await h.approve(s1.token, (await h.quote(s1.token, ETH)).body)).body["status"]).toBe("paid");
+    expect((await h.approve(s1.token, (await h.quote(s1.token, XRP)).body)).body["error"]).toBe("SESSION_CAP");
     const s2 = await token();
-    expect((await h.approve(s2.token, (await h.quote(s2.token, XRP)).body)).body["status"]).toBe(
-      "paid",
-    );
-    expect((await h.approve(s2.token, (await h.quote(s2.token, HYPE)).body)).body["error"]).toBe(
-      "DAILY_CAP",
-    );
-    expect(h.sdk.calls.fetch).toBe(3);
+    expect((await h.approve(s2.token, (await h.quote(s2.token, XRP)).body)).body["status"]).toBe("paid");
+    // Day: 300 + 400 + 100 spent = 800; another XRP reservation (200) would exceed 900.
+    expect((await h.approve(s2.token, (await h.quote(s2.token, XRP)).body)).body["error"]).toBe("DAILY_CAP");
+    expect(h.sdk.calls.fetch).toBe(3 + 4 + 1);
   });
 
-  it("records paid-but-JSON-RPC-error honestly", async () => {
+  it("records paid-but-JSON-RPC-error honestly: no totals, never presented as complete", async () => {
     const h = harness({
       sdk: {
         body: JSON.stringify({
@@ -821,8 +912,9 @@ describe("approve", () => {
     const { token: t } = await token();
     const a = await h.approve(t, (await h.quote(t, ETH)).body);
     expect(a.body["status"]).toBe("paid");
-    expect(a.body["report"]).toBeNull();
-    expect(a.body["error"]).toMatch(/-32005/);
+    expect(a.body["report"]).toMatchObject({ completeness: "unavailable", buy_usd: null, sell_usd: null });
+    expect(a.body["report"]["headline"]).toMatch(/unavailable/);
+    expect(a.body["evidence"]["rpc_error"]).toMatch(/-32005/);
   });
 
   it("a non-200 after signing is unknown_pending, never success", async () => {
@@ -846,58 +938,8 @@ describe("approve", () => {
   });
 });
 
-// ------------------------------------------------------------------ reports
-describe("reports", () => {
-  const at = new Date("2026-11-20T08:00:00Z");
-  it("solana: weights by actual sample period, sorts newest-first and dedupes", () => {
-    const mk = (i: number, nv: number, p: number) => ({
-      slot: 1_000_000 - i * 150,
-      numTransactions: nv * 3,
-      numNonVoteTransactions: nv,
-      numSlots: 150,
-      samplePeriodSecs: p,
-    });
-    const recent = Array.from({ length: 60 }, (_, i) => mk(i, 60_000, 60));
-    // Mixed periods: 30 x (30s, 15k) + 30 x (90s, 135k) = 4.5M / 3600s = 1250 TPS.
-    const previous = Array.from({ length: 60 }, (_, i) =>
-      i % 2 ? mk(60 + i, 135_000, 90) : mk(60 + i, 15_000, 30),
-    );
-    const r = solanaReport([...previous, recent[5]!, ...recent].reverse(), at);
-    expect(r.comparison).toMatchObject({
-      recent: 1000,
-      previous: 1250,
-      change_pct: -20,
-      direction: "lower",
-    });
-    expect(r.warnings.join(" ")).toMatch(/Duplicate/);
-    expect(r.disclaimer).toMatch(/does not predict price direction/);
-  });
-  it("guards empty, malformed and zero data for every family", () => {
-    for (const input of [[], null, "x", [{ slot: 1 }], {}]) {
-      expect(solanaReport(input, at).comparison).toBeNull();
-      expect(evmReport(input, at, "Ethereum").comparison).toBeNull();
-      expect(utxoReport(input, at, "Bitcoin").metrics[0]!.value).toBeNull();
-      expect(xrplReport(input, at, "XRP Ledger").metrics[0]!.value).toBeNull();
-    }
-    const zeros = solanaReport(
-      Array.from({ length: 120 }, (_, i) => ({
-        slot: 1e6 - i,
-        numTransactions: 10,
-        numNonVoteTransactions: i < 60 ? 10 : 0,
-        numSlots: 1,
-        samplePeriodSecs: 60,
-      })),
-      at,
-    );
-    expect(zeros.comparison?.change_pct).toBeNull();
-    const evm = evmReport(
-      { gasUsedRatio: Array(20).fill(0), baseFeePerGas: Array(21).fill("0x0") },
-      at,
-      "Ethereum",
-    );
-    expect(evm.comparison?.change_pct).toBeNull();
-  });
-  it("spot context guards bad klines", () => {
+describe("spot context", () => {
+  it("guards bad klines", () => {
     expect(spotFromKlines(null, "100", "x")).toBeNull();
     expect(spotFromKlines([[1, 0, 0, 0, 0]], "100", "x")).toBeNull();
     expect(spotFromKlines(KLINES, null, "x")?.distance_to_strike_pct).toBeNull();

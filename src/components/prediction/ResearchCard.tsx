@@ -1,5 +1,10 @@
 import { austinDateTime, shortHash } from "../../lib/format";
-import type { ResearchQuote, ResearchView } from "../../quicknodeResearch";
+import {
+  TIMEFRAME_LABEL,
+  type ResearchQuote,
+  type ResearchReport,
+  type ResearchView,
+} from "../../quicknodeResearch";
 
 const STATUS_TEXT: Record<ResearchQuote["status"], string> = {
   context_only: "No paid research · nothing charged",
@@ -24,6 +29,21 @@ const num = (n: number | null | undefined, unit = "") =>
     : `${n.toLocaleString("en-US", { maximumFractionDigits: 6 })}${unit}`;
 const signed = (n: number | null | undefined, unit = "%") =>
   n === null || n === undefined ? "—" : `${n > 0 ? "+" : ""}${n}${unit}`;
+const dollars = (n: number | null | undefined, sign = false) =>
+  n === null || n === undefined
+    ? "—"
+    : `${sign && n > 0 ? "+" : n < 0 ? "−" : ""}$${Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: Math.abs(n) >= 1000 ? 0 : 2 })}`;
+const span = (secs: number) =>
+  secs >= 3600
+    ? `${Math.round((secs / 3600) * 10) / 10} h`
+    : secs >= 60
+      ? `${Math.round((secs / 60) * 10) / 10} min`
+      : `${secs} s`;
+const COMPLETENESS: Record<ResearchReport["completeness"], string> = {
+  complete: "Complete window",
+  partial: "Partial window",
+  unavailable: "Unavailable",
+};
 
 export function ResearchCard({
   research,
@@ -53,7 +73,8 @@ export function ResearchCard({
       {q?.status === "context_only" && research.canQuote && onRequestQuote && (
         <div className="mt-3">
           <button className="btn" disabled={research.busy} onClick={onRequestQuote}>
-            Get paid {q.research_chain} research price
+            Get DEX buy/sell volume price
+            {q.timeframe ? ` (${TIMEFRAME_LABEL[q.timeframe]})` : ""}
           </button>
         </div>
       )}
@@ -147,7 +168,12 @@ function Paid({ q }: { q: ResearchQuote }) {
         {(
           [
             ["Paid source", `${q.provider} · ${q.resource ?? "—"}`],
-            ["Price", `${q.price_usdc} USDC`],
+            [
+              q.status === "quoted" ? "Estimated cost" : "Price",
+              q.status === "quoted" && q.calls_planned
+                ? `up to ${q.calls_planned} calls × ${q.per_call_usdc ?? "—"} = ${q.max_price_usdc ?? q.price_usdc} USDC`
+                : `${q.price_usdc} USDC${q.evidence?.calls_signed !== undefined ? ` · ${q.evidence.calls_signed} paid calls` : ""}`,
+            ],
             ["Payment", STATUS_TEXT[q.status]],
           ] as const
         ).map(([k, v]) => (
@@ -157,43 +183,7 @@ function Paid({ q }: { q: ResearchQuote }) {
           </div>
         ))}
       </dl>
-      {r && (
-        <div className="grid gap-2">
-          {r.comparison && (
-            <dl className="grid grid-cols-3 gap-2">
-              <Metric
-                label={`Recent (${r.comparison.recent_window})`}
-                value={`${num(r.comparison.recent)} ${r.comparison.unit}`}
-              />
-              <Metric
-                label={`Previous (${r.comparison.previous_window})`}
-                value={`${num(r.comparison.previous)} ${r.comparison.unit}`}
-              />
-              <Metric
-                label="Change"
-                value={
-                  r.comparison.change_pct === null
-                    ? "—"
-                    : `${r.comparison.change_pct > 0 ? "+" : ""}${r.comparison.change_pct.toFixed(2)}%`
-                }
-              />
-            </dl>
-          )}
-          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {r.metrics.map((x) => (
-              <Metric key={x.label} label={x.label} value={`${num(x.value)} ${x.unit}`.trim()} />
-            ))}
-          </dl>
-          <p className="text-xs">{r.headline}</p>
-          <p className="text-xs text-muted-foreground">
-            {r.chain} · {r.method}
-            {r.coverage ? ` · ${r.coverage}` : ""} · observed{" "}
-            <time dateTime={r.observed_at}>{austinDateTime(r.observed_at)}</time>
-          </p>
-          {r.warnings.length > 0 && <p className="text-xs text-warning">{r.warnings.join(" ")}</p>}
-          <p className="text-xs">{r.disclaimer}</p>
-        </div>
-      )}
+      {r && <DexVolume r={r} />}
       {q.error && <p className="text-xs text-warning">{q.error}</p>}
       {ev && (
         <details className="text-xs text-muted-foreground">
@@ -219,6 +209,12 @@ function Paid({ q }: { q: ResearchQuote }) {
               {usdc(ev.gateway_available_after)} (observed deduction{" "}
               {usdc(ev.gateway_deduction_atomic)})
             </li>
+            {ev.calls_sent !== undefined && (
+              <li>
+                Data calls: {ev.calls_sent} sent · {ev.calls_ok ?? 0} HTTP 200 responses ·{" "}
+                {ev.calls_signed ?? 0} payments created
+              </li>
+            )}
             {ev.response_sha256 && <li>Response SHA-256: {shortHash(ev.response_sha256, 12)}</li>}
             <li>
               Circle Gateway settles nanopayments in batches; no per-request on-chain transaction is
@@ -227,6 +223,62 @@ function Paid({ q }: { q: ResearchQuote }) {
           </ul>
         </details>
       )}
+    </div>
+  );
+}
+
+function DexVolume({ r }: { r: ResearchReport }) {
+  return (
+    <div className="grid gap-2" aria-label="DEX buy and sell volume">
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label={`${r.asset} bought (USD)`} value={dollars(r.buy_usd)} />
+        <Metric label={`${r.asset} sold (USD)`} value={dollars(r.sell_usd)} />
+        <Metric label="Net buy volume" value={dollars(r.net_buy_usd, true)} />
+        <Metric label="Buy share of volume" value={num(r.buy_pct, "%")} />
+      </dl>
+      <p className="text-xs">{r.headline}</p>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
+        {(
+          [
+            [
+              "Measured",
+              r.measured_from && r.measured_to
+                ? `${COMPLETENESS[r.completeness]} · ${span(r.measured_seconds)} of ${TIMEFRAME_LABEL[r.timeframe]} (${austinDateTime(r.measured_from)} – ${austinDateTime(r.measured_to)})`
+                : COMPLETENESS[r.completeness],
+            ],
+            [
+              "Trades",
+              r.trade_count === null
+                ? "—"
+                : `${r.trade_count} swaps${r.pool_tx_count !== null ? ` · ${r.pool_tx_count} pool transactions` : ""}`,
+            ],
+            ["Last trade", r.last_trade_at ? austinDateTime(r.last_trade_at) : "—"],
+            ["Source", `${r.source} · ${r.method}`],
+            ["Pools", r.pools.map((p) => `${p.dex} ${p.pair}`).join(", ")],
+            ["Paid calls used", String(r.calls_used)],
+          ] as const
+        ).map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="text-muted-foreground">{k}</dt>
+            <dd className="mt-0.5 break-words">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {r.examples.length > 0 && (
+        <ul aria-label="Example transactions" className="grid gap-0.5 text-xs">
+          {r.examples.map((x) => (
+            <li key={x.hash} className="tnum">
+              {x.side === "buy" ? "Buy" : "Sell"} {dollars(x.usd)} ·{" "}
+              <a href={x.url} target="_blank" rel="noreferrer" className="underline">
+                {shortHash(x.hash, 10)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-muted-foreground">{r.coverage}</p>
+      {r.warnings.length > 0 && <p className="text-xs text-warning">{r.warnings.join(" ")}</p>}
+      <p className="text-xs">{r.disclaimer}</p>
     </div>
   );
 }
