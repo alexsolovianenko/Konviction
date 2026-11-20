@@ -46,7 +46,18 @@ it.each([false, true])('keeps voice settings and confirmations scoped to Mommy m
     await opts.clientTools.request_research_quote();
     expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
     opts.onMessage({role:'agent',message:'Buy QuickNode research?',event_id:1});
-    opts.onMessage({role:'user',message:'No thanks.'});
+    if (mommyMode) {
+      opts.onMessage({role:'user',message:'Buy the research.'});
+      expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
+      fetchMock.mockResolvedValueOnce(Response.json({ok:true,status:'paid',quote_id:'research-q',
+        context:{market:{event_ticker:'EVENT',contract_symbol:'GEMI-C'},asset:{name:'Bitcoin',symbol:'BTC'}}}));
+      await opts.clientTools.get_research_result();
+      expect(await prepare()).toMatchObject({next_action:'wait_for_research_decision'});
+      opts.onMessage({role:'agent',message:'Here are the Bitcoin measurements.',event_id:2});
+      opts.onMessage({role:'user',message:'Place my original order.'});
+    } else {
+      opts.onMessage({role:'user',message:'No thanks.'});
+    }
     expect(trade.mock.calls.map(([path])=>path)).not.toContain('proposals');
     const reply = await prepare();
     fetchMock.mockRestore();
