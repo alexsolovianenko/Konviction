@@ -38,16 +38,21 @@ const quote = (over: Partial<ResearchQuote> = {}): ResearchQuote => ({
   status: "quoted",
   provider: "QuickNode x402",
   route_id: "btc",
-  research_chain: "Bitcoin",
-  quicknode_network: "btc-mainnet",
-  resource: "btc-mainnet · getmempoolinfo",
+  research_chain: "Ethereum",
+  research_measures: "Uniswap v3 WBTC/USDC and WBTC/USDT swaps",
+  timeframe: "1h",
+  calls_planned: 3,
+  max_price_usdc: "0.0003",
+  per_call_usdc: "0.0001",
+  quicknode_network: "ethereum-mainnet",
+  resource: "ethereum-mainnet · eth_getBlockByNumber, eth_getLogs",
   network: "eip155:5042002",
   network_label: "Arc Testnet",
   payment_asset: "0x3600000000000000000000000000000000000000",
   pay_to: "0xF46394adDdA95A3d5bCC1124605E3d15D204623C",
   payment_model: "Circle Gateway nanopayment (batched)",
-  price_atomic: "100",
-  price_usdc: "0.0001",
+  price_atomic: "300",
+  price_usdc: "0.0003",
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   created_at: new Date().toISOString(),
   payer: null,
@@ -65,18 +70,44 @@ const quote = (over: Partial<ResearchQuote> = {}): ResearchQuote => ({
 const paid = () =>
   quote({
     status: "paid",
+    price_atomic: "300",
+    price_usdc: "0.0003",
     report: {
-      family: "utxo",
-      chain: "Bitcoin",
-      method: "getmempoolinfo",
-      comparison: null,
-      coverage: "Current mempool snapshot",
-      metrics: [{ label: "Pending transactions", value: 12345, unit: "tx" }],
-      headline:
-        "Bitcoin mempool currently holds 12,345 pending transactions. That is network congestion, not a price signal.",
+      kind: "dex_volume",
+      asset: "BTC",
+      asset_note: "Measured with Wrapped Bitcoin (WBTC) on Ethereum as a proxy.",
+      chain: "Ethereum",
+      source: "QuickNode x402 ethereum-mainnet",
+      method: "eth_getLogs (Uniswap V3 Swap events)",
+      timeframe: "1h",
+      requested_seconds: 3600,
+      measured_from: "2026-11-20T08:00:00Z",
+      measured_to: "2026-11-20T09:00:00Z",
+      measured_seconds: 3600,
+      completeness: "complete",
+      buy_usd: 56140.6,
+      sell_usd: 146.55,
+      net_buy_usd: 55994.05,
+      buy_pct: 99.7,
+      trade_count: 9,
+      pool_tx_count: null,
+      last_trade_at: "2026-11-20T08:58:35Z",
+      pools: [{ dex: "Uniswap v3", pair: "WBTC/USDC 0.3%", address: "0x99ac", url: "https://etherscan.io/address/0x99ac" }],
+      coverage: "Uniswap v3 WBTC pools only.",
+      examples: [
+        {
+          hash: "0x1ede0a273c4ed2037e3e0390d76d36d186b9cae687716e8855aeaa30ba48be9b",
+          side: "buy",
+          usd: 28855.45,
+          at: "2026-11-20T08:36:23Z",
+          url: "https://etherscan.io/tx/0x1ede0a273c4ed2037e3e0390d76d36d186b9cae687716e8855aeaa30ba48be9b",
+        },
+      ],
+      calls_used: 3,
+      headline: "BTC on 3 Uniswap v3 pools, the last 1 hour: $56,141 bought vs $147 sold.",
       observed_at: "2026-11-20T09:00:00Z",
       warnings: [],
-      disclaimer: "Not a price prediction.",
+      disclaimer: "Buy/sell imbalance is context, not a price forecast or trading advice.",
     },
     evidence: {
       http_status: 200,
@@ -87,9 +118,12 @@ const paid = () =>
       payment_response_present: true,
       signed: true,
       gateway_available_before: "1000000",
-      gateway_available_after: "999900",
-      gateway_deduction_atomic: "100",
+      gateway_available_after: "999700",
+      gateway_deduction_atomic: "300",
       response_sha256: "ab".repeat(32),
+      calls_sent: 3,
+      calls_ok: 3,
+      calls_signed: 3,
     },
   });
 
@@ -107,6 +141,7 @@ describe("ResearchCard", () => {
     expect(container.textContent).toMatch(/LS-LRRR-XBTUSD/);
     expect(screen.getByText("-0.39%")).toBeTruthy();
     expect(screen.getByText(/Confirm the quoted price on your voice call/)).toBeTruthy();
+    expect(container.textContent).toMatch(/up to 3 calls × 0\.0001 = 0\.0003 USDC/);
     expect(screen.getByText(/never places or approves a Gemini order/)).toBeTruthy();
   });
   it("context-only shows the limitation and no payment button", () => {
@@ -136,8 +171,18 @@ describe("ResearchCard", () => {
         research={{ quote: paid(), busy: false, message: "", canApprove: false, canQuote: false }}
       />,
     );
-    expect(screen.getByText("12,345 tx")).toBeTruthy();
-    expect(container.textContent).toMatch(/observed deduction 0\.0001 USDC/);
+    // Exactly the four volume metrics, plus measured window, source, trades and tx evidence.
+    expect(screen.getByText("$56,141")).toBeTruthy();
+    expect(screen.getByText("$146.55")).toBeTruthy();
+    expect(screen.getByText("+$55,994")).toBeTruthy();
+    expect(screen.getByText("99.7%")).toBeTruthy();
+    expect(container.textContent).toMatch(/Complete window · 1 h of 1 hour/);
+    expect(container.textContent).toMatch(/9 swaps/);
+    expect(screen.getByRole("link", { name: /0x1ede0a27/ }).getAttribute("href")).toMatch(/etherscan\.io\/tx\//);
+    expect(container.textContent).toMatch(/not a price forecast/);
+    expect(container.textContent).not.toMatch(/mempool|TPS|gas utilization/i);
+    expect(container.textContent).toMatch(/observed deduction 0\.0003 USDC/);
+    expect(container.textContent).toMatch(/3 sent · 3 returned data · 3 payments created/);
     expect(container.textContent).toMatch(/no per-request on-chain transaction is claimed/);
     expect(container.textContent).not.toMatch(/settled on-?chain|order (placed|filled)/i);
     expect(screen.queryByRole("button")).toBeNull();
@@ -202,13 +247,23 @@ describe("ResearchClient", () => {
     expect(JSON.parse(out)).toMatchObject({
       ok: true,
       asset: "Bitcoin (BTC)",
-      price_usdc: "0.0001",
+      price_usdc: "0.0003",
       implied_yes_pct: 60,
+      timeframe: "1 hour",
       quote_id: "q1",
       next_action: "ask_for_voice_approval",
     });
     await tools.request_research_quote(); // reuses the fresh quote for this exact contract
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // A different timeframe asks for a new unpaid quote carrying only that timeframe.
+    await tools.request_research_quote({ timeframe: "24h" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(String((fetchMock.mock.calls[2]![1] as RequestInit).body))).toEqual({ ...target, timeframe: "24h" });
+    expect(JSON.parse(await tools.request_research_quote({ timeframe: "7d" }))).toMatchObject({ ok: false });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const summary = agentSummary(paid());
+    expect(summary.dex_volume).toMatchObject({ buy_usd: 56140.6, sell_usd: 146.55, net_buy_usd: 55994.05, buy_pct: 99.7 });
+    expect(JSON.stringify(summary)).not.toMatch(/mempool|TPS|gas|network_change/i);
     expect(JSON.stringify(agentSummary(paid()))).not.toMatch(/0x|gw-ref|ab{4}/);
   });
   it("ignores a malformed research response instead of crashing the panel", async () => {
@@ -235,7 +290,7 @@ describe("ResearchClient", () => {
         onRequestQuote={onRequestQuote}
       />,
     );
-    screen.getByRole("button", { name: "Get paid Bitcoin research price" }).click();
+    screen.getByRole("button", { name: "Get DEX buy/sell volume price (1 hour)" }).click();
     expect(onRequestQuote).toHaveBeenCalledOnce();
   });
   it("non-crypto selections show no card", async () => {

@@ -7,10 +7,12 @@ import type { Contract, GEvent } from "../gemini";
 import { AssetError, identifyMarket } from "./asset";
 import { formatUsdc, type ResearchConfig } from "./config";
 import { buildContext, type KlineSource, type MarketContext } from "./context";
-import { runPaidRequest, type SdkFactory } from "./paid-request";
+import { bodyAllowed, runDex } from "./dex";
+import { TIMEFRAME_LABEL, timeframeForSeries, type Timeframe } from "./dex/volume";
+import { runPaidSession, type SdkFactory } from "./paid-request";
 import {
   chooseRoute,
-  readRoute,
+  marketFor,
   resourceLabel,
   routeBody,
   routeById,
@@ -95,27 +97,46 @@ function routeInfo(route: Route | null) {
     ? {
         route_id: route.id,
         research_chain: route.chain,
+        research_measures: route.measures,
         quicknode_network: route.network,
         resource: resourceLabel(route),
       }
-    : { route_id: null, research_chain: null, quicknode_network: null, resource: null };
+    : {
+        route_id: null,
+        research_chain: null,
+        research_measures: null,
+        quicknode_network: null,
+        resource: null,
+      };
+}
+
+const defaultTimeframe = (c: MarketContext): Timeframe =>
+  timeframeForSeries(c.market.series ?? null, c.market.event_ticker);
+
+/** The exact spoken offer. The call-confirm webhook checks the caller heard this text. */
+export function offerText(asset: string, tf: Timeframe, calls: number, price: string) {
+  return `Would you like real DEX buy and sell volume for ${asset} over the last ${TIMEFRAME_LABEL[tf]} from QuickNode? It uses up to ${calls} paid data calls, at most ${price} testnet USDC.`;
 }
 
 /** Client-safe projection. Never includes keys, signatures, payment headers or session JWTs. */
 export function purchaseView(p: Purchase, cfg: ResearchConfig) {
   const route = routeById(p.route_id);
   const price = formatUsdc(p.price_atomic);
+  const maxAtomic = p.max_atomic ?? p.price_atomic;
   const r = p.report;
-  const chain = route?.chain ?? "network";
+  const tf = p.timeframe ?? defaultTimeframe(p.context);
+  const asset = p.context.asset.symbol;
+  const calls = p.evidence?.calls_signed ?? null;
   const sayFor: Record<string, string> = {
-    quoted: `Would you like to buy ${chain} research from QuickNode for ${price} testnet USDC?`,
+    quoted: offerText(asset, tf, p.calls_planned ?? 1, formatUsdc(maxAtomic)),
     free: (r ? r.headline + " " : "") + "QuickNode answered without charging.",
     expired: "That research quote expired. Nothing was paid.",
     reserved: "Research payment is starting.",
     sending: "Research payment is in progress.",
     paid:
       (r ? r.headline : "QuickNode was paid but the data could not be read.") +
-      ` Paid ${price} testnet USDC through Circle Gateway; it settles in batches.`,
+      ` Paid ${price} testnet USDC${calls !== null ? ` for ${calls} data calls` : ""} through Circle Gateway; it settles in batches.` +
+      (r ? " Buy and sell flow is context, not a price forecast." : ""),
     unknown_pending:
       "The research payment status is unknown. It will not be retried automatically.",
     failed: "Research did not complete. Nothing was paid.",
@@ -125,11 +146,15 @@ export function purchaseView(p: Purchase, cfg: ResearchConfig) {
     status: p.status as Purchase["status"] | "context_only",
     provider: "QuickNode x402",
     ...routeInfo(route),
+    timeframe: tf,
+    calls_planned: p.calls_planned ?? null,
+    max_price_usdc: formatUsdc(maxAtomic),
+    per_call_usdc: p.requirement ? formatUsdc(p.requirement.amount) : null,
     network: p.requirement?.network ?? cfg.network,
     network_label: "Arc Testnet",
     payment_asset: cfg.asset,
     pay_to: p.requirement?.payTo ?? null,
-    payment_model: "Circle Gateway nanopayment (batched)",
+    payment_model: "Circle Gateway nanopayment (batched), one per data call",
     price_atomic: p.price_atomic,
     price_usdc: price,
     expires_at: new Date(p.expires_at).toISOString(),
@@ -153,6 +178,7 @@ function contextView(
   limitation: string | null,
   route: Route | null,
   cfg: ResearchConfig,
+  timeframe?: Timeframe,
 ): View {
   const now = new Date().toISOString();
   const limitations = [...context.limitations, ...(limitation ? [limitation] : [])];
@@ -161,6 +187,10 @@ function contextView(
     status: "context_only",
     provider: "QuickNode x402",
     ...routeInfo(route),
+    timeframe: timeframe ?? defaultTimeframe(context),
+    calls_planned: null,
+    max_price_usdc: formatUsdc(0n),
+    per_call_usdc: null,
     network: cfg.network,
     network_label: "Arc Testnet",
     payment_asset: cfg.asset,
@@ -208,15 +238,16 @@ export function researchService(d: Deps) {
   }
 
   return {
-    async context(input: { eventTicker: string; contractSymbol: string }) {
+    async context(input: { eventTicker: string; contractSymbol: string; timeframe?: Timeframe | undefined }) {
       const { context, decision } = await resolve(input.eventTicker, input.contractSymbol);
       return contextView(
         context,
         decision.route
-          ? `Paid ${decision.route.chain} network research is available with your approval on the call.`
+          ? `Paid ${context.asset.symbol} DEX buy and sell volume (${decision.route.measures}) is available with your approval on the call.`
           : decision.limitation,
         decision.route,
         cfg,
+        input.timeframe,
       );
     },
 
@@ -224,12 +255,16 @@ export function researchService(d: Deps) {
       sid: string;
       eventTicker: string;
       contractSymbol: string;
+      /** Requested window; defaults to the selected prediction's duration. */
+      timeframe?: Timeframe | undefined;
     }): Promise<View> {
       const { context, decision } = await resolve(input.eventTicker, input.contractSymbol);
+      const tf = input.timeframe ?? defaultTimeframe(context);
       const route = decision.route;
-      if (!route) return contextView(context, decision.limitation, null, cfg);
+      if (!route) return contextView(context, decision.limitation, null, cfg, tf);
       const url = routeUrl(route);
       const body = routeBody(route);
+      const maxCalls = marketFor(route).maxCalls(tf);
       // Unpaid probe: fixed route URL and body, no credentials, no payment header.
       let res: Response;
       try {
@@ -246,44 +281,19 @@ export function researchService(d: Deps) {
           `QuickNode ${route.network} is unreachable right now, so no paid research is offered.`,
           route,
           cfg,
+          tf,
         );
       }
       const text = (await res.text()).slice(0, 512 * 1024);
-      const base = {
-        sid: input.sid,
-        context,
-        route_id: route.id,
-        resource_url: url,
-        idempotency_key: null,
-        reserved_at: null,
-        payer: null,
-        error: null,
-      };
-      if (res.status === 200) {
-        // Free response: show it, never charge.
-        const { report, rpcError } = readRoute(route, text, new Date());
-        const p = await store.insert({
-          ...base,
-          status: "free",
-          expires_at: Date.now(),
-          requirement: null,
-          price_atomic: "0",
-          report,
-          evidence: {
-            ...blankEvidence(),
-            http_status: 200,
-            rpc_error: rpcError,
-            response_sha256: await sha256Hex(text),
-          },
-        });
-        return purchaseView(p, cfg);
-      }
       if (res.status !== 402)
         return contextView(
           context,
-          `QuickNode ${route.network} returned HTTP ${res.status}, so no paid research is offered.`,
+          res.status === 200
+            ? `QuickNode ${route.network} answered without a payment request, so no paid research was started.`
+            : `QuickNode ${route.network} returned HTTP ${res.status}, so no paid research is offered.`,
           route,
           cfg,
+          tf,
         );
       let requirement;
       try {
@@ -299,12 +309,32 @@ export function researchService(d: Deps) {
           throw new ResearchError(e.code, e.message + " Nothing was paid.", 422);
         throw e;
       }
+      // Estimate before approval: every planned call is one nanopayment at the quoted price.
+      const total = BigInt(requirement.amount) * BigInt(maxCalls);
+      if (total > cfg.maxPerRequest)
+        return contextView(
+          context,
+          `The last ${TIMEFRAME_LABEL[tf]} of ${context.asset.symbol} needs up to ${maxCalls} paid calls (${formatUsdc(total)} USDC), above the ${formatUsdc(cfg.maxPerRequest)} USDC per-request cap. Try a shorter timeframe. Nothing was charged.`,
+          route,
+          cfg,
+          tf,
+        );
       const p = await store.insert({
-        ...base,
+        sid: input.sid,
+        context,
+        route_id: route.id,
+        resource_url: url,
+        idempotency_key: null,
+        reserved_at: null,
+        payer: null,
+        error: null,
         status: "quoted",
         expires_at: Date.now() + cfg.quoteTtlMs,
         requirement,
-        price_atomic: requirement.amount,
+        price_atomic: total.toString(),
+        max_atomic: total.toString(),
+        timeframe: tf,
+        calls_planned: maxCalls,
         report: null,
         evidence: null,
       });
@@ -359,7 +389,16 @@ export function researchService(d: Deps) {
       if (!current.requirement)
         throw new ResearchError("ALREADY_HANDLED", "This research needs no payment.", 409);
       const route = routeById(current.route_id);
-      if (!route || routeUrl(route) !== current.resource_url)
+      const tf = current.timeframe;
+      const planned = current.calls_planned;
+      if (
+        !route ||
+        routeUrl(route) !== current.resource_url ||
+        !tf ||
+        !planned ||
+        planned !== marketFor(route).maxCalls(tf) ||
+        BigInt(current.requirement.amount) * BigInt(planned) !== BigInt(current.price_atomic)
+      )
         throw new ResearchError(
           "ROUTE_UNAVAILABLE",
           "This research route is no longer supported. Nothing was paid.",
@@ -382,20 +421,23 @@ export function researchService(d: Deps) {
 
       let outcome;
       try {
-        outcome = await runPaidRequest({
+        const market = marketFor(route);
+        outcome = await runPaidSession({
           cfg,
           key: wallet.key,
           quoted: purchase.requirement!,
           url: purchase.resource_url,
-          body: routeBody(route),
+          maxCalls: planned,
+          allowBody: (body) => bodyAllowed(market, body),
           factory: d.sdk,
           beforeSend: async () => {
             if (!(await store.transition(id, ["reserved"], { status: "sending" })))
               throw new Error("Reservation lost");
           },
+          work: (send) => runDex(market, tf, send),
         });
       } catch {
-        // Thrown before client.fetch started (SDK init or the sending transition): nothing was sent.
+        // Thrown before any request started (SDK init or the sending transition): nothing was sent.
         const released = await store.transition(id, ["reserved"], {
           status: "failed",
           error: "Payment could not start. Nothing was paid.",
@@ -403,45 +445,63 @@ export function researchService(d: Deps) {
         return purchaseView(released ?? (await store.get(id, input.sid)), cfg);
       }
 
-      const observed = new Date();
-      const ev: Evidence = { ...blankEvidence(), signed: outcome.signed, api_ms: outcome.apiMs };
+      const ev: Evidence = {
+        ...blankEvidence(),
+        signed: outcome.signed,
+        api_ms: outcome.apiMs,
+        calls_sent: outcome.callsSent,
+        calls_ok: outcome.callsOk,
+        calls_signed: outcome.signedCount,
+        response_sha256: outcome.responsesSha256,
+      };
       if (outcome.availableBefore !== null)
         ev.gateway_available_before = outcome.availableBefore.toString();
       if (outcome.availableAfter !== null)
         ev.gateway_available_after = outcome.availableAfter.toString();
       if (outcome.availableBefore !== null && outcome.availableAfter !== null)
         ev.gateway_deduction_atomic = (outcome.availableBefore - outcome.availableAfter).toString();
-
-      let fields: Partial<Purchase>;
       const res = outcome.response;
       if (res) {
         ev.http_status = res.status;
-        ev.response_sha256 = await sha256Hex(res.text);
         ev.request_id = res.headers.get("x-request-id") ?? res.headers.get("cf-ray") ?? null;
         const header = res.headers.get("payment-response") ?? res.headers.get("x-payment-response");
         ev.payment_response_present = Boolean(header);
         ev.payment_response = decodePaymentResponse(header);
       }
+      const report = outcome.result?.report ?? null;
+      if (report && report.completeness !== "complete" && report.warnings.length)
+        ev.rpc_error = report.warnings.find((w) => /unavailable|failed|error|HTTP/i.test(w)) ?? null;
+      // Budget actually held: every created payment may have been charged.
+      const spent = (BigInt(purchase.requirement!.amount) * BigInt(outcome.signedCount)).toString();
+      const uncertain =
+        outcome.signedCount > outcome.callsOk
+          ? ` ${outcome.signedCount - outcome.callsOk} paid call(s) did not return data; payment for them may still have been taken. Nothing is retried.`
+          : "";
+
+      let fields: Partial<Purchase>;
       if (!outcome.signed) {
         // No payment payload was ever created, so nothing can have been charged.
-        if (res?.status === 200) {
-          const { report, rpcError } = readRoute(route, res.text, observed);
-          ev.rpc_error = rpcError;
-          fields = { status: "free", report, evidence: ev, error: null };
-        } else {
-          fields = {
-            status: "failed",
-            evidence: ev,
-            error:
-              (outcome.error ?? `HTTP ${res?.status ?? "error"}`) +
-              " — refused before signing. Nothing was paid.",
-          };
-        }
-      } else if (res && res.status === 200) {
-        const { report, rpcError } = readRoute(route, res.text, observed);
-        ev.rpc_error = rpcError;
-        fields = { status: "paid", report, evidence: ev, error: rpcError };
+        fields =
+          outcome.callsOk > 0 && report
+            ? { status: "free", report, evidence: ev, price_atomic: "0", error: null }
+            : {
+                status: "failed",
+                evidence: ev,
+                price_atomic: "0",
+                error:
+                  (outcome.error ?? `HTTP ${res?.status ?? "error"}`) +
+                  " — refused before signing. Nothing was paid.",
+              };
+      } else if (outcome.callsOk > 0 && report) {
+        fields = {
+          status: "paid",
+          report,
+          evidence: ev,
+          price_atomic: spent,
+          error: uncertain ? uncertain.trim() : null,
+        };
       } else {
+        // Signed but no data at all: keep holding the full approved budget.
         fields = {
           status: "unknown_pending",
           evidence: ev,

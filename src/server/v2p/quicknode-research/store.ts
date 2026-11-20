@@ -7,6 +7,7 @@ import { BlobPreconditionFailedError, get, put } from "@vercel/blob";
 import type { Requirement } from "./x402";
 import type { ResearchReport } from "./aggregate";
 import type { MarketContext } from "./context";
+import type { Timeframe } from "./dex/volume";
 
 export type PurchaseStatus =
   | "quoted" // unpaid 402 captured; nothing signed
@@ -30,6 +31,10 @@ export type Evidence = {
   gateway_available_after: string | null;
   gateway_deduction_atomic: string | null;
   response_sha256: string | null;
+  /** Paid DEX sessions: requests sent, HTTP 200 responses, and payment payloads created. */
+  calls_sent?: number;
+  calls_ok?: number;
+  calls_signed?: number;
 };
 
 export type Purchase = {
@@ -44,8 +49,17 @@ export type Purchase = {
   /** Paid route chosen for this asset (routes.ts) and its fixed resource URL. */
   route_id: string;
   resource_url: string;
+  /** Per-call requirement (each paid RPC call is one nanopayment of requirement.amount). */
   requirement: Requirement | null;
+  /**
+   * Budget held by this purchase. Quoted: the approved maximum (per-call price x max calls).
+   * After a paid session: per-call price x payments actually created (never less than charged).
+   */
   price_atomic: string;
+  /** DEX research plan: timeframe, max paid calls and the approved maximum. */
+  timeframe?: Timeframe;
+  calls_planned?: number;
+  max_atomic?: string;
   idempotency_key: string | null;
   reserved_at: number | null;
   payer: string | null;

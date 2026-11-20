@@ -7,6 +7,7 @@ import { verifySessionToken } from "../browser-session";
 import { approvedResearch } from "./spoken-approval";
 import { env, secretEqual } from "../util";
 import { formatUsdc, QUICKNODE_NETWORKS_URL, researchConfig } from "./config";
+import { isTimeframe, TIMEFRAMES } from "./dex/volume";
 import { defaultSdkFactory } from "./paid-request";
 import { researchService, type Deps } from "./service";
 import { blobIO, memoryIO, ResearchError, researchStore, type ResearchStore } from "./store";
@@ -94,6 +95,8 @@ export async function handleQuicknodeResearch(
         max_per_session_usdc: formatUsdc(cfg.maxPerSession),
         max_per_day_usdc: formatUsdc(cfg.maxPerDay),
         research_wallet: cfg.expectedSender,
+        research: "DEX buy vs sell volume (ETH, BTC via WBTC, SOL, XRP)",
+        timeframes: TIMEFRAMES,
       });
     }
     if (req.method !== "POST") return reply(404, { ok: false, error: "NOT_FOUND" });
@@ -123,8 +126,12 @@ export async function handleQuicknodeResearch(
       networks: deps.networks ?? quicknodeNetworks,
     });
     const s = (k: string) => String(body[k] ?? "");
-    // No URL, method or RPC body is ever accepted: only the selected Gemini market.
-    const marketOnly = () => keysAre(body, ["event_ticker", "contract_symbol"]);
+    // No URL, method or RPC body is ever accepted: only the selected Gemini market and, optionally,
+    // one of the fixed research timeframes.
+    const marketOnly = () =>
+      keysAre(body, ["event_ticker", "contract_symbol", "timeframe"], ["event_ticker", "contract_symbol"]) &&
+      (body["timeframe"] === undefined || isTimeframe(body["timeframe"]));
+    const timeframe = isTimeframe(body["timeframe"]) ? body["timeframe"] : undefined;
     if (action === "context") {
       if (!marketOnly()) return reply(400, { ok: false, error: "BAD_INPUT" });
       return reply(200, {
@@ -132,6 +139,7 @@ export async function handleQuicknodeResearch(
         ...(await svc.context({
           eventTicker: s("event_ticker"),
           contractSymbol: s("contract_symbol"),
+          timeframe,
         })),
       });
     }
@@ -154,6 +162,7 @@ export async function handleQuicknodeResearch(
             sid,
             eventTicker: s("event_ticker"),
             contractSymbol: s("contract_symbol"),
+            timeframe,
           })),
         });
       case "call-confirm": {
