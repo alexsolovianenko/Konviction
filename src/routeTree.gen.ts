@@ -16,6 +16,7 @@ import { Route as OpenTradesRouteImport } from './routes/open-trades'
 import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as ApiPublicDashboardStateRouteImport } from './routes/api/public/dashboard-state'
 import { Route as ApiPublicAgentToolsToolRouteImport } from './routes/api/public/agent-tools/$tool'
+import { Route as ApiPublicArcResearchActionRouteImport } from './routes/api/public/arc-research/$action'
 import { Route as ApiPublicBrowserTradingActionRouteImport } from './routes/api/public/browser-trading/$action'
 import { Route as ApiPublicMarketToolsToolRouteImport } from './routes/api/public/market-tools/$tool'
 
@@ -54,6 +55,12 @@ const ApiPublicAgentToolsToolRoute = ApiPublicAgentToolsToolRouteImport.update({
   path: '/api/public/agent-tools/$tool',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicArcResearchActionRoute =
+  ApiPublicArcResearchActionRouteImport.update({
+    id: '/api/public/arc-research/$action',
+    path: '/api/public/arc-research/$action',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicBrowserTradingActionRoute =
   ApiPublicBrowserTradingActionRouteImport.update({
     id: '/api/public/browser-trading/$action',
@@ -75,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
+  '/api/public/arc-research/$action': typeof ApiPublicArcResearchActionRoute
   '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
   '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
 }
@@ -86,6 +94,7 @@ export interface FileRoutesByTo {
   '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
+  '/api/public/arc-research/$action': typeof ApiPublicArcResearchActionRoute
   '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
   '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
 }
@@ -98,6 +107,7 @@ export interface FileRoutesById {
   '/voice': typeof VoiceRoute
   '/api/public/dashboard-state': typeof ApiPublicDashboardStateRoute
   '/api/public/agent-tools/$tool': typeof ApiPublicAgentToolsToolRoute
+  '/api/public/arc-research/$action': typeof ApiPublicArcResearchActionRoute
   '/api/public/browser-trading/$action': typeof ApiPublicBrowserTradingActionRoute
   '/api/public/market-tools/$tool': typeof ApiPublicMarketToolsToolRoute
 }
@@ -111,6 +121,7 @@ export interface FileRouteTypes {
     | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/agent-tools/$tool'
+    | '/api/public/arc-research/$action'
     | '/api/public/browser-trading/$action'
     | '/api/public/market-tools/$tool'
   fileRoutesByTo: FileRoutesByTo
@@ -122,6 +133,7 @@ export interface FileRouteTypes {
     | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/agent-tools/$tool'
+    | '/api/public/arc-research/$action'
     | '/api/public/browser-trading/$action'
     | '/api/public/market-tools/$tool'
   id:
@@ -133,6 +145,7 @@ export interface FileRouteTypes {
     | '/voice'
     | '/api/public/dashboard-state'
     | '/api/public/agent-tools/$tool'
+    | '/api/public/arc-research/$action'
     | '/api/public/browser-trading/$action'
     | '/api/public/market-tools/$tool'
   fileRoutesById: FileRoutesById
@@ -145,6 +158,7 @@ export interface RootRouteChildren {
   VoiceRoute: typeof VoiceRoute
   ApiPublicDashboardStateRoute: typeof ApiPublicDashboardStateRoute
   ApiPublicAgentToolsToolRoute: typeof ApiPublicAgentToolsToolRoute
+  ApiPublicArcResearchActionRoute: typeof ApiPublicArcResearchActionRoute
   ApiPublicBrowserTradingActionRoute: typeof ApiPublicBrowserTradingActionRoute
   ApiPublicMarketToolsToolRoute: typeof ApiPublicMarketToolsToolRoute
 }
@@ -200,6 +214,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAgentToolsToolRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/arc-research/$action': {
+      id: '/api/public/arc-research/$action'
+      path: '/api/public/arc-research/$action'
+      fullPath: '/api/public/arc-research/$action'
+      preLoaderRoute: typeof ApiPublicArcResearchActionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/browser-trading/$action': {
       id: '/api/public/browser-trading/$action'
       path: '/api/public/browser-trading/$action'
@@ -225,6 +246,7 @@ const rootRouteChildren: RootRouteChildren = {
   VoiceRoute: VoiceRoute,
   ApiPublicDashboardStateRoute: ApiPublicDashboardStateRoute,
   ApiPublicAgentToolsToolRoute: ApiPublicAgentToolsToolRoute,
+  ApiPublicArcResearchActionRoute: ApiPublicArcResearchActionRoute,
   ApiPublicBrowserTradingActionRoute: ApiPublicBrowserTradingActionRoute,
   ApiPublicMarketToolsToolRoute: ApiPublicMarketToolsToolRoute,
 }

@@ -1,4 +1,5 @@
 import { isSpokenConfirmation } from "./spoken-confirmation";
+import { ResearchClient, type ResearchView } from './research';
 import { spokenFill } from './spoken-fill';
 import { tradingRequest, type Proposal, type Availability } from './browserTrading';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
@@ -24,6 +25,7 @@ type PositionSnapshot = {
   positions_available: boolean; settlements_available: boolean;
 };
 export type VoiceView = {
+  research?: ResearchView | null;
   positionSnapshot: PositionSnapshot | null;
   proposal: Proposal | null;
   availability: Availability | null;
@@ -112,6 +114,18 @@ export class Voice {
     private marketAction: (name: 'search_markets' | 'get_orderbook', params: Record<string, unknown>) => Promise<unknown>,
     private selectMarket?: (target: { eventTicker: string; symbol: string }) => void,
   ) {}
+
+  private researchClient?: ResearchClient;
+  private get research() {
+    return this.researchClient ??= new ResearchClient(
+      (research) => this.update({research}),
+      () => this.session?.credentials.session_token || null,
+      () => this.visibleContract ? JSON.parse(this.visibleContract) : null,
+      (text) => this.conversation?.sendContextualUpdate?.(text),
+    );
+  }
+  /** Arc research payment: called only by the on-screen approval button, never by a voice tool. */
+  approveResearch() { return this.research.approve(); }
 
   setVisibleContract(eventTicker?: string, symbol?: string) {
     const selection = eventTicker && symbol ? JSON.stringify({event_ticker:eventTicker, contract_symbol:symbol}) : "";
@@ -406,6 +420,7 @@ export class Voice {
             preparedThisTurn = true;
             return JSON.stringify(await this.confirmByVoice());
           },
+          ...this.research.tools(current),
           get_sandbox_positions: async () => JSON.stringify(current()
             ? await this.readPositions() : {ok:false, say:'Session ended.'}),
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [

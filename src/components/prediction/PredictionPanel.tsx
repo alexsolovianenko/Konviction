@@ -4,6 +4,7 @@ import { TradeApproval } from "../../pages/TradeApproval";
 import { useVoice } from "../voice/VoiceProvider";
 import { VoicePositions } from "../voice/VoicePositions";
 import { QuoteChart } from "./QuoteChart";
+import { ResearchCard } from "./ResearchCard";
 import { SettlementIndexPanel } from "./SettlementIndexPanel";
 import { POLL_MS, useContractQuotes } from "./useContractQuotes";
 
@@ -81,6 +82,7 @@ export function PredictionPanel() {
         </p>
       )}
       <VoicePositions snapshot={view.positionSnapshot} />
+      {view.research?.quote || view.research?.message ? <ResearchCard research={view.research} onApprove={() => void voice.approveResearch()} /> : null}
       {(view.proposal || view.tradeMessage) && <TradeApproval
         proposal={view.proposal}
         availability={view.availability}

@@ -197,6 +197,43 @@
         "properties": {},
         "required": []
       }
+    },
+    {
+      "name": "request_research_quote",
+      "type": "client",
+      "description": "Get the price of a cross-venue second opinion (Kalshi, Polymarket and others via BlockRun, paid in USDC on Arc) for the Gemini market on screen. Free to call; it does NOT pay. Payment needs the user's on-screen approval.",
+      "expects_response": true,
+      "pre_tool_speech": "off",
+      "response_timeout_secs": 15,
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "event_ticker": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Optional Gemini event ticker; defaults to the market on screen."
+          },
+          "contract_symbol": {
+            "type": "string",
+            "maxLength": 96,
+            "description": "Optional Gemini contract symbol; defaults to the one on screen."
+          }
+        }
+      }
+    },
+    {
+      "name": "get_research_result",
+      "type": "client",
+      "description": "Read the status and comparison of the last research purchase. Read only; never pays and never trades.",
+      "expects_response": true,
+      "pre_tool_speech": "off",
+      "response_timeout_secs": 15,
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
     }
   ]
 }
