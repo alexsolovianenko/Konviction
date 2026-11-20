@@ -6,7 +6,8 @@ const {start, trade} = vi.hoisted(() => ({start:vi.fn(), trade:vi.fn()}));
 vi.mock('@elevenlabs/client', () => ({Conversation:{startSession:start}}));
 vi.mock('./browserTrading', () => ({workerTrading:true, tradingRequest:trade}));
 
-it('routes hosted confirmations to the call and reads the recorded exchange result', async () => {
+it.each([false, true])('keeps voice settings and confirmations scoped to Mommy mode = %s', async (mommyMode) => {
+  vi.clearAllMocks();
   vi.useFakeTimers();
   const original = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[]})}});
@@ -23,10 +24,13 @@ it('routes hosted confirmations to the call and reads the recorded exchange resu
     if(path === 'order-result') return {ok:true,outcome_summary:'FILLED',order_id:'order-1',say:'One contract filled.'};
     return {ok:true};
   });
-  start.mockResolvedValue({endSession:vi.fn()});
+  const context = vi.fn();
+  start.mockResolvedValue({endSession:vi.fn(),sendContextualUpdate:context});
   try {
-    await voice.start();
+    await voice.start(mommyMode);
     const opts = start.mock.calls[0]![0];
+    expect(opts.overrides).toEqual(mommyMode ? {tts:{voiceId:'tQ4MEZFJOzsahSEEZtHK',speed:0.9}} : undefined);
+    expect(context.mock.calls.some(([message]) => message.includes('Mommy mode is enabled'))).toBe(mommyMode);
     expect(opts.dynamicVariables.secret__trade_session_token).toBe(credentials.session_token);
     const reply = JSON.parse(await opts.clientTools.prepare_sandbox_buy({quantity:1,limit_price:.4}));
     expect(reply).toMatchObject({proposal_id:'proposal-1', confirmation_tool:'confirm_hosted_sandbox_buy',say:readback});

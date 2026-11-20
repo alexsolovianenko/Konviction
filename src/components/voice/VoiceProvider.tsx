@@ -14,7 +14,7 @@ export type Phase =
   | 'error';
 
 export type VoiceStatus = { phase: Phase; label: string; detail: string };
-type VoiceContext = { view: VoiceView; voice: Voice; market: MarketTools; status: VoiceStatus };
+type VoiceContext = { mommyMode: boolean; setMommyMode: (enabled: boolean) => void; view: VoiceView; voice: Voice; market: MarketTools; status: VoiceStatus };
 
 const Context = createContext<VoiceContext | null>(null);
 
@@ -55,6 +55,7 @@ export function deriveStatus(view: VoiceView, market: Pick<MarketTools, 'pending
 export function VoiceProvider({ children }: { children: ReactNode }) {
   const voiceRef = useRef<Voice | null>(null);
   const market = useMarketTools(target => voiceRef.current?.setVisibleContract(target?.eventTicker, target?.symbol));
+  const [mommyMode, setMommyMode] = useState(false);
   const [view, setView] = useState(initial);
   const [voice] = useState(
     () => new Voice((patch) => setView((previous) => ({ ...previous, ...patch })), market.run, market.select),
@@ -79,7 +80,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     };
   }, [voice]);
   const status = useMemo(() => deriveStatus(view, market), [view, market]);
-  return <Context.Provider value={{ view, voice, market, status }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ view, voice, market, status, mommyMode, setMommyMode }}>{children}</Context.Provider>;
 }
 
 export const useVoiceContext = () => useContext(Context);

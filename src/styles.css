@@ -390,3 +390,11 @@
 .balance-card dt { width:auto; }
 .console-card .btn-primary { background:#ded5ef; color:#282431; }
 .console-card .data tbody tr:hover { background:#b9a9d30c; }
+
+.mommy-mode {
+  justify-self: start; display: inline-flex; align-items: center; gap: .4rem;
+  padding: .4rem .8rem; border: 1px solid var(--border); border-radius: 999px;
+  font-size: .8rem; cursor: pointer; color: var(--muted-foreground);
+}
+.mommy-mode[aria-pressed="true"] { background: #ded5ef; color: #31253b; }
+.mommy-mode:disabled { cursor: default; }
