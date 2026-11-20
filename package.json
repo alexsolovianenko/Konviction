@@ -12,7 +12,7 @@
     "format": "prettier --write .",
     "test": "node --test server/*.test.mjs && vitest run",
     "test:watch": "vitest",
-    "build:vercel": "BUILD_VERCEL=true npm run build",
+    "build:vercel": "BUILD_VERCEL=true npm run build && node scripts/queue/build.mjs",
     "voice:doctor": "node scripts/voice-doctor.mjs"
   },
   "overrides": {
@@ -103,6 +103,7 @@
     "@vitejs/plugin-react": "^5.2.0",
     "drizzle-kit": "0.x",
     "drizzle-orm": "0.x",
+    "esbuild": "^0.28.2",
     "eslint": "^9.32.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",

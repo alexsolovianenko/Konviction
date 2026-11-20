@@ -7,17 +7,5 @@
       "path": "/api/public/phone/settlements",
       "schedule": "0 16 * * *"
     }
-  ],
-  "functions": {
-    "api/settlement-watch.mjs": {
-      "maxDuration": 120,
-      "experimentalTriggers": [
-        {
-          "type": "queue/v2beta",
-          "topic": "konviction-settlements",
-          "retryAfterSeconds": 3
-        }
-      ]
-    }
-  }
+  ]
 }

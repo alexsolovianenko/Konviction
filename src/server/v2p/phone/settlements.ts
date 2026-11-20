@@ -18,10 +18,7 @@ export function settlement(row: Row, since: number) {
     at < since ||
     at > Date.now() ||
     !["yes", "no"].includes(held) ||
-    !["yes", "no"].includes(winner) ||
-    !["number", "string"].includes(typeof pnl) ||
-    !/^-?\d+(\.\d+)?$/.test(String(pnl)) ||
-    !Number.isFinite(Number(pnl))
+    !["yes", "no"].includes(winner)
   )
     return null;
   const metadata = row["contractMetadata"] as { eventName?: string; contractName?: string } | null;
@@ -33,7 +30,8 @@ export function settlement(row: Row, since: number) {
       outcome: held,
       resolution: winner,
       result: held === winner ? "win" : "loss",
-      realized_pnl_usd: String(pnl),
+      realized_pnl_usd: /^-?\d+(\.\d+)?$/.test(String(pnl)) && Number.isFinite(Number(pnl)) ? String(pnl) : null,
+      ...(pnl == null && {pnl_note: "Gemini has confirmed the outcome. Realized P&L is unavailable."}),
       settled_at: new Date(at).toISOString(),
     },
   };

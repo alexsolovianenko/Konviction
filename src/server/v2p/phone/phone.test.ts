@@ -63,8 +63,8 @@ it("claims one outbound call per settlement even across a provider timeout and r
   expect(JSON.stringify(dial.mock.calls)).not.toContain("-2.30");
   expect([...records.values()][0]).toMatchObject({ result: "loss", realized_pnl_usd: "-2.30" });
 });
-it("requires reported P&L, final resolution and settlement after opt-in", () => {
-  expect(settlement({ ...row, netProfit: null }, 0)).toBeNull();
+it("reports the final outcome immediately even when Gemini omits realized P&L", () => {
+  expect(settlement({ ...row, netProfit: null }, 0)?.report).toMatchObject({ result:"loss",realized_pnl_usd:null });
   expect(settlement({ ...row, resolutionSide: "pending" }, 0)).toBeNull();
   expect(settlement(row, Date.now())).toBeNull();
   expect(settlement({ ...row, outcome: "yes", netProfit: "1.25" }, 0)?.report.result).toBe("win");
