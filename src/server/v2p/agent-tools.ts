@@ -212,7 +212,7 @@ async function getPortfolio(_b: Body) {
     const bid = num(p.prices?.sell?.[outcome]);
     const meta = p.contractMetadata ?? {};
     return {
-      event_title: meta.eventName, contract_label: meta.contractName, event_ticker: meta.eventTicker,
+      event_title: marketTitle(meta.eventName, meta.expiryDate), contract_label: marketTitle(meta.contractName, meta.expiryDate), event_ticker: meta.eventTicker,
       instrument_symbol: p.symbol, outcome, quantity: num(p.totalQuantity), on_hold: num(p.quantityOnHold),
       avg_price: num(p.avgPrice), current_bid: bid,
       market_value_usd: num(p.marketValue), unrealized_pnl_usd: num(p.unrealizedPnl), // straight from Gemini; absent when Gemini omits it
@@ -224,7 +224,7 @@ async function getPortfolio(_b: Body) {
   });
   // deno-lint-ignore no-explicit-any
   const recentSettled = (settled.data?.positions ?? []).slice(0, 5).map((s: any) => ({
-    contract_label: s.contractMetadata?.contractName, event_title: s.contractMetadata?.eventName, outcome: s.outcome,
+    contract_label: marketTitle(s.contractMetadata?.contractName, s.contractMetadata?.expiryDate), event_title: marketTitle(s.contractMetadata?.eventName, s.contractMetadata?.expiryDate), outcome: s.outcome,
     quantity: num(s.positionQuantity), resolution_side: s.resolutionSide, payout_usd: num(s.payout),
     net_profit_usd: num(s.netProfit), settled_spoken: speakTime(s.settledAt),
   }));

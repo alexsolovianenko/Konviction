@@ -1,3 +1,4 @@
+import { austinDateTime } from "../../lib/format";
 import { useEffect, useState } from "react";
 import { usd } from "../../lib/format";
 import { tradingRequest } from "../../browserTrading";
@@ -46,7 +47,7 @@ export function PrivatePortfolio({ showPositions = true, showBalance = false }: 
             <div className="tnum mt-1 text-4xl font-semibold">{usd(account.usd_available)}</div>
             {account.balance_error && <p className="text-sm text-destructive">{account.balance_error}</p>}
           </section>}
-          <p className="tnum text-xs text-muted-foreground">Updated {new Date(account.as_of).toLocaleString()}</p>
+          <p className="tnum text-xs text-muted-foreground">Updated {austinDateTime(account.as_of)}</p>
           {(
             [
               ["Open orders", account.orders],

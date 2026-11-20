@@ -14,11 +14,17 @@ export function num(n: number | null | undefined): string {
   return String(n);
 }
 
-export function hms(iso: string | null | undefined): string {
-  if (!iso) return "—";
+export function austinDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago", dateStyle: "medium", timeStyle: "long",
+  });
+}
+
+export function hms(iso: string | number | null | undefined): string {
+  if (iso == null || iso === "") return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleTimeString("en-US", { timeZone: "America/Chicago", timeZoneName: "short", hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function shortHash(h: string | null | undefined, n = 8): string {

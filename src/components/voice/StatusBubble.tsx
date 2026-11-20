@@ -1,3 +1,4 @@
+import { hms } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, CircleAlert, Mic, MicOff } from 'lucide-react';
 import { useVoice, type Phase } from './VoiceProvider';
@@ -15,7 +16,6 @@ function Indicator({ phase }: { phase: Phase }) {
   return <MicOff className="size-3.5" aria-hidden />;
 }
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 // The pill at the top of every view. It names what the session is actually doing and opens the transcript.
 export function StatusBubble() {
@@ -95,7 +95,7 @@ export function StatusBubble() {
                     {entry.interrupted && <em className="opacity-70"> (interrupted)</em>}
                   </div>
                   <span className="tnum mt-1 px-1 text-[11px] text-muted-foreground">
-                    {entry.role === 'user' ? 'You' : 'Assistant'} · <time dateTime={entry.timestamp}>{time(entry.timestamp)}</time>
+                    {entry.role === 'user' ? 'You' : 'Assistant'} · <time dateTime={entry.timestamp}>{hms(entry.timestamp)}</time>
                   </span>
                 </li>
               ))}

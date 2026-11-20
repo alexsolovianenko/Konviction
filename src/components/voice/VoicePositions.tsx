@@ -1,3 +1,4 @@
+import { hms } from "../../lib/format";
 import type { VoiceView } from "../../voice";
 import { cents, usd } from "../../lib/format";
 
@@ -8,7 +9,7 @@ export function VoicePositions({ snapshot }: { snapshot: VoiceView["positionSnap
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-semibold">Sandbox positions</h2>
         <time className="text-xs text-muted-foreground" dateTime={snapshot.as_of}>
-          {new Date(snapshot.as_of).toLocaleTimeString()}
+          {hms(snapshot.as_of)}
         </time>
       </header>
       {snapshot.positions.length ? (

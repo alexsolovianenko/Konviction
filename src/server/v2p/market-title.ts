@@ -10,7 +10,10 @@ const austinDate = new Intl.DateTimeFormat("en-US", {
 
 // Gemini recurring markets embed the Eastern closing clock in their name.
 // Match it against the actual expiry before changing any contract wording.
-export function marketTitle(title: string, expiry: unknown): string {
+export function marketTitle(title: string, expiry: unknown): string;
+export function marketTitle(title: null | undefined, expiry: unknown): null | undefined;
+export function marketTitle(title: string | null | undefined, expiry: unknown) {
+  if (typeof title !== "string") return title;
   const at = typeof expiry === "string" ? Date.parse(expiry) : NaN;
   if (!Number.isFinite(at)) return title;
   return title.replace(/\b(?:(today at)\s+)?(1[0-2]|[1-9])(?::([0-5]\d))?\s*([ap])m\s+(?:est|edt|et|eastern(?: time)?)\b/gi,

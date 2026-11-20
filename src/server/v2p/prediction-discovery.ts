@@ -1,3 +1,4 @@
+import { marketTitle } from "./market-title";
 import type { NativeCombo } from "../../components/console/types";
 import { dashboardMarketsFrom } from "./dashboard-markets";
 import { geminiReadError, gPublic } from "./gemini";
@@ -144,8 +145,8 @@ export async function discoverCombos(query: string) {
       const leg = item?.contract;
       if (!leg?.contractName || !["Yes", "No"].includes(item.requiredOutcome)) break;
       legs.push({
-        title: leg.eventName || leg.category || null,
-        label: leg.contractName,
+        title: marketTitle(leg.eventName, leg.expiryDate) || leg.category || null,
+        label: marketTitle(leg.contractName, leg.expiryDate),
         outcome: item.requiredOutcome,
         resolution: item.legOutcome ?? null,
       });
@@ -162,7 +163,7 @@ export async function discoverCombos(query: string) {
       combos.push({
         event_ticker: c.eventTicker,
         symbol: c.instrumentSymbol,
-        title: c.contractName,
+        title: marketTitle(c.contractName, c.expiryDate),
         can_request_quote:
           c.contractStatus?.toLowerCase() === "active" &&
           !c.resolutionSide &&

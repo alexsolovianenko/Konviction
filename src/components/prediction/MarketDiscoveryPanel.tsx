@@ -1,3 +1,4 @@
+import { hms } from "../../lib/format";
 import { cents } from "../../lib/format";
 import type { TrackedContract } from "../../pages/useMarketTools";
 import { useVoice } from "../voice/VoiceProvider";
@@ -14,7 +15,7 @@ function TrackedRow({ item, onRemove }: { item: TrackedContract; onRemove(): voi
       </span>
       <span className="tnum text-xs text-muted-foreground">
         {feed.status === "live" && sample
-          ? `YES ${cents(sample.yes)} / NO ${cents(sample.no)} · ${new Date(sample.t).toLocaleTimeString()}`
+          ? `YES ${cents(sample.yes)} / NO ${cents(sample.no)} · ${hms(sample.t)}`
           : feed.status === "loading"
             ? "Checking quote…"
             : feed.message}
@@ -56,7 +57,7 @@ export function MarketDiscoveryPanel() {
           {liquidity.quantity !== null && <p>{liquidity.depth_unknown ? "Fill estimate unavailable" :
             `Estimated fill: ${liquidity.estimated_executable_quantity} of ${liquidity.quantity} contracts`}
             {liquidity.estimated_average_price !== null && ` at ${cents(liquidity.estimated_average_price)} on average before fees`}.</p>}
-          {result?.as_of && <time dateTime={result.as_of}>Observed {new Date(result.as_of).toLocaleTimeString()}</time>}
+          {result?.as_of && <time dateTime={result.as_of}>Observed {hms(result.as_of)}</time>}
         </section>
       )}
       {result?.timing?.map((window) => {

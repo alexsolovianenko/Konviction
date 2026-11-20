@@ -1,3 +1,4 @@
+import { austinDateTime } from "../../lib/format";
 import { useEffect, useState } from "react";
 import { cents, countdown } from "../../lib/format";
 import { TradeApproval } from "../../pages/TradeApproval";
@@ -49,7 +50,7 @@ export function PredictionPanel() {
             <div className="min-w-0 rounded-xl border border-border bg-card px-3 py-3 sm:px-4">
               <dt className="text-xs text-muted-foreground">Expires in</dt>
               <dd className="tnum mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
-                {feed.status === "closed" ? "Closed" : expiry ? <time dateTime={expiry} title={new Date(expiry).toLocaleString()}>{countdown(expiry, now)}</time> : "—"}
+                {feed.status === "closed" ? "Closed" : expiry ? <time dateTime={expiry} title={austinDateTime(expiry)}>{countdown(expiry, now)}</time> : "—"}
               </dd>
             </div>
           </dl>

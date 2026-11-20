@@ -1,3 +1,4 @@
+import { marketTitle } from "./market-title";
 import { geminiReadError, getUsdAvailable, gPrivate, hasCredentials } from "./gemini";
 import { num } from "./util";
 
@@ -21,7 +22,7 @@ async function refreshAccount() {
   const positions = (validPositions ? rows : []).filter((p: any) => (num(p.totalQuantity) ?? 0) > 0).map((p: any) => ({
     symbol: p.symbol, outcome: p.outcome, quantity: p.totalQuantity, on_hold: p.quantityOnHold, avg_price: p.avgPrice,
     bid: p.prices?.sell?.[String(p.outcome).toLowerCase()] ?? null, market_value: p.marketValue ?? null,
-    unrealized_pnl: p.unrealizedPnl ?? null, event: p.contractMetadata?.eventName, contract: p.contractMetadata?.contractName,
+    unrealized_pnl: p.unrealizedPnl ?? null, event: marketTitle(p.contractMetadata?.eventName, p.contractMetadata?.expiryDate), contract: marketTitle(p.contractMetadata?.contractName, p.contractMetadata?.expiryDate),
     contract_status: p.contractMetadata?.contractStatus, expiry: p.contractMetadata?.expiryDate, resolution_side: p.resolutionSide ?? null,
   }));
   live = {

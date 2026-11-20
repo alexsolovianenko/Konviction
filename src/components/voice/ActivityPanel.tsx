@@ -1,8 +1,8 @@
+import { hms } from "../../lib/format";
 import { ChevronRight } from 'lucide-react';
 import { JsonBlock } from '../console/ui';
 import { useVoice } from './VoiceProvider';
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 function pretty(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -45,7 +45,7 @@ export function ActivityPanel() {
                           : tool!.tool_name}
                       </span>
                       <span className="tnum flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <time dateTime={at}>{time(at)}</time>
+                        <time dateTime={at}>{hms(at)}</time>
                         <span aria-hidden>·</span>
                         {lookup ? (
                           <span className={lookup.result.ok ? 'text-success' : 'text-destructive'}>{lookup.result.ok ? 'Received' : 'Unavailable'}</span>
@@ -76,7 +76,7 @@ export function ActivityPanel() {
                 <div className="flex items-baseline justify-between gap-2">
                   <strong className="font-medium capitalize">{intent.intent.replace('_', ' ')}</strong>
                   <time className="tnum text-xs text-muted-foreground" dateTime={intent.created_at}>
-                    {time(intent.created_at)}
+                    {hms(intent.created_at)}
                   </time>
                 </div>
                 <p className="text-muted-foreground">
