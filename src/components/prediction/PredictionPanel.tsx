@@ -5,6 +5,7 @@ import { TradeApproval } from "../../pages/TradeApproval";
 import { useVoice } from "../voice/VoiceProvider";
 import { VoicePositions } from "../voice/VoicePositions";
 import { QuoteChart } from "./QuoteChart";
+import { ResearchCard } from "./ResearchCard";
 import { SettlementIndexPanel } from "./SettlementIndexPanel";
 import { POLL_MS, useContractQuotes } from "./useContractQuotes";
 
@@ -22,6 +23,13 @@ export function PredictionPanel() {
 
   if (!shown && !view.proposal && !view.tradeMessage && !view.positionSnapshot) return null;
   const latest = feed.contract?.symbol === shown?.symbol ? feed.samples.at(-1) : undefined;
+  // Research is shown only for the exact contract it was identified for (crypto markets only).
+  const research = view.research;
+  const researchForShown = Boolean(
+    research && shown && (research.quote
+      ? research.quote.context.market.event_ticker === shown.eventTicker && research.quote.context.market.contract_symbol === shown.symbol
+      : research.message),
+  );
   return (
     <section aria-label="Prediction contract" className="grid min-w-0 gap-4">
       {shown && (
@@ -82,6 +90,7 @@ export function PredictionPanel() {
         </p>
       )}
       <VoicePositions snapshot={view.positionSnapshot} />
+      {researchForShown && research && <ResearchCard research={research} onApprove={() => void voice.approveResearch()} onRequestQuote={() => void voice.requestResearchQuote()} />}
       {(view.proposal || view.tradeMessage) && <TradeApproval
         proposal={view.proposal}
         availability={view.availability}

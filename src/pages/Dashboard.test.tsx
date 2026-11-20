@@ -443,7 +443,13 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
   const event = { ticker: 'E', title: 'Event title', contracts: [{ symbol: 'C', label: 'Contract' }] };
   const quote = { ok: true, event_ticker: event.ticker, title: event.title, contract: { ...event.contracts[0], buy: { yes: 0.17, no: null }, sell: { yes: 0.12, no: 0.8 } } };
   const requests: string[] = [];
+  const research: Array<{ path: string; auth: string | null }> = [];
   f.fetchMock.mockImplementation(async (path, init) => {
+    // Automatic market research on selection: free public context, never a session token.
+    if (path.startsWith('/api/public/quicknode-research/')) {
+      research.push({ path, auth: new Headers(init?.headers).get('authorization') });
+      return Response.json({ ok: false, error: 'NOT_CRYPTO' });
+    }
     requests.push(path);
     expect(init.headers).toBeUndefined();
     return Response.json(path.includes('/search_markets?') ? { ok: true, events: [event] } : quote);
@@ -458,6 +464,7 @@ it('shares fresh sandbox reads between the dashboard and SDK without session tok
   });
   expect(requests.filter(path => path.includes('/search_markets?'))).toHaveLength(2);
   expect(requests.every(path => path.startsWith('/api/public/market-tools/'))).toBe(true);
+  expect(research.every(r => r.path === '/api/public/quicknode-research/context' && r.auth === null)).toBe(true);
   expect(requests.filter(path => path.includes('/get_orderbook?')).length).toBeGreaterThanOrEqual(2);
   await act(async () => {
     await sdk.clientTools['get_orderbook']!({event_ticker:'E',contract_symbol:'C',outcome:'no',side:'buy',quantity:4,limit_price:.62});

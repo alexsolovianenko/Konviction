@@ -1,0 +1,402 @@
+// Browser side of Konviction crypto research. When the user selects any Gemini crypto contract the
+// client automatically asks the server to identify the exact market and its asset and to build free
+// context; with a voice session it also gets an unpaid QuickNode x402 quote when a paid route exists.
+// The voice agent gets two READ-ONLY tools. No tool can spend: payment starts only from the
+// on-screen approval button. The session bearer stays in browser memory, never in the model.
+
+export type Metric = { label: string; value: number | null; unit: string };
+export type ResearchReport = {
+  family: string;
+  chain: string;
+  method: string;
+  metrics: Metric[];
+  comparison: {
+    label: string;
+    unit: string;
+    recent: number;
+    previous: number;
+    recent_window: string;
+    previous_window: string;
+    change_pct: number | null;
+    direction: "higher" | "lower" | "flat" | "unknown";
+  } | null;
+  coverage: string | null;
+  headline: string;
+  observed_at: string;
+  warnings: string[];
+  disclaimer: string;
+};
+export type MarketContext = {
+  asset: { symbol: string; name: string | null; identified_from: string[] };
+  market: {
+    event_ticker: string;
+    contract_symbol: string;
+    title: string | null;
+    contract_label: string | null;
+    strike_type: string | null;
+    strike: string | null;
+    expiry: string | null;
+    settlement_agency: string | null;
+    settlement_index: string | null;
+    prices: {
+      yes_buy: number | null;
+      no_buy: number | null;
+      yes_sell: number | null;
+      no_sell: number | null;
+    };
+  };
+  implied_yes_pct: number | null;
+  spread: number | null;
+  spot: {
+    source: string;
+    last: number;
+    as_of: string;
+    change_60m_pct: number | null;
+    realized_vol_60m_pct: number | null;
+    high_60m: number;
+    low_60m: number;
+    minutes: number;
+    distance_to_strike_pct: number | null;
+  } | null;
+  limitations: string[];
+};
+export type ResearchEvidence = {
+  http_status: number | null;
+  rpc_error: string | null;
+  request_id: string | null;
+  api_ms: number | null;
+  payment_response: Record<string, string | boolean | null> | null;
+  payment_response_present: boolean;
+  signed: boolean;
+  gateway_available_before: string | null;
+  gateway_available_after: string | null;
+  gateway_deduction_atomic: string | null;
+  response_sha256: string | null;
+};
+export type ResearchQuote = {
+  quote_id: string;
+  status:
+    | "context_only"
+    | "quoted"
+    | "free"
+    | "expired"
+    | "reserved"
+    | "sending"
+    | "paid"
+    | "unknown_pending"
+    | "failed";
+  provider: string;
+  route_id: string | null;
+  research_chain: string | null;
+  quicknode_network: string | null;
+  resource: string | null;
+  network: string;
+  network_label: string;
+  payment_asset: string;
+  pay_to: string | null;
+  payment_model: string;
+  price_atomic: string;
+  price_usdc: string;
+  expires_at: string;
+  created_at: string;
+  payer: string | null;
+  context: MarketContext;
+  report: ResearchReport | null;
+  evidence: ResearchEvidence | null;
+  error: string | null;
+  limitations: string[];
+  payments_enabled: boolean;
+  say: string;
+  trading_note: string;
+};
+export type ResearchView = {
+  quote: ResearchQuote | null;
+  busy: boolean;
+  message: string;
+  canApprove: boolean;
+  /** Free context shown, a paid route exists and a voice session can fetch its unpaid quote. */
+  canQuote: boolean;
+};
+export const initialResearch: ResearchView = {
+  quote: null,
+  busy: false,
+  message: "",
+  canApprove: false,
+  canQuote: false,
+};
+
+type Json = Record<string, unknown> & {
+  ok?: boolean;
+  error?: string;
+  message?: string;
+  say?: string;
+};
+type Target = { event_ticker: string; contract_symbol: string };
+export const APPROVAL_PHRASE = "APPROVE_QUICKNODE_RESEARCH_PAYMENT";
+const PENDING = ["reserved", "sending"];
+
+async function call(
+  action: "context" | "quote" | "approve" | "status",
+  body: unknown,
+  token: string | null,
+): Promise<Json> {
+  try {
+    const res = await fetch("/api/public/quicknode-research/" + action, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token && { Authorization: "Bearer " + token }),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(action === "approve" ? 60_000 : 15_000),
+    });
+    return (await res.json()) as Json;
+  } catch {
+    return {
+      ok: false,
+      error: "NETWORK",
+      message: "Research unavailable.",
+      say: "Research is unavailable right now.",
+    };
+  }
+}
+
+/** Client-safe grounded facts for the voice agent. No ids, addresses, hashes, tokens or signatures. */
+export function agentSummary(q: ResearchQuote) {
+  const c = q.context;
+  const r = q.report;
+  return {
+    status: q.status,
+    asset: `${c.asset.name ?? c.asset.symbol} (${c.asset.symbol})`,
+    market: [c.market.title, c.market.contract_label].filter(Boolean).join(" · "),
+    expiry: c.market.expiry,
+    implied_yes_pct: c.implied_yes_pct,
+    settlement_index_last: c.spot?.last ?? null,
+    index_change_60m_pct: c.spot?.change_60m_pct ?? null,
+    realized_vol_60m_pct: c.spot?.realized_vol_60m_pct ?? null,
+    distance_to_strike_pct: c.spot?.distance_to_strike_pct ?? null,
+    paid_research: q.research_chain
+      ? `${q.research_chain} network activity via QuickNode`
+      : "not available for this asset",
+    price_usdc: q.status === "context_only" ? null : q.price_usdc,
+    paid: q.status === "paid",
+    network_headline: r?.headline ?? null,
+    network_change_pct: r?.comparison?.change_pct ?? null,
+    limitations: q.limitations,
+    say: q.say,
+    caveat:
+      "Market context and network activity only. Not a price prediction or trading advice. No order was placed.",
+  };
+}
+
+export class ResearchClient {
+  private view: ResearchView = initialResearch;
+  private approving = false;
+  private keys = new Map<string, string>();
+  private selection = 0;
+  constructor(
+    private publish: (v: ResearchView) => void,
+    private token: () => string | null,
+    private visible: () => Target | null,
+    private tellAgent: (text: string) => void,
+  ) {}
+
+  private set(patch: Partial<ResearchView>) {
+    const v = { ...this.view, ...patch };
+    const q = v.quote;
+    v.canApprove = Boolean(
+      q &&
+      q.status === "quoted" &&
+      q.payments_enabled &&
+      Date.parse(q.expires_at) > Date.now() &&
+      this.token(),
+    );
+    v.canQuote = Boolean(q && q.status === "context_only" && q.route_id && this.token() && !v.busy);
+    this.view = v;
+    this.publish(v);
+  }
+
+  private matches(q: ResearchQuote | null, t: Target | null) {
+    return Boolean(
+      q &&
+      t &&
+      q.context.market.event_ticker === t.event_ticker &&
+      q.context.market.contract_symbol === t.contract_symbol,
+    );
+  }
+
+  /**
+   * "context": free, public, no session token, nothing stored (automatic on selection).
+   * "quote": session-bound unpaid quote (only on request: voice tool or on-screen button).
+   */
+  private async load(target: Target, mode: "context" | "quote") {
+    const id = ++this.selection;
+    const token = mode === "quote" ? this.token() : null;
+    if (mode === "quote" && !token)
+      return { ok: false, say: "Start voice to get a paid research price." } as Json;
+    this.set({
+      quote: mode === "quote" ? this.view.quote : null,
+      busy: true,
+      message: mode === "quote" ? "Getting a research price…" : "Identifying the market…",
+    });
+    const r = await call(mode, target, token);
+    if (id !== this.selection) return null; // a newer selection superseded this one
+    const shaped =
+      r.ok &&
+      (r as unknown as Partial<ResearchQuote>).context?.market?.event_ticker ===
+        target.event_ticker;
+    if (r.ok && !shaped) {
+      this.set({ busy: false, message: "Research unavailable." });
+      return { ok: false, say: "Research is unavailable right now." } as Json;
+    }
+    if (!r.ok) {
+      // Non-crypto markets simply have no research card.
+      this.set({
+        busy: false,
+        message: r.error === "NOT_CRYPTO" ? "" : (r.message ?? "Research unavailable."),
+      });
+      return r;
+    }
+    const quote = r as unknown as ResearchQuote;
+    this.set({
+      busy: false,
+      quote,
+      message:
+        quote.status === "quoted" && !quote.payments_enabled
+          ? "Research payments are switched off on this server."
+          : "",
+    });
+    return r;
+  }
+
+  /** Called whenever the on-screen contract changes. Free; never pays. */
+  select(target: Target | null) {
+    if (!target) {
+      this.selection++;
+      this.set({ quote: null, busy: false, message: "" });
+      return;
+    }
+    if (this.matches(this.view.quote, target)) return;
+    void this.load(target, "context");
+  }
+
+  /** On-screen "get paid research price" button. Unpaid; never spends. */
+  async requestQuote() {
+    const target = this.visible();
+    const q = this.view.quote;
+    if (
+      target &&
+      q &&
+      this.matches(q, target) &&
+      q.status === "context_only" &&
+      q.route_id &&
+      this.token() &&
+      !this.view.busy
+    )
+      await this.load(target, "quote");
+  }
+
+  /** Voice tools. Neither can spend, and neither accepts a URL, method or RPC body. */
+  tools(current: () => boolean) {
+    return {
+      request_research_quote: async () => {
+        if (!current()) return JSON.stringify({ ok: false, say: "Session ended." });
+        const target = this.visible();
+        if (!target) return JSON.stringify({ ok: false, say: "Pick a crypto prediction first." });
+        const existing = this.view.quote;
+        // Reuse a fresh session-bound result for this exact contract; otherwise (re)load.
+        const fresh = existing && this.matches(existing, target);
+        // Upgrade free context to a session-bound unpaid quote only when a paid route exists.
+        const wantsQuote =
+          !fresh || (existing.status === "context_only" && existing.route_id && this.token());
+        const r = !wantsQuote
+          ? { ok: true }
+          : await this.load(target, fresh || this.token() ? "quote" : "context");
+        const quote = this.view.quote;
+        if (!r?.ok || !quote)
+          return JSON.stringify({
+            ok: false,
+            say: r?.say ?? r?.message ?? "Research unavailable.",
+            next_action: "wait_for_user",
+          });
+        return JSON.stringify({
+          ok: true,
+          ...agentSummary(quote),
+          say:
+            quote.status === "quoted" && !quote.payments_enabled
+              ? `${quote.say} Research payments are switched off right now.`
+              : quote.say,
+          next_action: quote.status === "quoted" ? "wait_for_on_screen_approval" : "report_result",
+        });
+      },
+      get_research_result: async () => {
+        if (!current()) return JSON.stringify({ ok: false, say: "Session ended." });
+        const token = this.token();
+        if (!this.view.quote)
+          return JSON.stringify({ ok: false, say: "No research requested yet." });
+        const q =
+          (token && this.view.quote.quote_id ? await this.refresh(token) : null) ?? this.view.quote;
+        return JSON.stringify({ ok: true, ...agentSummary(q) });
+      },
+    };
+  }
+
+  private async refresh(token: string) {
+    const q = this.view.quote;
+    if (!q?.quote_id) return null;
+    const r = await call("status", { quote_id: q.quote_id }, token);
+    if (!r.ok) return null;
+    const next = r as unknown as ResearchQuote;
+    if (this.view.quote?.quote_id === next.quote_id) this.set({ quote: next });
+    return next;
+  }
+
+  /** On-screen approval button only. Retries reuse the same idempotency key; the server never pays twice. */
+  async approve() {
+    const q = this.view.quote;
+    const token = this.token();
+    if (!q || !q.quote_id || !token || this.approving || !this.view.canApprove) return;
+    this.approving = true;
+    let key = this.keys.get(q.quote_id);
+    if (!key) this.keys.set(q.quote_id, (key = crypto.randomUUID()));
+    this.set({ busy: true, message: "Paying QuickNode on Arc Testnet…" });
+    try {
+      const r = await call(
+        "approve",
+        {
+          quote_id: q.quote_id,
+          max_atomic: q.price_atomic,
+          confirm: APPROVAL_PHRASE,
+          idempotency_key: key,
+        },
+        token,
+      );
+      if (!r.ok) {
+        // Network loss here is ambiguous: re-read status instead of resending.
+        const latest = r.error === "NETWORK" ? await this.refresh(token) : null;
+        this.set({
+          busy: false,
+          message:
+            latest && latest.status !== "quoted" ? "" : (r.message ?? "Research payment refused."),
+        });
+        return;
+      }
+      let latest = r as unknown as ResearchQuote;
+      this.set({ quote: latest });
+      for (let i = 0; i < 10 && PENDING.includes(latest.status); i++) {
+        await new Promise((res) => setTimeout(res, 3000));
+        const t = this.token();
+        if (!t) break;
+        latest = (await this.refresh(t)) ?? latest;
+      }
+      this.set({ busy: false, message: "" });
+      this.tellAgent(
+        "Research result is on screen. Summarize these facts honestly in one or two sentences, say it is market context and network activity rather than a price prediction, and do not trade unless the caller separately asks: " +
+          JSON.stringify(agentSummary(latest)),
+      );
+    } finally {
+      this.approving = false;
+    }
+  }
+}

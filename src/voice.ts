@@ -1,5 +1,6 @@
 import { isSpokenConfirmation } from "./spoken-confirmation";
 import { spokenFill } from './spoken-fill';
+import { ResearchClient, type ResearchView } from './quicknodeResearch';
 import { tradingRequest, type Proposal, type Availability } from './browserTrading';
 import type { Callbacks, AudioAlignmentPlaybackEvent } from '@elevenlabs/client';
 import { Session as LocalSession, startCredentials as localCredentials, type Entry, type Intent } from './session';
@@ -24,6 +25,7 @@ type PositionSnapshot = {
   positions_available: boolean; settlements_available: boolean;
 };
 export type VoiceView = {
+  research?: ResearchView | null;
   positionSnapshot: PositionSnapshot | null;
   proposal: Proposal | null;
   availability: Availability | null;
@@ -113,11 +115,27 @@ export class Voice {
     private selectMarket?: (target: { eventTicker: string; symbol: string }) => void,
   ) {}
 
+  private researchClient?: ResearchClient;
+  private get research() {
+    return this.researchClient ??= new ResearchClient(
+      (research) => this.update({research}),
+      () => this.session?.credentials.session_token || null,
+      () => this.visibleContract ? JSON.parse(this.visibleContract) : null,
+      (text) => this.conversation?.sendContextualUpdate?.(text),
+    );
+  }
+  /** QuickNode research payment: called only by the on-screen approval button, never by a voice tool. */
+  approveResearch() { return this.research.approve(); }
+  /** On-screen request for an unpaid research price (never pays). */
+  requestResearchQuote() { return this.research.requestQuote(); }
+
   setVisibleContract(eventTicker?: string, symbol?: string) {
     const selection = eventTicker && symbol ? JSON.stringify({event_ticker:eventTicker, contract_symbol:symbol}) : "";
     if (selection === this.visibleContract && (selection || !this.preparing)) return;
     this.visibleContract = selection;
     this.selectionRevision++;
+    // Research the newly selected market automatically (free context; unpaid quote with a session).
+    this.research.select(eventTicker && symbol ? {event_ticker:eventTicker, contract_symbol:symbol} : null);
     if (this.currentProposal && (this.currentProposal.event_ticker !== eventTicker || this.currentProposal.instrument_symbol !== symbol)) {
       const token = this.session?.credentials.session_token;
       if (token) void tradingRequest('dismiss-proposal', {proposal_id:this.currentProposal.proposal_id}, token);
@@ -407,6 +425,7 @@ export class Voice {
             preparedThisTurn = true;
             return JSON.stringify(await this.confirmByVoice());
           },
+          ...this.research.tools(current),
           get_sandbox_positions: async () => JSON.stringify(current()
             ? await this.readPositions() : {ok:false, say:'Session ended.'}),
           ...Object.fromEntries((['search_markets', 'get_orderbook'] as const).map(name => [
